@@ -352,22 +352,26 @@ static void dwapb_configure_irqs(struct dwapb_gpio *gpio,
 	irq_gc->chip_types[1].type = IRQ_TYPE_EDGE_BOTH;
 	irq_gc->chip_types[1].handler = handle_edge_irq;
 
-	if (!pp->irq_shared) {
-		irq_set_chained_handler(pp->irq, dwapb_irq_handler);
-		irq_set_handler_data(pp->irq, gpio);
-	} else {
-		/*
-		 * Request a shared IRQ since where MFD would have devices
-		 * using the same irq pin
-		 */
-		err = devm_request_irq(gpio->dev, pp->irq,
-				       dwapb_irq_handler_mfd,
-				       IRQF_SHARED, "gpio-dwapb-mfd", gpio);
-		if (err) {
-			dev_err(gpio->dev, "error requesting IRQ\n");
-			irq_domain_remove(gpio->domain);
-			gpio->domain = NULL;
-			return;
+	for (i = 0; i < ARRAY_SIZE(pp->irqs) && pp->irqs[i]; i++) {
+		if (!pp->irq_shared) {
+			irq_set_chained_handler(pp->irqs[i], dwapb_irq_handler);
+			irq_set_handler_data(pp->irqs[i], gpio);
+		} else {
+			/*
+			 * Request a shared IRQ since where MFD would have
+			 * devices using the same irq pin
+			 */
+			err = devm_request_irq(gpio->dev, pp->irqs[i],
+					       dwapb_irq_handler_mfd,
+					       IRQF_SHARED, "gpio-dwapb-mfd",
+					       gpio);
+			if (err) {
+				dev_err(gpio->dev, "error requesting IRQ %u\n",
+					pp->irqs[i]);
+				irq_domain_remove(gpio->domain);
+				gpio->domain = NULL;
+				return;
+			}
 		}
 	}
 
@@ -478,7 +482,7 @@ static int dwapb_gpio_add_port(struct dwapb_gpio *gpio,
 	if (pp->idx == 0)
 		port->bgc.gc.set_debounce = dwapb_gpio_set_debounce;
 
-	if (pp->irq)
+	if (pp->irqs[0])
 		dwapb_configure_irqs(gpio, port, pp);
 
 	err = gpiochip_add(&port->bgc.gc);
@@ -552,11 +556,22 @@ dwapb_gpio_get_pdata_of(struct device *dev)
 		 */
 		if (pp->idx == 0 &&
 		    of_property_read_bool(port_np, "interrupt-controller")) {
-			pp->irq = irq_of_parse_and_map(port_np, 0);
-			if (!pp->irq) {
+			unsigned i;
+			unsigned irq_count = of_irq_count(port_np);
+
+			if (irq_count == 0) {
 				dev_warn(dev, "no irq for bank %s\n",
-					 port_np->full_name);
+					port_np->full_name);
 			}
+
+			if (irq_count > ARRAY_SIZE(pp->irqs)) {
+				irq_count = ARRAY_SIZE(pp->irqs);
+				dev_warn(dev, "only %u irqs will be used\n",
+					 irq_count);
+			}
+
+			for (i = 0; i < irq_count; i++)
+				pp->irqs[i] = irq_of_parse_and_map(port_np, i);
 		}
 
 		pp->irq_shared	= false;
