@@ -559,6 +559,9 @@ int dw_spi_add_host(struct device *dev, struct dw_spi *dws)
 		}
 	}
 
+	/* Disable CS toggle. This is temporary hack. */
+	dw_writel(dws, DW_SPI_TOGGLE, 0);
+
 	spi_master_set_devdata(master, dws);
 	ret = devm_spi_register_master(dev, master);
 	if (ret) {
