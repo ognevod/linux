@@ -398,7 +398,7 @@ static void dwapb_irq_teardown(struct dwapb_gpio *gpio)
 	gpio->domain = NULL;
 }
 
-int dwapb_gpio_request(struct gpio_chip *chip, unsigned offset)
+static int dwapb_gpio_request(struct gpio_chip *chip, unsigned offset)
 {
 	struct bgpio_chip *bgc = to_bgpio_chip(chip);
 	struct dwapb_gpio_port *port = to_dwapb_gpio_port(bgc);
@@ -418,7 +418,7 @@ int dwapb_gpio_request(struct gpio_chip *chip, unsigned offset)
 	return 0;
 }
 
-void dwapb_gpio_free(struct gpio_chip *chip, unsigned offset)
+static void dwapb_gpio_free(struct gpio_chip *chip, unsigned offset)
 {
 	struct bgpio_chip *bgc = to_bgpio_chip(chip);
 	struct dwapb_gpio_port *port = to_dwapb_gpio_port(bgc);
