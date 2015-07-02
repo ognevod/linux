@@ -25,6 +25,8 @@
 #include <linux/slab.h>
 #include <linux/gpio/driver.h>
 
+#include "gpiolib.h"
+
 #define GPIO_SWPORTA_DR		0x00
 #define GPIO_SWPORTA_DDR	0x04
 #define GPIO_SWPORTA_CTL	0x08
@@ -194,15 +196,70 @@ static void dwapb_irq_disable(struct irq_data *d)
 	spin_unlock_irqrestore(&bgc->lock, flags);
 }
 
+static int dwapb_gpio_request(struct gpio_chip *chip, unsigned offset)
+{
+	struct bgpio_chip *bgc = to_bgpio_chip(chip);
+	struct dwapb_gpio_port *port = to_dwapb_gpio_port(bgc);
+	struct dwapb_gpio *gpio = port->gpio;
+	unsigned ctl;
+	unsigned long value;
+
+	if (offset >= chip->ngpio)
+		return -EINVAL;
+
+	ctl = GPIO_SWPORTA_CTL + (port->idx * GPIO_SWPORT_CTL_SIZE);
+
+	value = dwapb_read(gpio, ctl);
+	__clear_bit(offset, &value);
+	dwapb_write(gpio, ctl, value);
+
+	return 0;
+}
+
+static void dwapb_gpio_free(struct gpio_chip *chip, unsigned offset)
+{
+	struct bgpio_chip *bgc = to_bgpio_chip(chip);
+	struct dwapb_gpio_port *port = to_dwapb_gpio_port(bgc);
+	struct dwapb_gpio *gpio = port->gpio;
+	unsigned ctl;
+	unsigned long value;
+
+	if (offset >= chip->ngpio)
+		return;
+
+	if (test_bit(FLAG_USED_AS_IRQ, &bgc->gc.desc[offset].flags))
+		return;
+
+	ctl = GPIO_SWPORTA_CTL + (port->idx * GPIO_SWPORT_CTL_SIZE);
+
+	value = dwapb_read(gpio, ctl);
+	__set_bit(offset, &value);
+	dwapb_write(gpio, ctl, value);
+}
+
 static int dwapb_irq_reqres(struct irq_data *d)
 {
 	struct irq_chip_generic *igc = irq_data_get_irq_chip_data(d);
 	struct dwapb_gpio *gpio = igc->private;
 	struct bgpio_chip *bgc = &gpio->ports[0].bgc;
+	unsigned long hwirq = irqd_to_hwirq(d);
 
-	if (gpiochip_lock_as_irq(&bgc->gc, irqd_to_hwirq(d))) {
+	/* We can not use gpiod_request() here, because then two devices could
+	 * not request the same IRQ. Thus shared IRQ on GPIO will not work. */
+
+	/* BUG: Pin X is requested by IRQ. Then pin X is exported via sysfs.
+	 * Then IRQ is requested via sysfs. Then if you unexport pin X, it will
+	 * be configured to hardware function and IRQ will not work. */
+	if (!gpiochip_is_requested(&bgc->gc, hwirq))
+		if (dwapb_gpio_request(&bgc->gc, hwirq)) {
+			dev_err(gpio->dev,
+				"unable to request pin %lu for IRQ\n", hwirq);
+			return -EINVAL;
+		}
+
+	if (gpiochip_lock_as_irq(&bgc->gc, hwirq)) {
 		dev_err(gpio->dev, "unable to lock HW IRQ %lu for IRQ\n",
-			irqd_to_hwirq(d));
+			hwirq);
 		return -EINVAL;
 	}
 	return 0;
@@ -213,8 +270,12 @@ static void dwapb_irq_relres(struct irq_data *d)
 	struct irq_chip_generic *igc = irq_data_get_irq_chip_data(d);
 	struct dwapb_gpio *gpio = igc->private;
 	struct bgpio_chip *bgc = &gpio->ports[0].bgc;
+	unsigned hwirq = (unsigned)irqd_to_hwirq(d);
 
-	gpiochip_unlock_as_irq(&bgc->gc, irqd_to_hwirq(d));
+	gpiochip_unlock_as_irq(&bgc->gc, hwirq);
+
+	if (!gpiochip_is_requested(&bgc->gc, hwirq))
+		dwapb_gpio_free(&bgc->gc, hwirq);
 }
 
 static int dwapb_irq_set_type(struct irq_data *d, u32 type)
@@ -397,44 +458,6 @@ static void dwapb_irq_teardown(struct dwapb_gpio *gpio)
 
 	irq_domain_remove(gpio->domain);
 	gpio->domain = NULL;
-}
-
-static int dwapb_gpio_request(struct gpio_chip *chip, unsigned offset)
-{
-	struct bgpio_chip *bgc = to_bgpio_chip(chip);
-	struct dwapb_gpio_port *port = to_dwapb_gpio_port(bgc);
-	struct dwapb_gpio *gpio = port->gpio;
-	unsigned ctl;
-	unsigned long value;
-
-	if (offset >= chip->ngpio)
-		return -EINVAL;
-
-	ctl = GPIO_SWPORTA_CTL + (port->idx * GPIO_SWPORT_CTL_SIZE);
-
-	value = dwapb_read(gpio, ctl);
-	__clear_bit(offset, &value);
-	dwapb_write(gpio, ctl, value);
-
-	return 0;
-}
-
-static void dwapb_gpio_free(struct gpio_chip *chip, unsigned offset)
-{
-	struct bgpio_chip *bgc = to_bgpio_chip(chip);
-	struct dwapb_gpio_port *port = to_dwapb_gpio_port(bgc);
-	struct dwapb_gpio *gpio = port->gpio;
-	unsigned ctl;
-	unsigned long value;
-
-	if (offset >= chip->ngpio)
-		return;
-
-	ctl = GPIO_SWPORTA_CTL + (port->idx * GPIO_SWPORT_CTL_SIZE);
-
-	value = dwapb_read(gpio, ctl);
-	__set_bit(offset, &value);
-	dwapb_write(gpio, ctl, value);
 }
 
 static int dwapb_gpio_add_port(struct dwapb_gpio *gpio,
