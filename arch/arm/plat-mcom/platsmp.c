@@ -59,7 +59,7 @@ static int __cpuinit mcom_boot_secondary(unsigned int cpu,
 	}
 
 	__raw_writel(magic, spram_base_addr + offset_for_magic);
-	__raw_writel((unsigned int)&secondary_startup, spram_base_addr +
+	__raw_writel(virt_to_phys(&secondary_startup), spram_base_addr +
 		     offset_for_addr);
 
 	return 0;
