@@ -531,9 +531,9 @@ config MTD_NAND_HISI504
 	  Enables support for NAND controller on Hisilicon SoC Hip04.
 
 config MTD_NAND_ARASAN
-	tristate "Support for Arasan Nand Flash controller"
+	tristate "Support for Arasan NAND Flash controller"
 	depends on MTD_NAND
 	help
-	  Enables the driver for the Arasan Nand Flash controller in ZynqMP SoC.
+	  Enables the driver for the Arasan NAND Flash Controller.
 
 endif # MTD_NAND

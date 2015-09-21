@@ -1,7 +1,8 @@
 /*
  * Arasan Nand Flash Controller Driver
- *
  * Copyright (C) 2014 - 2015 Xilinx, Inc.
+ * Copyright (C) 2015 ELVEES NeoTek CJSC
+ * Based on the Xilinx driver for a newer version of the same hardware.
  *
  * This program is free software; you can redistribute it and/or modify it under
  * the terms of the GNU General Public License version 2 as published by the
@@ -844,7 +845,7 @@ static int anfc_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id anfc_ids[] = {
-	{ .compatible = "arasan,nfc-v3p10" },
+	{ .compatible = "arasan,nfc-v2p99" },
 	{  }
 };
 MODULE_DEVICE_TABLE(of, anfc_ids);
