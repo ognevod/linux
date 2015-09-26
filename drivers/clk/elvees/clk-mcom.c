@@ -26,6 +26,7 @@
 #define DIV_SYS2_CTR    0x044
 #define GATE_CORE_CTR   0x048
 #define GATE_SYS_CTR    0x04C
+#define GATE_DSP_CTR    0x068
 
 #define SEL_APLL        0x100
 #define SEL_CPLL        0x104
@@ -56,6 +57,11 @@
 #define GATE_SYS_CTR_I2C2_EN   BIT(18)
 #define GATE_SYS_CTR_SPI0_EN   BIT(19)
 #define GATE_SYS_CTR_SPI1_EN   BIT(20)
+
+#define GATE_DSP_CTR_DSP0_EN   BIT(0)
+#define GATE_DSP_CTR_DSP1_EN   BIT(1)
+#define GATE_DSP_CTR_DSPEXT_EN BIT(2)
+#define GATE_DSP_CTR_DSPENC_EN BIT(3)
 
 #define cmctr_readl(port, reg) __raw_readl((port)->reg_base + reg)
 #define cmctr_writel(port, reg, value) \
@@ -91,6 +97,12 @@ static void __init enable_clocks(struct cmctr_pdata *pd)
 		GATE_CORE_CTR_VPU_EN |
 		GATE_CORE_CTR_GPU_EN);
 	cmctr_writel(pd, GATE_CORE_CTR, reg);
+
+	reg = cmctr_readl(pd, GATE_DSP_CTR);
+	reg |= (GATE_DSP_CTR_DSP0_EN |
+		GATE_DSP_CTR_DSP1_EN |
+		GATE_DSP_CTR_DSPEXT_EN);
+	cmctr_writel(pd, GATE_DSP_CTR, reg);
 }
 
 static u32 __init read_property(char const *const name, char const *const path)
