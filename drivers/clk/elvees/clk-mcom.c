@@ -22,6 +22,7 @@
 #define DIV_ATB_CTR     0x008
 #define DIV_APB_CTR     0x00C
 #define GATE_MPU_CTR    0x014
+#define DIV_NFC_CTR     0x038
 #define DIV_SYS1_CTR    0x040
 #define DIV_SYS2_CTR    0x044
 #define GATE_CORE_CTR   0x048
@@ -57,6 +58,7 @@
 #define GATE_SYS_CTR_I2C2_EN   BIT(18)
 #define GATE_SYS_CTR_SPI0_EN   BIT(19)
 #define GATE_SYS_CTR_SPI1_EN   BIT(20)
+#define GATE_SYS_CTR_NFC_EN    BIT(21)
 
 #define GATE_DSP_CTR_DSP0_EN   BIT(0)
 #define GATE_DSP_CTR_DSP1_EN   BIT(1)
@@ -88,7 +90,8 @@ static void __init enable_clocks(struct cmctr_pdata *pd)
 		GATE_SYS_CTR_I2C1_EN |
 		GATE_SYS_CTR_I2C2_EN |
 		GATE_SYS_CTR_SPI0_EN |
-		GATE_SYS_CTR_SPI1_EN);
+		GATE_SYS_CTR_SPI1_EN |
+		GATE_SYS_CTR_NFC_EN);
 	cmctr_writel(pd, GATE_SYS_CTR, reg);
 
 	reg = cmctr_readl(pd, GATE_CORE_CTR);
@@ -184,6 +187,7 @@ static void __init mcom_clk_init(struct device_node *np)
 	set_divider(pd, DIV_MPU_CTR, 2, "/clocks/mpspclk");
 	set_divider(pd, DIV_SYS1_CTR, 2, "/clocks/l1_hclk");
 	set_divider(pd, DIV_SYS2_CTR, 2, "/clocks/l3_pclk");
+	set_divider(pd, DIV_NFC_CTR, 8, "/clocks/nfc_sclk");
 
 	set_pll(pd, SEL_APLL, "/clocks/apllclk");
 	/* Do not set CPLL, because it clocks DDR. */
