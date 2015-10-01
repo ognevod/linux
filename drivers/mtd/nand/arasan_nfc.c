@@ -308,12 +308,8 @@ static int anfc_read_oob(struct mtd_info *mtd, struct nand_chip *chip,
 	struct anfc *nfc = container_of(mtd, struct anfc, mtd);
 
 	chip->cmdfunc(mtd, NAND_CMD_READOOB, 0, page);
-	if (nfc->dma)
-		nfc->rdintrmask = XFER_COMPLETE;
-	else
-		nfc->rdintrmask = READ_READY;
-	chip->read_buf(mtd, chip->oob_poi, mtd->oobsize);
 
+	chip->read_buf(mtd, chip->oob_poi, mtd->oobsize);
 	return 0;
 }
 
@@ -336,6 +332,11 @@ static void anfc_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 	u32 *bufptr = (u32 *)buf;
 	struct anfc *nfc = container_of(mtd, struct anfc, mtd);
 	dma_addr_t paddr = 0;
+
+	if (nfc->dma)
+		nfc->rdintrmask = XFER_COMPLETE;
+	else
+		nfc->rdintrmask = READ_READY;
 
 	if (nfc->curr_cmd == NAND_CMD_READ0) {
 		pktsize = nfc->pktsize;
@@ -455,11 +456,6 @@ static int anfc_read_page_hwecc(struct mtd_info *mtd,
 	val = readl(nfc->base + CMD_OFST);
 	val = val | ECC_ENABLE;
 	writel(val, nfc->base + CMD_OFST);
-
-	if (nfc->dma)
-		nfc->rdintrmask = XFER_COMPLETE;
-	else
-		nfc->rdintrmask = READ_READY;
 
 	if (!nfc->bch)
 		nfc->rdintrmask = MBIT_ERROR;
