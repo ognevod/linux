@@ -638,7 +638,7 @@ static int anfc_ecc_init(struct mtd_info *mtd,
 			       nand_chip->ecc.steps;
 	nfc->ecclayout.eccbytes = ecc_matrix[found].eccsize;
 	nfc->bch = ecc_matrix[found].bch;
-	oob_index = nand_chip->onfi_params.spare_bytes_per_page -
+	oob_index = mtd->oobsize -
 		    nfc->ecclayout.eccbytes;
 	ecc_addr = mtd->writesize + oob_index;
 
@@ -871,9 +871,15 @@ static int anfc_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "nand_scan_ident for NAND failed\n");
 		return -ENXIO;
 	}
-	nfc->raddr_cycles = nand_chip->onfi_params.addr_cycles & 0xF;
-	nfc->caddr_cycles = (nand_chip->onfi_params.addr_cycles >> 4) & 0xF;
-
+	if (nand_chip->onfi_params.addr_cycles == NULL) {
+		/* Good estimate in case ONFI ident doesn't work */
+		nfc->raddr_cycles = 3;
+		nfc->caddr_cycles = 2;
+	} else {
+		nfc->raddr_cycles = nand_chip->onfi_params.addr_cycles & 0xF;
+		nfc->caddr_cycles =
+			(nand_chip->onfi_params.addr_cycles >> 4) & 0xF;
+	}
 	if (anfc_ecc_init(mtd, &nand_chip->ecc))
 		return -ENXIO;
 
