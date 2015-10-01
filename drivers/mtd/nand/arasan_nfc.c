@@ -63,11 +63,9 @@
 #define PAGE_SIZE_MASK			GENMASK(25, 23)
 #define PAGE_SIZE_SHIFT			23
 #define PAGE_SIZE_512			0
-#define PAGE_SIZE_1K			5
 #define PAGE_SIZE_2K			1
 #define PAGE_SIZE_4K			2
 #define PAGE_SIZE_8K			3
-#define PAGE_SIZE_16K			4
 #define CMD2_SHIFT			8
 #define ADDR_CYCLES_SHIFT		28
 
@@ -152,12 +150,6 @@ static const struct anfc_ecc_matrix ecc_matrix[] = {
 	{8192,	512,	12,	1,	0x2088,	0x138},
 	{8192,	512,	16,	1,	0x2020,	0x1A0},
 	{8192,	1024,	24,	1,	0x2070,	0x150},
-	/* 16K byte page */
-	{16384,	512,	1,	0,	0x4460,	0x60},
-	{16384,	512,	4,	1,	0x43f0,	0xD0},
-	{16384,	512,	8,	1,	0x4320,	0x1A0},
-	{16384,	512,	12,	1,	0x4250,	0x270},
-	{16384,	1024,	24,	1,	0x4220,	0x2A0}
 };
 
 /**
@@ -253,11 +245,8 @@ static u8 anfc_page(u32 pagesize)
 		return PAGE_SIZE_4K;
 	case 8192:
 		return PAGE_SIZE_8K;
-	case 16384:
-		return PAGE_SIZE_16K;
-	case 1024:
-		return PAGE_SIZE_1K;
 	default:
+		WARN(1, "unsupported size:%lx\n", pagesize);
 		break;
 	}
 
@@ -875,6 +864,10 @@ static int anfc_probe(struct platform_device *pdev)
 	if (nand_scan_ident(mtd, 1, NULL)) {
 		dev_err(&pdev->dev, "nand_scan_ident for NAND failed\n");
 		return -ENXIO;
+	}
+	if (mtd->writesize > SZ_8K) {
+		dev_err(&pdev->dev, "Page size too big for controller\n");
+		return -EINVAL;
 	}
 	if (nand_chip->onfi_params.addr_cycles == NULL) {
 		/* Good estimate in case ONFI ident doesn't work */
