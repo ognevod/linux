@@ -20,6 +20,7 @@
 #include <linux/of.h>
 #include <linux/of_mtd.h>
 #include <linux/platform_device.h>
+#include <linux/sizes.h>
 
 #define DRIVER_NAME			"arasan_nfc"
 #define EVNT_TIMEOUT			1000
@@ -43,6 +44,15 @@
 #define ECC_ERR_CNT_1BIT_OFST		0x40
 #define ECC_ERR_CNT_2BIT_OFST		0x44
 #define DMA_ADDR0_OFST			0x50
+#define DMA_BOUND_OFST			0x54
+#define DMA_BUF_4K			0
+#define DMA_BUF_8K			1
+#define DMA_BUF_16K			2
+#define DMA_BUF_32K			3
+#define DMA_BUF_64K			4
+#define DMA_BUF_128K			5
+#define DMA_BUF_256K			6
+#define DMA_BUF_512K			7
 
 #define PKT_CNT_SHIFT			12
 
@@ -95,6 +105,7 @@
 #define ONFI_ID_ADDR			0x20
 #define ONFI_ID_LEN			4
 #define MAF_ID_LEN			5
+#define DMA_BUFSIZE			SZ_64K
 #define TEMP_BUF_SIZE			512
 
 /**
@@ -201,6 +212,33 @@ struct anfc {
 	struct completion xfercomp;
 	struct nand_ecclayout ecclayout;
 };
+
+static u8 anfc_dma_size(u32 bufsize)
+{
+	switch (bufsize) {
+	case SZ_4K:
+		return DMA_BUF_4K;
+	case SZ_8K:
+		return DMA_BUF_8K;
+	case SZ_16K:
+		return DMA_BUF_16K;
+	case SZ_32K:
+		return DMA_BUF_32K;
+	case SZ_64K:
+		return DMA_BUF_64K;
+	case SZ_128K:
+		return DMA_BUF_128K;
+	case SZ_256K:
+		return DMA_BUF_256K;
+	case SZ_512K:
+		return DMA_BUF_512K;
+	default:
+		WARN(1, "unsupported size: 0x%lx\n", bufsize);
+		break;
+	}
+
+	return 0;
+}
 
 static u8 anfc_page(u32 pagesize)
 {
@@ -360,6 +398,7 @@ static void anfc_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 			dev_err(nfc->dev, "Rdbuf mapping error");
 			return;
 		}
+		writel(anfc_dma_size(DMA_BUFSIZE), nfc->base + DMA_BOUND_OFST);
 		writel(paddr, nfc->base + DMA_ADDR0_OFST);
 		anfc_enable_intrs(nfc, nfc->rdintrmask);
 		writel(PROG_PGRD, nfc->base + PROG_OFST);
@@ -415,6 +454,7 @@ static void anfc_write_buf(struct mtd_info *mtd, const uint8_t *buf, int len)
 			dev_err(nfc->dev, "Writebuf mapping error");
 			return;
 		}
+		writel(anfc_dma_size(DMA_BUFSIZE), nfc->base + DMA_BOUND_OFST);
 		writel(paddr, nfc->base + DMA_ADDR0_OFST);
 		anfc_enable_intrs(nfc, XFER_COMPLETE);
 		writel(PROG_PGPROG, nfc->base + PROG_OFST);
