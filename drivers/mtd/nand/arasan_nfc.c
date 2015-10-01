@@ -33,8 +33,8 @@
 #define INTR_STS_EN_OFST		0x14
 #define INTR_SIG_EN_OFST		0x18
 #define INTR_STS_OFST			0x1C
-#define READY_STS_OFST			0x20
-#define DMA_ADDR1_OFST			0x24
+#define ID1_OFST			0x20
+#define ID2_OFST			0x24
 #define FLASH_STS_OFST			0x28
 #define DATA_PORT_OFST			0x30
 #define ECC_OFST			0x34
@@ -92,7 +92,9 @@
 #define PAGE_ERR_CNT_MASK		GENMASK(16, 8)
 #define PKT_ERR_CNT_MASK		GENMASK(7, 0)
 
-#define ONFI_ID_LEN			8
+#define ONFI_ID_ADDR			0x20
+#define ONFI_ID_LEN			4
+#define MAF_ID_LEN			5
 #define TEMP_BUF_SIZE			512
 
 /**
@@ -359,7 +361,6 @@ static void anfc_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 			return;
 		}
 		writel(paddr, nfc->base + DMA_ADDR0_OFST);
-		writel(paddr >> 32, nfc->base + DMA_ADDR1_OFST);
 		anfc_enable_intrs(nfc, nfc->rdintrmask);
 		writel(PROG_PGRD, nfc->base + PROG_OFST);
 		anfc_wait_for_event(nfc, XFER_COMPLETE);
@@ -415,7 +416,6 @@ static void anfc_write_buf(struct mtd_info *mtd, const uint8_t *buf, int len)
 			return;
 		}
 		writel(paddr, nfc->base + DMA_ADDR0_OFST);
-		writel(paddr >> 32, nfc->base + DMA_ADDR1_OFST);
 		anfc_enable_intrs(nfc, XFER_COMPLETE);
 		writel(PROG_PGPROG, nfc->base + PROG_OFST);
 		anfc_wait_for_event(nfc, XFER_COMPLETE);
@@ -630,7 +630,7 @@ static void anfc_cmd_function(struct mtd_info *mtd,
 			      unsigned int cmd, int column, int page_addr)
 {
 	struct anfc *nfc = container_of(mtd, struct anfc, mtd);
-	bool wait = false, read = false;
+	bool wait = false, read = false, read_id = false;
 	u32 addrcycles, prog;
 	u32 *bufptr = (u32 *)&nfc->buf[0];
 
@@ -683,8 +683,13 @@ static void anfc_cmd_function(struct mtd_info *mtd,
 	case NAND_CMD_READID:
 		anfc_prepare_cmd(nfc, cmd, 0, 0, 0, 1);
 		anfc_setpagecoladdr(nfc, page_addr, column);
-		anfc_setpktszcnt(nfc, ONFI_ID_LEN, 1);
-		anfc_readfifo(nfc, PROG_RDID, 8);
+		if (column == ONFI_ID_ADDR)
+			anfc_setpktszcnt(nfc, ONFI_ID_LEN, 1);
+		else
+			anfc_setpktszcnt(nfc, MAF_ID_LEN, 1);
+		prog = PROG_RDID;
+		wait = true;
+		read_id = true;
 		break;
 	case NAND_CMD_ERASE1:
 		addrcycles = nfc->raddr_cycles;
@@ -714,6 +719,14 @@ static void anfc_cmd_function(struct mtd_info *mtd,
 
 	if (read)
 		bufptr[0] = readl(nfc->base + FLASH_STS_OFST);
+	if (read_id) {
+		if (column == ONFI_ID_ADDR) {
+			bufptr[0] = readl(nfc->base + ID1_OFST + 0x1);
+		} else {
+			bufptr[0] = readl(nfc->base + ID1_OFST);
+			bufptr[1] = readl(nfc->base + ID2_OFST);
+		}
+	}
 }
 
 static void anfc_select_chip(struct mtd_info *mtd, int num)
