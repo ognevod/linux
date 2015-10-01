@@ -90,7 +90,7 @@
 
 #define PG_ADDR_SHIFT			16
 #define BCH_MODE_SHIFT			25
-#define BCH_EN_SHIFT			27
+#define BCH_EN_SHIFT			25
 #define ECC_SIZE_SHIFT			16
 
 #define MEM_ADDR_MASK			GENMASK(7, 0)
@@ -107,6 +107,7 @@
 #define MAF_ID_LEN			5
 #define DMA_BUFSIZE			SZ_64K
 #define TEMP_BUF_SIZE			512
+#define SPARE_ADDR_CYCLES		BIT(29)
 
 /**
  * struct anfc_ecc_matrix - Defines ecc information storage format
@@ -207,6 +208,7 @@ struct anfc {
 	u32 pktsize;
 	u32 bufshift;
 	u32 rdintrmask;
+	u32 ecc_regval;
 
 	struct completion bufrdy;
 	struct completion xfercomp;
@@ -292,7 +294,7 @@ static inline void anfc_setpktszcnt(struct anfc *nfc, u32 pktsize,
 static inline void anfc_set_eccsparecmd(struct anfc *nfc, u8 cmd1, u8 cmd2)
 {
 	writel(cmd1 | (cmd2 << CMD2_SHIFT) |
-	       (nfc->caddr_cycles << ADDR_CYCLES_SHIFT),
+	       (nfc->caddr_cycles << ADDR_CYCLES_SHIFT) | SPARE_ADDR_CYCLES,
 	       nfc->base + ECC_SPR_CMD_OFST);
 }
 
@@ -493,6 +495,7 @@ static int anfc_read_page_hwecc(struct mtd_info *mtd,
 	struct anfc *nfc = container_of(mtd, struct anfc, mtd);
 
 	anfc_set_eccsparecmd(nfc, NAND_CMD_RNDOUT, NAND_CMD_RNDOUTSTART);
+	writel(nfc->ecc_regval, nfc->base + ECC_OFST);
 
 	val = readl(nfc->base + CMD_OFST);
 	val = val | ECC_ENABLE;
@@ -533,6 +536,7 @@ static int anfc_write_page_hwecc(struct mtd_info *mtd,
 	uint32_t *eccpos = chip->ecc.layout->eccpos;
 
 	anfc_set_eccsparecmd(nfc, NAND_CMD_RNDIN, 0);
+	writel(nfc->ecc_regval, nfc->base + ECC_OFST);
 
 	val = readl(nfc->base + CMD_OFST);
 	val = val | ECC_ENABLE;
@@ -583,7 +587,7 @@ static void anfc_readfifo(struct anfc *nfc, u32 prog, u32 size)
 static int anfc_ecc_init(struct mtd_info *mtd,
 			 struct nand_ecc_ctrl *ecc)
 {
-	u32 oob_index, i, ecc_addr, regval, bchmode = 0;
+	u32 oob_index, i, regval, bchmode = 0;
 	struct nand_chip *nand_chip = mtd->priv;
 	struct anfc *nfc = container_of(mtd, struct anfc, mtd);
 	int found = -1;
@@ -640,7 +644,6 @@ static int anfc_ecc_init(struct mtd_info *mtd,
 	nfc->bch = ecc_matrix[found].bch;
 	oob_index = mtd->oobsize -
 		    nfc->ecclayout.eccbytes;
-	ecc_addr = mtd->writesize + oob_index;
 
 	for (i = 0; i < nand_chip->ecc.size; i++)
 		nfc->ecclayout.eccpos[i] = oob_index + i;
@@ -650,8 +653,10 @@ static int anfc_ecc_init(struct mtd_info *mtd,
 					 nfc->ecclayout.oobfree->offset;
 
 	nand_chip->ecc.layout = &(nfc->ecclayout);
-	regval = ecc_addr | (ecc_matrix[found].eccsize << ECC_SIZE_SHIFT) |
-		 (ecc_matrix[found].bch << BCH_EN_SHIFT);
+	regval = ecc_matrix[found].eccaddr |
+		(ecc_matrix[found].eccsize << ECC_SIZE_SHIFT) |
+		(ecc_matrix[found].bch << BCH_EN_SHIFT);
+	nfc->ecc_regval = regval;
 	writel(regval, nfc->base + ECC_OFST);
 
 	regval = readl(nfc->base + MEM_ADDR2_OFST);
