@@ -138,18 +138,18 @@ static const struct anfc_ecc_matrix ecc_matrix[] = {
 	{2048,	1024,	24,	1,	0x81c,	0x54},
 	/* 4K byte page */
 	{4096,	512,	1,	0,	0x1068,	0x18},
-	{4096,	512,	4,	1,	0x104c,	0x34},
+	/* {4096,	512,	4,	1,	0x104c,	0x34}, */
 	{4096,	512,	8,	1,	0x1018,	0x68},
-	{4096,	512,	12,	1,	0x1044,	0x9C},
+	/* {4096,	512,	12,	1,	0x1044,	0x9C}, */
 	{4096,	512,	16,	1,	0x1010,	0xD0},
-	{4096,	1024,	24,	1,	0x1038,	0xA8},
+	/* {4096,	1024,	24,	1,	0x1038,	0xA8}, */
 	/* 8K byte page */
 	{8192,	512,	1,	0,	0x20d0,	0x30},
-	{8192,	512,	4,	1,	0x2098,	0x68},
+	/* {8192,	512,	4,	1,	0x2098,	0x68}, */
 	{8192,	512,	8,	1,	0x2030,	0xD0},
 	{8192,	512,	12,	1,	0x2088,	0x138},
 	{8192,	512,	16,	1,	0x2020,	0x1A0},
-	{8192,	1024,	24,	1,	0x2070,	0x150},
+	/* {8192,	1024,	24,	1,	0x2070,	0x150}, */
 };
 
 /**
@@ -589,8 +589,7 @@ static int anfc_ecc_init(struct mtd_info *mtd,
 
 	for (i = 0; i < sizeof(ecc_matrix) / sizeof(struct anfc_ecc_matrix);
 	     i++) {
-		if ((ecc_matrix[i].pagesize == mtd->writesize) &&
-		    (ecc_matrix[i].codeword_size >= nand_chip->ecc_step_ds)) {
+		if (ecc_matrix[i].pagesize == mtd->writesize) {
 			if (ecc_matrix[i].eccbits >=
 			    nand_chip->ecc_strength_ds) {
 				found = i;
@@ -652,7 +651,7 @@ static int anfc_ecc_init(struct mtd_info *mtd,
 	regval = (regval & ~(BCH_MODE_MASK)) | (bchmode << BCH_MODE_SHIFT);
 	writel(regval, nfc->base + MEM_ADDR2_OFST);
 
-	if (nand_chip->ecc_step_ds >= 1024)
+	if (nand_chip->ecc.size >= 1024)
 		nfc->pktsize = 1024;
 	else
 		nfc->pktsize = 512;
