@@ -21,6 +21,7 @@
 #include <linux/vmalloc.h>
 #include <linux/wait.h>
 #include <linux/version.h>
+#include <linux/usb/hcd.h>
 #include <asm/unaligned.h>
 
 #include <media/v4l2-common.h>
@@ -1944,6 +1945,13 @@ static int uvc_probe(struct usb_interface *intf,
 			"endpoint (%d), status interrupt will not be "
 			"supported.\n", ret);
 	}
+
+	/*
+	 * This shouldn't be here. But since not all hcd are using tasklet for
+	 * urb completion callback, Check this from hcd and only use tasklet
+	 * for handling urb completion if hcd is not already using it.
+	 */
+	dev->hcd_uses_bh = hcd_giveback_urb_in_bh(bus_to_hcd(udev->bus));
 
 	uvc_trace(UVC_TRACE_PROBE, "UVC device initialized.\n");
 	usb_enable_autosuspend(udev);
