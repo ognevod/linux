@@ -851,15 +851,14 @@ static void uvc_video_stats_update(struct uvc_streaming *stream)
 size_t uvc_video_stats_dump(struct uvc_streaming *stream, char *buf,
 			    size_t size)
 {
+	const struct uvc_stats_stream * const stats = &stream->stats.stream;
 	unsigned int scr_sof_freq;
 	unsigned int duration;
 	struct timespec ts;
 	size_t count = 0;
 
-	ts.tv_sec = stream->stats.stream.stop_ts.tv_sec
-		  - stream->stats.stream.start_ts.tv_sec;
-	ts.tv_nsec = stream->stats.stream.stop_ts.tv_nsec
-		   - stream->stats.stream.start_ts.tv_nsec;
+	ts.tv_sec = stats->stop_ts.tv_sec - stats->start_ts.tv_sec;
+	ts.tv_nsec = stats->stop_ts.tv_nsec - stats->start_ts.tv_nsec;
 	if (ts.tv_nsec < 0) {
 		ts.tv_sec--;
 		ts.tv_nsec += 1000000000;
@@ -870,32 +869,31 @@ size_t uvc_video_stats_dump(struct uvc_streaming *stream, char *buf,
 	 */
 	duration = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 	if (duration != 0)
-		scr_sof_freq = stream->stats.stream.scr_sof_count * 1000
-			     / duration;
+		scr_sof_freq = stats->scr_sof_count * 1000 / duration;
 	else
 		scr_sof_freq = 0;
 
 	count += scnprintf(buf + count, size - count,
 			   "frames:  %u\npackets: %u\nempty:   %u\n"
 			   "errors:  %u\ninvalid: %u\n",
-			   stream->stats.stream.nb_frames,
-			   stream->stats.stream.nb_packets,
-			   stream->stats.stream.nb_empty,
-			   stream->stats.stream.nb_errors,
-			   stream->stats.stream.nb_invalid);
+			   stats->nb_frames,
+			   stats->nb_packets,
+			   stats->nb_empty,
+			   stats->nb_errors,
+			   stats->nb_invalid);
 	count += scnprintf(buf + count, size - count,
 			   "pts: %u early, %u initial, %u ok\n",
-			   stream->stats.stream.nb_pts_early,
-			   stream->stats.stream.nb_pts_initial,
-			   stream->stats.stream.nb_pts_constant);
+			   stats->nb_pts_early,
+			   stats->nb_pts_initial,
+			   stats->nb_pts_constant);
 	count += scnprintf(buf + count, size - count,
 			   "scr: %u count ok, %u diff ok\n",
-			   stream->stats.stream.nb_scr_count_ok,
-			   stream->stats.stream.nb_scr_diffs_ok);
+			   stats->nb_scr_count_ok,
+			   stats->nb_scr_diffs_ok);
 	count += scnprintf(buf + count, size - count,
 			   "sof: %u <= sof <= %u, freq %u.%03u kHz\n",
-			   stream->stats.stream.min_sof,
-			   stream->stats.stream.max_sof,
+			   stats->min_sof,
+			   stats->max_sof,
 			   scr_sof_freq / 1000, scr_sof_freq % 1000);
 
 	return count;
