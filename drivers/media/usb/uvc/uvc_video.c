@@ -972,8 +972,6 @@ static int uvc_video_decode_start(struct uvc_streaming *stream,
 	 */
 	if (stream->last_fid != fid) {
 		stream->sequence++;
-		if (stream->sequence)
-			uvc_video_stats_update(stream);
 	}
 
 	uvc_video_clock_decode(stream, buf, data, len, host_sof, ts);
@@ -1149,6 +1147,9 @@ static struct uvc_buffer *uvc_video_frame_check_finished(
 {
 	if (buf->state == UVC_BUF_STATE_READY) {
 		uvc_video_validate_buffer(stream, buf);
+
+		if (stream->sequence)
+			uvc_video_stats_update(stream);
 
 		return uvc_queue_next_buffer(&stream->queue, buf);
 	}
