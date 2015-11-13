@@ -883,12 +883,15 @@ size_t uvc_video_stats_dump(struct uvc_streaming *stream, char *buf,
 		scr_sof_freq = 0;
 
 	count += scnprintf(buf + count, size - count,
+			   "duration: %u.%u s\n"
 			   "frames:  %u\n"
 			   "error_frames: %u\n"
 			   "packets: %u\n"
 			   "empty:   %u\n"
 			   "errors:  %u\n"
 			   "invalid: %u\n",
+			   (unsigned)ts.tv_sec,
+			   (unsigned)ts.tv_nsec / 100000000,
 			   stats->nb_frames,
 			   stats->nb_error_frames,
 			   stats->nb_packets,
