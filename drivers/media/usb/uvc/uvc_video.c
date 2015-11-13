@@ -813,14 +813,16 @@ static void uvc_video_stats_decode(struct uvc_streaming *stream,
 		stream->stats.frame.nb_errors++;
 }
 
-static void uvc_video_stats_update(struct uvc_streaming *stream)
+static void uvc_video_stats_update(struct uvc_streaming *stream,
+				   struct uvc_buffer *buf)
 {
 	struct uvc_stats_frame *frame = &stream->stats.frame;
 
-	uvc_trace(UVC_TRACE_STATS, "frame %u stats: %u/%u/%u packets, "
+	uvc_trace(UVC_TRACE_STATS, "frame %u%s stats: %u/%u/%u packets, "
 		  "%u/%u/%u pts (%searly %sinitial), %u/%u scr, "
 		  "last pts/stc/sof %u/%u/%u\n",
-		  stream->sequence, frame->first_data,
+		  stream->sequence,
+		  buf->error ? " (error)" : "", frame->first_data,
 		  frame->nb_packets - frame->nb_empty, frame->nb_packets,
 		  frame->nb_pts_diffs, frame->last_pts_diff, frame->nb_pts,
 		  frame->has_early_pts ? "" : "!",
@@ -829,6 +831,8 @@ static void uvc_video_stats_update(struct uvc_streaming *stream)
 		  frame->pts, frame->scr_stc, frame->scr_sof);
 
 	stream->stats.stream.nb_frames++;
+	if (buf->error)
+		stream->stats.stream.nb_error_frames++;
 	stream->stats.stream.nb_packets += stream->stats.frame.nb_packets;
 	stream->stats.stream.nb_empty += stream->stats.frame.nb_empty;
 	stream->stats.stream.nb_errors += stream->stats.frame.nb_errors;
@@ -874,9 +878,14 @@ size_t uvc_video_stats_dump(struct uvc_streaming *stream, char *buf,
 		scr_sof_freq = 0;
 
 	count += scnprintf(buf + count, size - count,
-			   "frames:  %u\npackets: %u\nempty:   %u\n"
-			   "errors:  %u\ninvalid: %u\n",
+			   "frames:  %u\n"
+			   "error_frames: %u\n"
+			   "packets: %u\n"
+			   "empty:   %u\n"
+			   "errors:  %u\n"
+			   "invalid: %u\n",
 			   stats->nb_frames,
+			   stats->nb_error_frames,
 			   stats->nb_packets,
 			   stats->nb_empty,
 			   stats->nb_errors,
@@ -1149,7 +1158,7 @@ static struct uvc_buffer *uvc_video_frame_check_finished(
 		uvc_video_validate_buffer(stream, buf);
 
 		if (stream->sequence)
-			uvc_video_stats_update(stream);
+			uvc_video_stats_update(stream, buf);
 
 		return uvc_queue_next_buffer(&stream->queue, buf);
 	}

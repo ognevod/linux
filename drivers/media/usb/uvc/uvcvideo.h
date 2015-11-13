@@ -422,6 +422,7 @@ struct uvc_stats_stream {
 	struct timespec stop_ts;	/* Stream stop timestamp */
 
 	unsigned int nb_frames;		/* Number of frames */
+	unsigned int nb_error_frames;	/* Number of error frames */
 
 	unsigned int nb_packets;	/* Number of packets */
 	unsigned int nb_empty;		/* Number of empty packets */
