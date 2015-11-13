@@ -1141,6 +1141,22 @@ static void uvc_video_validate_buffer(const struct uvc_streaming *stream,
 }
 
 /*
+ * Check if buffer is finished and return next buffer to be filled if necessary.
+ */
+static struct uvc_buffer *uvc_video_frame_check_finished(
+		struct uvc_streaming *stream,
+		struct uvc_buffer *buf)
+{
+	if (buf->state == UVC_BUF_STATE_READY) {
+		uvc_video_validate_buffer(stream, buf);
+
+		return uvc_queue_next_buffer(&stream->queue, buf);
+	}
+
+	return buf;
+}
+
+/*
  * Completion handler for video URBs.
  */
 static void uvc_video_decode_isoc(struct uvc_urb *uu,
@@ -1166,11 +1182,7 @@ static void uvc_video_decode_isoc(struct uvc_urb *uu,
 			ret = uvc_video_decode_start(stream, buf, mem,
 				urb->iso_frame_desc[i].actual_length, uu->sof,
 				&uu->ts);
-			if (ret == -EAGAIN) {
-				uvc_video_validate_buffer(stream, buf);
-				buf = uvc_queue_next_buffer(&stream->queue,
-							    buf);
-			}
+			buf = uvc_video_frame_check_finished(stream, buf);
 		} while (ret == -EAGAIN);
 
 		if (ret < 0)
@@ -1184,10 +1196,7 @@ static void uvc_video_decode_isoc(struct uvc_urb *uu,
 		uvc_video_decode_end(stream, buf, mem,
 			urb->iso_frame_desc[i].actual_length);
 
-		if (buf->state == UVC_BUF_STATE_READY) {
-			uvc_video_validate_buffer(stream, buf);
-			buf = uvc_queue_next_buffer(&stream->queue, buf);
-		}
+		buf = uvc_video_frame_check_finished(stream, buf);
 	}
 }
 
@@ -1216,9 +1225,7 @@ static void uvc_video_decode_bulk(struct uvc_urb *uu,
 		do {
 			ret = uvc_video_decode_start(stream, buf, mem, len,
 				uu->sof, &uu->ts);
-			if (ret == -EAGAIN)
-				buf = uvc_queue_next_buffer(&stream->queue,
-							    buf);
+			buf = uvc_video_frame_check_finished(stream, buf);
 		} while (ret == -EAGAIN);
 
 		/* If an error occurred skip the rest of the payload. */
@@ -1250,9 +1257,7 @@ static void uvc_video_decode_bulk(struct uvc_urb *uu,
 		if (!stream->bulk.skip_payload && buf != NULL) {
 			uvc_video_decode_end(stream, buf, stream->bulk.header,
 				stream->bulk.payload_size);
-			if (buf->state == UVC_BUF_STATE_READY)
-				buf = uvc_queue_next_buffer(&stream->queue,
-							    buf);
+			buf = uvc_video_frame_check_finished(stream, buf);
 		}
 
 		stream->bulk.header_size = 0;
