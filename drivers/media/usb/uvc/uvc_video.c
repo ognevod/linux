@@ -858,11 +858,16 @@ size_t uvc_video_stats_dump(struct uvc_streaming *stream, char *buf,
 	const struct uvc_stats_stream * const stats = &stream->stats.stream;
 	unsigned int scr_sof_freq;
 	unsigned int duration;
-	struct timespec ts;
+	struct timespec last, ts;
 	size_t count = 0;
 
-	ts.tv_sec = stats->stop_ts.tv_sec - stats->start_ts.tv_sec;
-	ts.tv_nsec = stats->stop_ts.tv_nsec - stats->start_ts.tv_nsec;
+	if (stats->stop_ts.tv_sec == 0 && stats->stop_ts.tv_nsec == 0)
+		ktime_get_ts(&last);
+	else
+		last = stats->stop_ts;
+
+	ts.tv_sec = last.tv_sec - stats->start_ts.tv_sec;
+	ts.tv_nsec = last.tv_nsec - stats->start_ts.tv_nsec;
 	if (ts.tv_nsec < 0) {
 		ts.tv_sec--;
 		ts.tv_nsec += 1000000000;
