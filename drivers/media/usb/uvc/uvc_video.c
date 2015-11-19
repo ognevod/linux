@@ -1145,17 +1145,6 @@ static int uvc_video_encode_data(struct uvc_streaming *stream,
  */
 
 /*
- * Set error flag for incomplete buffer.
- */
-static void uvc_video_validate_buffer(const struct uvc_streaming *stream,
-				      struct uvc_buffer *buf)
-{
-	if (stream->ctrl.dwMaxVideoFrameSize != buf->bytesused &&
-	    !(stream->cur_format->flags & UVC_FMT_FLAG_COMPRESSED))
-		buf->error = 1;
-}
-
-/*
  * Check if buffer is finished and return next buffer to be filled if necessary.
  */
 static struct uvc_buffer *uvc_video_frame_check_finished(
@@ -1163,7 +1152,9 @@ static struct uvc_buffer *uvc_video_frame_check_finished(
 		struct uvc_buffer *buf)
 {
 	if (buf->state == UVC_BUF_STATE_READY) {
-		uvc_video_validate_buffer(stream, buf);
+		if (stream->ctrl.dwMaxVideoFrameSize != buf->bytesused &&
+		    !(stream->cur_format->flags & UVC_FMT_FLAG_COMPRESSED))
+			buf->error = 1;
 
 		if (stream->sequence)
 			uvc_video_stats_update(stream, buf);
