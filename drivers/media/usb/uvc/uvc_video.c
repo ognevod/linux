@@ -1190,7 +1190,8 @@ static void uvc_video_decode_isoc(struct uvc_urb *uu,
 			ret = uvc_video_decode_start(stream, buf, mem,
 				urb->iso_frame_desc[i].actual_length, uu->sof,
 				&uu->ts);
-			buf = uvc_video_check_finished(stream, buf);
+			if (ret == -EAGAIN)
+				buf = uvc_video_check_finished(stream, buf);
 		} while (ret == -EAGAIN);
 
 		if (ret < 0)
@@ -1233,7 +1234,8 @@ static void uvc_video_decode_bulk(struct uvc_urb *uu,
 		do {
 			ret = uvc_video_decode_start(stream, buf, mem, len,
 				uu->sof, &uu->ts);
-			buf = uvc_video_check_finished(stream, buf);
+			if (ret == -EAGAIN)
+				buf = uvc_video_check_finished(stream, buf);
 		} while (ret == -EAGAIN);
 
 		/* If an error occurred skip the rest of the payload. */
