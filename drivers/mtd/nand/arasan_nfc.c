@@ -254,7 +254,7 @@ static u8 anfc_page(u32 pagesize)
 	return 0;
 }
 
-static inline void anfc_enable_intrs(struct anfc *nfc, u32 val)
+static inline void anfc_set_irq_masks(struct anfc *nfc, u32 val)
 {
 	writel(val, nfc->base + INTR_STS_EN_OFST);
 	writel(val, nfc->base + INTR_SIG_EN_OFST);
@@ -367,9 +367,9 @@ static void anfc_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 	dma_addr_t paddr = 0;
 
 	if (nfc->dma)
-		nfc->rdintrmask = XFER_COMPLETE;
+		nfc->rdintrmask |= XFER_COMPLETE;
 	else
-		nfc->rdintrmask = READ_READY;
+		nfc->rdintrmask |= READ_READY;
 
 	if (nfc->curr_cmd == NAND_CMD_READ0) {
 		pktsize = nfc->pktsize;
@@ -392,14 +392,15 @@ static void anfc_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 		}
 		writel(anfc_dma_size(DMA_BUFSIZE), nfc->base + DMA_BOUND_OFST);
 		writel(paddr, nfc->base + DMA_ADDR0_OFST);
-		anfc_enable_intrs(nfc, nfc->rdintrmask);
+		anfc_set_irq_masks(nfc, nfc->rdintrmask);
 		writel(PROG_PGRD, nfc->base + PROG_OFST);
 		anfc_wait_for_event(nfc, XFER_COMPLETE);
 		dma_unmap_single(nfc->dev, paddr, len, DMA_FROM_DEVICE);
+		nfc->rdintrmask = 0;
 		return;
 	}
 
-	anfc_enable_intrs(nfc, nfc->rdintrmask);
+	anfc_set_irq_masks(nfc, nfc->rdintrmask);
 	writel(PROG_PGRD, nfc->base + PROG_OFST);
 
 	while (buf_rd_cnt < pktcount) {
@@ -408,7 +409,7 @@ static void anfc_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 		buf_rd_cnt++;
 
 		if (buf_rd_cnt == pktcount)
-			anfc_enable_intrs(nfc, XFER_COMPLETE);
+			anfc_set_irq_masks(nfc, XFER_COMPLETE);
 
 		for (i = 0; i < pktsize / 4; i++)
 			bufptr[i] = readl(nfc->base + DATA_PORT_OFST);
@@ -416,10 +417,11 @@ static void anfc_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 		bufptr += (pktsize / 4);
 
 		if (buf_rd_cnt < pktcount)
-			anfc_enable_intrs(nfc, nfc->rdintrmask);
+			anfc_set_irq_masks(nfc, nfc->rdintrmask);
 	}
 
 	anfc_wait_for_event(nfc, XFER_COMPLETE);
+	nfc->rdintrmask = 0;
 }
 
 static void anfc_write_buf(struct mtd_info *mtd, const uint8_t *buf, int len)
@@ -448,14 +450,14 @@ static void anfc_write_buf(struct mtd_info *mtd, const uint8_t *buf, int len)
 		}
 		writel(anfc_dma_size(DMA_BUFSIZE), nfc->base + DMA_BOUND_OFST);
 		writel(paddr, nfc->base + DMA_ADDR0_OFST);
-		anfc_enable_intrs(nfc, XFER_COMPLETE);
+		anfc_set_irq_masks(nfc, XFER_COMPLETE);
 		writel(PROG_PGPROG, nfc->base + PROG_OFST);
 		anfc_wait_for_event(nfc, XFER_COMPLETE);
 		dma_unmap_single(nfc->dev, paddr, len, DMA_TO_DEVICE);
 		return;
 	}
 
-	anfc_enable_intrs(nfc, WRITE_READY);
+	anfc_set_irq_masks(nfc, WRITE_READY);
 	writel(PROG_PGPROG, nfc->base + PROG_OFST);
 
 	while (buf_wr_cnt < pktcount) {
@@ -463,7 +465,7 @@ static void anfc_write_buf(struct mtd_info *mtd, const uint8_t *buf, int len)
 
 		buf_wr_cnt++;
 		if (buf_wr_cnt == pktcount)
-			anfc_enable_intrs(nfc, XFER_COMPLETE);
+			anfc_set_irq_masks(nfc, XFER_COMPLETE);
 
 		for (i = 0; i < (pktsize / 4); i++)
 			writel(bufptr[i], nfc->base + DATA_PORT_OFST);
@@ -471,7 +473,7 @@ static void anfc_write_buf(struct mtd_info *mtd, const uint8_t *buf, int len)
 		bufptr += (pktsize / 4);
 
 		if (buf_wr_cnt < pktcount)
-			anfc_enable_intrs(nfc, WRITE_READY);
+			anfc_set_irq_masks(nfc, WRITE_READY);
 	}
 
 	anfc_wait_for_event(nfc, XFER_COMPLETE);
@@ -538,10 +540,6 @@ static int anfc_write_page_hwecc(struct mtd_info *mtd,
 	if (oob_required) {
 		anfc_device_ready(mtd, chip);
 		chip->cmdfunc(mtd, NAND_CMD_READOOB, 0, nfc->page);
-		if (nfc->dma)
-			nfc->rdintrmask = XFER_COMPLETE;
-		else
-			nfc->rdintrmask = READ_READY;
 		chip->read_buf(mtd, ecc_calc, mtd->oobsize);
 		for (i = 0; i < chip->ecc.total; i++)
 			chip->oob_poi[eccpos[i]] = ecc_calc[eccpos[i]];
@@ -562,12 +560,12 @@ static void anfc_readfifo(struct anfc *nfc, u32 prog, u32 size)
 {
 	u32 i, *bufptr = (u32 *)&nfc->buf[0];
 
-	anfc_enable_intrs(nfc, READ_READY);
+	anfc_set_irq_masks(nfc, READ_READY);
 
 	writel(prog, nfc->base + PROG_OFST);
 	anfc_wait_for_event(nfc, READ_READY);
 
-	anfc_enable_intrs(nfc, XFER_COMPLETE);
+	anfc_set_irq_masks(nfc, XFER_COMPLETE);
 
 	for (i = 0; i < size / 4; i++)
 		bufptr[i] = readl(nfc->base + DATA_PORT_OFST);
@@ -747,7 +745,7 @@ static void anfc_cmd_function(struct mtd_info *mtd,
 	}
 
 	if (wait) {
-		anfc_enable_intrs(nfc, XFER_COMPLETE);
+		anfc_set_irq_masks(nfc, XFER_COMPLETE);
 		writel(prog, nfc->base + PROG_OFST);
 		anfc_wait_for_event(nfc, XFER_COMPLETE);
 	}
@@ -780,39 +778,54 @@ static void anfc_select_chip(struct mtd_info *mtd, int num)
 static irqreturn_t anfc_irq_handler(int irq, void *ptr)
 {
 	struct anfc *nfc = ptr;
-	u32 regval = 0, status;
+	u32 processed = 0, status, enabled;
 
 	status = readl(nfc->base + INTR_STS_OFST);
+	enabled = readl(nfc->base + INTR_STS_EN_OFST);
+
+	if (!status)
+		return IRQ_NONE;
+
 	if (status & XFER_COMPLETE) {
 		complete(&nfc->xfercomp);
-		regval |= XFER_COMPLETE;
+		processed |= XFER_COMPLETE;
+		/* MBIT_ERROR is only valid in lieu of XFER_COMPLETE or
+		   READ_READY. If they are triggered, we can switch it off */
+		if (enabled & MBIT_ERROR)
+			processed |= MBIT_ERROR;
 	}
 
 	if (status & READ_READY) {
 		complete(&nfc->bufrdy);
-		regval |= READ_READY;
+		processed |= READ_READY;
+		if (enabled & MBIT_ERROR)
+			processed |= MBIT_ERROR;
 	}
 
 	if (status & WRITE_READY) {
 		complete(&nfc->bufrdy);
-		regval |= WRITE_READY;
+		processed |= WRITE_READY;
 	}
 
 	if (status & MBIT_ERROR) {
+		/* MBIT_ERROR is set instead of READ_READY or XFER_COMPLETE
+		for multibit errors in Hamming mode */
 		nfc->err = true;
-		complete(&nfc->bufrdy);
-		regval |= MBIT_ERROR;
+		processed |= MBIT_ERROR;
+		if (nfc->dma) {
+			complete(&nfc->xfercomp);
+			processed |= XFER_COMPLETE;
+		} else {
+			complete(&nfc->bufrdy);
+			processed |= READ_READY;
+		}
 	}
 
-	if (regval) {
-		writel(regval, nfc->base + INTR_STS_OFST);
-		writel(0, nfc->base + INTR_STS_EN_OFST);
-		writel(0, nfc->base + INTR_SIG_EN_OFST);
+	writel(processed, nfc->base + INTR_STS_OFST);
+	/* Disabling processed interrupts */
+	anfc_set_irq_masks(nfc, enabled & (~processed));
 
-		return IRQ_HANDLED;
-	}
-
-	return IRQ_NONE;
+	return IRQ_HANDLED;
 }
 
 static int anfc_probe(struct platform_device *pdev)
@@ -853,6 +866,7 @@ static int anfc_probe(struct platform_device *pdev)
 	mtd->size = nand_chip->chipsize;
 	nfc->dma = of_property_read_bool(pdev->dev.of_node,
 					 "arasan,has-mdma");
+	nfc->rdintrmask = 0;
 	platform_set_drvdata(pdev, nfc);
 	init_completion(&nfc->bufrdy);
 	init_completion(&nfc->xfercomp);
