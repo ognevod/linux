@@ -98,6 +98,7 @@
 #define CS_SHIFT			30
 
 #define PAGE_ERR_CNT_MASK		GENMASK(16, 8)
+#define PAGE_ERR_CNT_SHIFT              8
 #define PKT_ERR_CNT_MASK		GENMASK(7, 0)
 
 #define ONFI_ID_ADDR			0x20
@@ -497,7 +498,8 @@ static int anfc_read_page_hwecc(struct mtd_info *mtd,
 
 	val = readl(nfc->base + ECC_ERR_CNT_OFST);
 	if (nfc->bch) {
-		mtd->ecc_stats.corrected += val & PAGE_ERR_CNT_MASK;
+		mtd->ecc_stats.corrected +=
+			(val & PAGE_ERR_CNT_MASK) >> PAGE_ERR_CNT_SHIFT;
 	} else {
 		val = readl(nfc->base + ECC_ERR_CNT_1BIT_OFST);
 		mtd->ecc_stats.corrected += val;
