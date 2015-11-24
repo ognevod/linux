@@ -228,7 +228,7 @@ static u8 anfc_dma_size(u32 bufsize)
 	case SZ_512K:
 		return DMA_BUF_512K;
 	default:
-		WARN(1, "unsupported size: 0x%lx\n", bufsize);
+		WARN(1, "unsupported size: %#x\n", bufsize);
 		break;
 	}
 
@@ -247,7 +247,7 @@ static u8 anfc_page(u32 pagesize)
 	case 8192:
 		return PAGE_SIZE_8K;
 	default:
-		WARN(1, "unsupported size:%lx\n", pagesize);
+		WARN(1, "unsupported size: %#x\n", pagesize);
 		break;
 	}
 
@@ -338,8 +338,6 @@ static int anfc_device_ready(struct mtd_info *mtd,
 static int anfc_read_oob(struct mtd_info *mtd, struct nand_chip *chip,
 			 int page)
 {
-	struct anfc *nfc = container_of(mtd, struct anfc, mtd);
-
 	chip->cmdfunc(mtd, NAND_CMD_READOOB, 0, page);
 
 	chip->read_buf(mtd, chip->oob_poi, mtd->oobsize);
@@ -884,7 +882,7 @@ static int anfc_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Page size too big for controller\n");
 		return -EINVAL;
 	}
-	if (nand_chip->onfi_params.addr_cycles == NULL) {
+	if (!nand_chip->onfi_params.addr_cycles) {
 		/* Good estimate in case ONFI ident doesn't work */
 		nfc->raddr_cycles = 3;
 		nfc->caddr_cycles = 2;
