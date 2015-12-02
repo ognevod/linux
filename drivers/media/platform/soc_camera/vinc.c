@@ -29,6 +29,7 @@
 #include <linux/device.h>
 #include <linux/platform_device.h>
 #include <linux/videodev2.h>
+#include <linux/vinc.h>
 #include <linux/pm_runtime.h>
 #include <linux/sched.h>
 
@@ -180,6 +181,10 @@
 
 #define STREAM_CTR			0x3f00
 
+#define CC_CT_OFFSET_COEFF8		0x10
+#define CC_CT_OFFSET_OFFSET0_1		0x14
+#define CC_CT_OFFSET_OFFSET2		0x18
+
 /* Bits fo AXI_MASTER_CFG register */
 #define AXI_MASTER_CFG_MAX_BURST(v)	(v & 0x7)
 #define AXI_MASTER_CFG_MAX_WR_ID(v)	((v & 0xF) << 4)
@@ -268,7 +273,31 @@
 #define STREAM_CTR_STREAM1_ENABLE	BIT(1)
 #define STREAM_CTR_DMA_CHANNELS_ENABLE	BIT(8)
 
+#define CTRL_BAD_PIXELS_COUNT		4096
+#define CTRL_BAD_ROWSCOLS_COUNT		16
+#define CTRL_GC_ELEMENTS_COUNT		4096
+#define CTRL_DR_ELEMENTS_COUNT		4096
+
+#define MAX_WIDTH_HEIGHT		4095
+#define MAX_COMP_VALUE			4095
+
 enum vinc_input_format { UNKNOWN, BAYER, RGB, YCbCr };
+
+enum vinc_ctrls {
+	CTRL_BP_EN,
+	CTRL_BP_PIX,
+	CTRL_BP_ROW,
+	CTRL_BP_COL,
+	CTRL_GC_EN,
+	CTRL_GC,
+	CTRL_CC_EN,
+	CTRL_CC,
+	CTRL_CT_EN,
+	CTRL_CT,
+	CTRL_DR_EN,
+	CTRL_DR,
+	CTRLS_COUNT
+};
 
 struct vinc_dev {
 	struct soc_camera_host ici;
@@ -290,6 +319,13 @@ struct vinc_dev {
 	enum vinc_input_format input_format;
 	u32 bayer_mode;
 
+	struct v4l2_ctrl *ctrls[CTRLS_COUNT];
+	int bp_change:1;
+	int gc_change:1;
+	int cc_change:1;
+	int ct_change:1;
+	int dr_change:1;
+
 	struct v4l2_crop crop1;
 	struct v4l2_crop crop2;
 
@@ -306,6 +342,11 @@ struct vinc_cam {
 struct vinc_format {
 	struct soc_mbus_pixelfmt fmt;
 	u32 code;
+};
+
+struct vinc_ctrl_cfg {
+	enum vinc_ctrls ctrl_id;
+	struct v4l2_ctrl_config cfg;
 };
 
 static struct vinc_format vinc_formats[] = {
@@ -486,6 +527,478 @@ static struct vb2_ops vinc_videobuf_ops = {
 	.stop_streaming		= vinc_stop_streaming,
 };
 
+static void set_bad_pixels(struct vinc_dev *priv, struct vinc_bad_pixel *bp)
+{
+	int i;
+
+	vinc_write(priv, STREAM_PROC_BP_MAP_CTR(0), 0);
+	for (i = 0; i < CTRL_BAD_PIXELS_COUNT; i++)
+		vinc_write(priv, STREAM_PROC_BP_MAP_DATA(0),
+			   (bp[i].y << 12) | bp[i].x);
+}
+
+static void set_bad_rows_cols(struct vinc_dev *priv, u16 *data, int is_cols)
+{
+	int i;
+	u32 reg_start = is_cols ? STREAM_PROC_BP_BAD_COLUMN(0, 0) :
+			STREAM_PROC_BP_BAD_LINE(0, 0);
+
+	for (i = 0; i < (CTRL_BAD_ROWSCOLS_COUNT / 2); i++)
+		vinc_write(priv, reg_start + i * sizeof(u32),
+			   (data[i * 2] & 0xFFF) |
+			   ((data[i * 2 + 1] & 0xFFF) << 16));
+}
+
+static void set_gc_curve(struct vinc_dev *priv, struct vinc_gamma_curve *gc)
+{
+	int i;
+
+	vinc_write(priv, STREAM_PROC_GC_CTR(0), 0);
+	for (i = 0; i < CTRL_GC_ELEMENTS_COUNT; i++)
+		vinc_write(priv, STREAM_PROC_GC_DATA(0),
+			   (gc->green[i] << 16) | gc->red[i]);
+	vinc_write(priv, STREAM_PROC_GC_CTR(0), 0x1000);
+	for (i = 0; i < CTRL_GC_ELEMENTS_COUNT; i++)
+		vinc_write(priv, STREAM_PROC_GC_DATA(0),
+			   gc->blue[i]);
+}
+
+static void set_cc_ct(struct vinc_dev *priv, struct vinc_cc *cc, int is_ct)
+{
+	int i;
+	u32 start_reg = is_ct ? STREAM_PROC_CT_COEFF(0, 0) :
+			STREAM_PROC_CC_COEFF(0, 0);
+	u32 val;
+
+	for (i = 0; i < 4; i++) {
+		val = cc->coeff[i * 2] | (cc->coeff[i * 2 + 1] << 16);
+		vinc_write(priv, start_reg + i * 4, val);
+	}
+	vinc_write(priv, start_reg + CC_CT_OFFSET_COEFF8, cc->coeff[8]);
+	val = cc->offset[0] | (cc->offset[1] << 16);
+	vinc_write(priv, start_reg + CC_CT_OFFSET_OFFSET0_1, val);
+	val = cc->offset[2] | (cc->scaling << 16);
+	vinc_write(priv, start_reg + CC_CT_OFFSET_OFFSET2, val);
+}
+
+static void set_dr(struct vinc_dev *priv, u16 *dr)
+{
+	int i;
+
+	vinc_write(priv, STREAM_PROC_DR_CTR(0), 0);
+	for (i = 0; i < CTRL_DR_ELEMENTS_COUNT; i++)
+		vinc_write(priv, STREAM_PROC_DR_DATA(0), dr[i]);
+}
+
+static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct soc_camera_device *icd = container_of(ctrl->handler,
+			struct soc_camera_device, ctrl_handler);
+	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
+	struct vinc_dev *priv = ici->priv;
+	u32 proc_cfg, stream_ctr;
+
+	switch (ctrl->id) {
+	case V4L2_CID_BAD_CORRECTION_ENABLE:
+		/* For programming BP block we need to stop video */
+		stream_ctr = vinc_read(priv, STREAM_CTR);
+		vinc_write(priv, STREAM_CTR, 0);
+		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+		if (ctrl->val)
+			proc_cfg |= STREAM_PROC_CFG_BPC_EN;
+		else
+			proc_cfg &= ~STREAM_PROC_CFG_BPC_EN;
+		vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+		if (ctrl->val && priv->bp_change) {
+			set_bad_pixels(priv, priv->ctrls[CTRL_BP_PIX]->p_cur.p);
+			set_bad_rows_cols(priv,
+					  priv->ctrls[CTRL_BP_ROW]->p_cur.p_u16,
+					  0);
+			set_bad_rows_cols(priv,
+					  priv->ctrls[CTRL_BP_COL]->p_cur.p_u16,
+					  1);
+			priv->bp_change = 0;
+		}
+		vinc_write(priv, STREAM_CTR, stream_ctr);
+		break;
+	case V4L2_CID_BAD_PIXELS:
+		if (priv->ctrls[CTRL_BP_EN]->cur.val) {
+			stream_ctr = vinc_read(priv, STREAM_CTR);
+			vinc_write(priv, STREAM_CTR, 0);
+			set_bad_pixels(priv, ctrl->p_new.p);
+			vinc_write(priv, STREAM_CTR, stream_ctr);
+		} else
+			priv->bp_change = 1;
+		break;
+	case V4L2_CID_BAD_ROWS:
+	case V4L2_CID_BAD_COLS:
+		if (priv->ctrls[CTRL_BP_EN]->cur.val) {
+			stream_ctr = vinc_read(priv, STREAM_CTR);
+			vinc_write(priv, STREAM_CTR, 0);
+			set_bad_rows_cols(priv, ctrl->p_new.p_u16,
+					  ctrl->id == V4L2_CID_BAD_ROWS ?
+							  0 : 1);
+			vinc_write(priv, STREAM_CTR, stream_ctr);
+		} else
+			priv->bp_change = 1;
+		break;
+	case V4L2_CID_GAMMA_CURVE_ENABLE:
+		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+		if (ctrl->val)
+			proc_cfg |= STREAM_PROC_CFG_GC_EN;
+		else
+			proc_cfg &= ~STREAM_PROC_CFG_GC_EN;
+		vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+		if (ctrl->val && priv->gc_change) {
+			set_gc_curve(priv, priv->ctrls[CTRL_GC]->p_cur.p);
+			priv->gc_change = 0;
+		}
+		break;
+	case V4L2_CID_GAMMA_CURVE:
+		if (priv->ctrls[CTRL_GC_EN]->cur.val)
+			set_gc_curve(priv, ctrl->p_new.p);
+		else
+			priv->gc_change = 1;
+		break;
+	case V4L2_CID_CC_ENABLE:
+		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+		if (ctrl->val)
+			proc_cfg |= STREAM_PROC_CFG_CC_EN;
+		else
+			proc_cfg &= ~STREAM_PROC_CFG_CC_EN;
+		vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+		if (ctrl->val && priv->cc_change) {
+			set_cc_ct(priv, priv->ctrls[CTRL_CC]->p_cur.p, 0);
+			priv->cc_change = 0;
+		}
+		break;
+	case V4L2_CID_CC:
+		if (priv->ctrls[CTRL_CC_EN]->cur.val)
+			set_cc_ct(priv, ctrl->p_new.p, 0);
+		else
+			priv->cc_change = 1;
+		break;
+	case V4L2_CID_CT_ENABLE:
+		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+		if (ctrl->val)
+			proc_cfg |= STREAM_PROC_CFG_CT_EN;
+		else
+			proc_cfg &= ~STREAM_PROC_CFG_CT_EN;
+		vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+		if (ctrl->val && priv->ct_change) {
+			set_cc_ct(priv, priv->ctrls[CTRL_CT]->p_cur.p, 1);
+			priv->ct_change = 0;
+		}
+		break;
+	case V4L2_CID_CT:
+		if (priv->ctrls[CTRL_CT_EN]->cur.val)
+			set_cc_ct(priv, ctrl->p_new.p, 1);
+		else
+			priv->ct_change = 1;
+		break;
+	case V4L2_CID_DR_ENABLE:
+		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+		if (ctrl->val)
+			proc_cfg |= STREAM_PROC_CFG_ADR_EN;
+		else
+			proc_cfg &= ~STREAM_PROC_CFG_ADR_EN;
+		vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+		if (ctrl->val && priv->dr_change) {
+			set_dr(priv, priv->ctrls[CTRL_DR]->p_cur.p_u16);
+			priv->dr_change = 0;
+		}
+		break;
+	case V4L2_CID_DR:
+		if (priv->ctrls[CTRL_DR_EN]->cur.val)
+			set_dr(priv, ctrl->p_new.p_u16);
+		else
+			priv->dr_change = 1;
+		break;
+	default:
+		return -EINVAL;
+	}
+	dev_dbg(priv->ici.v4l2_dev.dev, "%s: %#x (%s), is_ptr: %d, val: %d\n",
+		__func__, ctrl->id, ctrl->name, ctrl->is_ptr, ctrl->val);
+
+	return 0;
+}
+
+/* This function will be call only for controls
+ * with V4L2_CTRL_FLAG_VOLATILE flag */
+static int vinc_g_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct vinc_dev *priv = ctrl->priv;
+
+	dev_dbg(priv->ici.v4l2_dev.dev, "%s: %#x (%s)\n",
+		__func__, ctrl->id, ctrl->name);
+	return 0;
+}
+
+static int vinc_try_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct vinc_bad_pixel *pixel;
+	struct vinc_gamma_curve *gc;
+	int i;
+
+	switch (ctrl->id) {
+	case V4L2_CID_BAD_CORRECTION_ENABLE:
+	case V4L2_CID_GAMMA_CURVE_ENABLE:
+	case V4L2_CID_CC_ENABLE:
+	case V4L2_CID_CT_ENABLE:
+	case V4L2_CID_DR_ENABLE:
+		return (u32)ctrl->val < 2 ? 0 : -ERANGE;
+	case V4L2_CID_BAD_PIXELS:
+		pixel = ctrl->p_new.p;
+		for (i = 0; i < CTRL_BAD_PIXELS_COUNT; i++) {
+			if (((pixel[i].x > MAX_WIDTH_HEIGHT) ||
+			     (pixel[i].y > MAX_WIDTH_HEIGHT)) &&
+			    (pixel[i].x != 0xFFFF) && (pixel[i].y != 0xFFFF))
+				return -ERANGE;
+		}
+		return 0;
+	case V4L2_CID_BAD_ROWS:
+	case V4L2_CID_BAD_COLS:
+		for (i = 0; i < CTRL_BAD_ROWSCOLS_COUNT; i++) {
+			if (ctrl->p_new.p_u16[i] > MAX_WIDTH_HEIGHT &&
+			    ctrl->p_new.p_u16[i] != 0xFFFF)
+				return -ERANGE;
+		}
+		return 0;
+	case V4L2_CID_GAMMA_CURVE:
+		gc = ctrl->p_new.p;
+		for (i = 0; i < CTRL_GC_ELEMENTS_COUNT; i++) {
+			if (gc->red[i] > MAX_COMP_VALUE ||
+			    gc->green[i] > MAX_COMP_VALUE ||
+			    gc->blue[i] > MAX_COMP_VALUE)
+				return -ERANGE;
+		}
+		return 0;
+	case V4L2_CID_CC:
+	case V4L2_CID_CT:
+	case V4L2_CID_DR:
+		return 0;
+	default:
+		return -EINVAL;
+	}
+}
+
+static struct v4l2_ctrl_ops ctrl_ops = {
+	.g_volatile_ctrl = vinc_g_ctrl,
+	.s_ctrl = vinc_s_ctrl,
+	.try_ctrl = vinc_try_ctrl
+};
+
+static struct vinc_ctrl_cfg ctrl_cfg[] = {
+	{
+		.ctrl_id = CTRL_BP_EN,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_BAD_CORRECTION_ENABLE,
+			.name = "Bad pixels/rows/columns repair enable",
+			.type = V4L2_CTRL_TYPE_BOOLEAN,
+			.min = 0,
+			.max = 1,
+			.step = 1,
+			.def = 0,
+			.flags = 0
+		}
+	},
+	{
+		.ctrl_id = CTRL_BP_PIX,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_BAD_PIXELS,
+			.name = "Bad pixels",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_bad_pixel) *
+					CTRL_BAD_PIXELS_COUNT,
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
+		}
+	},
+	{
+		.ctrl_id = CTRL_BP_ROW,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_BAD_ROWS,
+			.name = "Bad rows",
+			.type = V4L2_CTRL_TYPE_U16,
+			.min = 0,
+			.max = 0xFFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = CTRL_BAD_ROWSCOLS_COUNT,
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
+		}
+	},
+	{
+		.ctrl_id = CTRL_BP_COL,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_BAD_COLS,
+			.name = "Bad columns",
+			.type = V4L2_CTRL_TYPE_U16,
+			.min = 0,
+			.max = 0xFFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = CTRL_BAD_ROWSCOLS_COUNT,
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
+		}
+	},
+	{
+		.ctrl_id = CTRL_GC_EN,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_GAMMA_CURVE_ENABLE,
+			.name = "Gamma curve enable",
+			.type = V4L2_CTRL_TYPE_BOOLEAN,
+			.min = 0,
+			.max = 1,
+			.step = 1,
+			.def = 0,
+			.flags = 0
+		}
+	},
+	{
+		.ctrl_id = CTRL_GC,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_GAMMA_CURVE,
+			.name = "Gamma curve",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_gamma_curve),
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
+		}
+	},
+	{
+		.ctrl_id = CTRL_CC_EN,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_CC_ENABLE,
+			.name = "Color correction enable",
+			.type = V4L2_CTRL_TYPE_BOOLEAN,
+			.min = 0,
+			.max = 1,
+			.step = 1,
+			.def = 0,
+			.flags = 0
+		}
+	},
+	{
+		.ctrl_id = CTRL_CC,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_CC,
+			.name = "Color correction",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_cc),
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
+		}
+	},
+	{
+		.ctrl_id = CTRL_CT_EN,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_CT_ENABLE,
+			.name = "Color tranformation enable",
+			.type = V4L2_CTRL_TYPE_BOOLEAN,
+			.min = 0,
+			.max = 1,
+			.step = 1,
+			.def = 0,
+			.flags = 0
+		}
+	},
+	{
+		.ctrl_id = CTRL_CT,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_CT,
+			.name = "Color tranformation",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_cc),
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
+		}
+	},
+	{
+		.ctrl_id = CTRL_DR_EN,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_DR_ENABLE,
+			.name = "Dynamic range enable",
+			.type = V4L2_CTRL_TYPE_BOOLEAN,
+			.min = 0,
+			.max = 1,
+			.step = 1,
+			.def = 0,
+			.flags = 0
+		}
+	},
+	{
+		.ctrl_id = CTRL_DR,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_DR,
+			.name = "Dynamic range",
+			.type = V4L2_CTRL_TYPE_U16,
+			.min = 0,
+			.max = 0xFFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = CTRL_DR_ELEMENTS_COUNT,
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
+		}
+	},
+};
+
+static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
+				struct vinc_dev *priv)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(ctrl_cfg); i++) {
+		priv->ctrls[ctrl_cfg[i].ctrl_id] = v4l2_ctrl_new_custom(hdl,
+				&ctrl_cfg[i].cfg, NULL);
+		if (!priv->ctrls[ctrl_cfg[i].ctrl_id]) {
+			dev_err(priv->ici.v4l2_dev.dev,
+				"Can not create control %#x\n",
+				ctrl_cfg[i].cfg.id);
+			return hdl->error;
+		}
+	}
+
+	priv->bp_change = 1;
+	priv->gc_change = 1;
+	priv->cc_change = 1;
+	priv->ct_change = 1;
+	priv->dr_change = 1;
+
+	memset(priv->ctrls[CTRL_BP_PIX]->p_cur.p, 0xFF,
+	       sizeof(struct vinc_bad_pixel) * CTRL_BAD_PIXELS_COUNT);
+	memset(priv->ctrls[CTRL_BP_PIX]->p_cur.p, 0xFF,
+	       sizeof(u16) * CTRL_BAD_ROWSCOLS_COUNT);
+	memset(priv->ctrls[CTRL_BP_PIX]->p_cur.p, 0xFF,
+	       sizeof(u16) * CTRL_BAD_ROWSCOLS_COUNT);
+
+	return hdl->error;
+}
+
 static int vinc_get_formats(struct soc_camera_device *icd, unsigned int idx,
 			    struct soc_camera_format_xlate *xlate)
 {
@@ -531,6 +1044,10 @@ static int vinc_get_formats(struct soc_camera_device *icd, unsigned int idx,
 	if (!icd->host_priv) {
 		struct v4l2_mbus_config mbus_cfg;
 		struct v4l2_mbus_framefmt mbus_fmt;
+
+		ret = vinc_create_controls(&icd->ctrl_handler, priv);
+		if (ret)
+			return ret;
 
 		ret = v4l2_subdev_call(sd, video, g_mbus_config, &mbus_cfg);
 		if (ret >= 0) {
@@ -740,7 +1257,7 @@ static int vinc_querycap(struct soc_camera_host *ici,
 
 static void vinc_configure(struct vinc_dev *priv)
 {
-	u32 lstep, fstep, axi_master_cfg;
+	u32 lstep, fstep, axi_master_cfg, proc_cfg;
 
 	vinc_write(priv, STREAM_CTR, 0);
 
@@ -795,13 +1312,22 @@ static void vinc_configure(struct vinc_dev *priv)
 	vinc_write(priv, STREAM_INP_VCROP_ODD_CTR(0), 0);
 	vinc_write(priv, STREAM_INP_DECIM_CTR(0), 0);
 
+	proc_cfg = STREAM_PROC_CFG_DMA0_SRC(2);
 	if (priv->input_format == BAYER)
-		vinc_write(priv, STREAM_PROC_CFG(0), STREAM_PROC_CFG_CFA_EN |
-				STREAM_PROC_CFG_DMA0_SRC(2));
-	else if (priv->input_format == RGB)
-		vinc_write(priv, STREAM_PROC_CFG(0),
-			   STREAM_PROC_CFG_DMA0_SRC(2));
+		proc_cfg |= STREAM_PROC_CFG_CFA_EN;
 
+	if (priv->ctrls[CTRL_BP_EN]->cur.val)
+		proc_cfg |= STREAM_PROC_CFG_BPC_EN;
+	if (priv->ctrls[CTRL_GC_EN]->cur.val)
+		proc_cfg |= STREAM_PROC_CFG_GC_EN;
+	if (priv->ctrls[CTRL_CC_EN]->cur.val)
+		proc_cfg |= STREAM_PROC_CFG_CC_EN;
+	if (priv->ctrls[CTRL_CT_EN]->cur.val)
+		proc_cfg |= STREAM_PROC_CFG_CT_EN;
+	if (priv->ctrls[CTRL_DR_EN]->cur.val)
+		proc_cfg |= STREAM_PROC_CFG_ADR_EN;
+
+	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
 	vinc_write(priv, STREAM_PROC_CTR(0), priv->bayer_mode << 1);
 
 	vinc_write(priv, STREAM_DMA_FBUF_CFG(0, 0), 0x00001);
