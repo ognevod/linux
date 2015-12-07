@@ -1476,8 +1476,14 @@ static irqreturn_t vinc_irq_s0(int irq, void *data)
 
 		if (int_d0 & DMA_WR_STATUS_FRAME_END)
 			vinc_eof_handler(priv);
-		if (int_d0 & DMA_WR_STATUS_DMA_OVF)
+		if (int_d0 & DMA_WR_STATUS_DMA_OVF) {
+			u32 stream_ctr = vinc_read(priv, STREAM_CTR);
+
+			stream_ctr &= ~STREAM_CTR_DMA_CHANNELS_ENABLE;
+			vinc_write(priv, STREAM_CTR, stream_ctr);
+			vinc_next_buffer(priv, VB2_BUF_STATE_ERROR);
 			dev_warn(priv->ici.v4l2_dev.dev, "s0d0: DMA overflow\n");
+		}
 	}
 	if (int_status & STREAM_INTERRUPT_DMA1) {
 		u32 int_d1 = vinc_read(priv, STREAM_DMA_WR_STATUS(0, 1));
