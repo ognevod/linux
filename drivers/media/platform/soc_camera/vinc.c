@@ -590,6 +590,55 @@ static void set_dr(struct vinc_dev *priv, u16 *dr)
 		vinc_write(priv, STREAM_PROC_DR_DATA(0), dr[i]);
 }
 
+static void vinc_configure_input(struct vinc_dev *priv)
+{
+	if (priv->video_source == V4L2_MBUS_CSI2) {
+		vinc_write(priv, CSI2_INTR(0), 0x0007FFFF);
+		vinc_write(priv, PPORT_INP_MUX_CFG, 0x0);
+		vinc_write(priv, PPORT_CFG(0), 0x0);
+		vinc_write(priv, PPORT_CFG(1), 0x0);
+		vinc_write(priv, PPORT_CFG(2), 0x0);
+
+		vinc_write(priv, CSI2_PORT_SYS_CTR(0),
+			   CSI2_PORT_SYS_CTR_ENABLE |
+			   CSI2_PORT_SYS_CTR_FREQ_RATIO(2));
+		vinc_write(priv, CSI2_PORT_GENFIFO_CTR(0), 0x0);
+
+		/* 1lane, timeout=max */
+		vinc_write(priv, CSI2_FUNC_PROG(0), 0x1ffffc |
+				((priv->csi2_lanes - 1) & 0x3));
+		vinc_write(priv, CSI2_DPHY_TIM3(0),
+			   CSI2_TIM3_CLN_CNT_LPX(0xBF) |
+			   CSI2_TIM3_DLN_CNT_LPX(0x12));
+		vinc_write(priv, CSI2_SYNC_COUNT(0), 0x14141414);
+		vinc_write(priv, CSI2_RCV_COUNT(0), 0x04040404);
+
+		vinc_write(priv, CSI2_FSLS(0), 0x2);
+		vinc_write(priv, CSI2_LSDV(0), 0x2);
+		vinc_write(priv, CSI2_DVLE(0), 0x2);
+		vinc_write(priv, CSI2_LEFE(0), 0x2);
+		vinc_write(priv, CSI2_FEFS(0), 0x2);
+		vinc_write(priv, CSI2_LELS(0), 0x4);
+		vinc_write(priv, CSI2_LOOP_BACK(0), 0x0);
+		vinc_write(priv, CSI2_RAW8(0), 0x0);
+		vinc_write(priv, CSI2_DPHY_TIM1(0),
+			   CSI2_TIM1_DLN_CNT_HS_PREP(0x06) |
+			   CSI2_TIM1_DLN_CNT_HS_ZERO(0x04) |
+			   CSI2_TIM1_DLN_CNT_HS_TRAIL(0x07) |
+			   CSI2_TIM1_DLN_CNT_HS_EXIT(0x02));
+		vinc_write(priv, CSI2_DPHY_TIM2(0),
+			   CSI2_TIM2_CLN_CNT_HS_PREP(0x06) |
+			   CSI2_TIM2_CLN_CNT_HS_ZERO(0x04) |
+			   CSI2_TIM2_CLN_CNT_HS_TRAIL(0x11) |
+			   CSI2_TIM2_CLN_CNT_HS_EXIT(0x03));
+		vinc_write(priv, CSI2_TRIM0(0), 0x02000000);
+		vinc_write(priv, CSI2_DEVICE_READY(0), 0x1);
+		vinc_write(priv, STREAM_INP_CFG(0), 0x2);
+	} else
+		dev_err(priv->ici.v4l2_dev.dev, "Unknown input format %#x",
+			priv->video_source);
+}
+
 static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct soc_camera_device *icd = container_of(ctrl->handler,
@@ -1261,49 +1310,7 @@ static void vinc_configure(struct vinc_dev *priv)
 
 	vinc_write(priv, STREAM_CTR, 0);
 
-	if (priv->video_source == V4L2_MBUS_CSI2) {
-		vinc_write(priv, CSI2_INTR(0), 0x0007FFFF);
-		vinc_write(priv, PPORT_INP_MUX_CFG, 0x0);
-		vinc_write(priv, PPORT_CFG(0), 0x0);
-		vinc_write(priv, PPORT_CFG(1), 0x0);
-		vinc_write(priv, PPORT_CFG(2), 0x0);
-
-		vinc_write(priv, CSI2_PORT_SYS_CTR(0),
-			   CSI2_PORT_SYS_CTR_ENABLE |
-			   CSI2_PORT_SYS_CTR_FREQ_RATIO(2));
-		vinc_write(priv, CSI2_PORT_GENFIFO_CTR(0), 0x0);
-
-		/* 1lane, timeout=max */
-		vinc_write(priv, CSI2_FUNC_PROG(0), 0x1ffffc |
-				((priv->csi2_lanes - 1) & 0x3));
-		vinc_write(priv, CSI2_DPHY_TIM3(0),
-			   CSI2_TIM3_CLN_CNT_LPX(0xBF) |
-			   CSI2_TIM3_DLN_CNT_LPX(0x12));
-		vinc_write(priv, CSI2_SYNC_COUNT(0), 0x14141414);
-		vinc_write(priv, CSI2_RCV_COUNT(0), 0x04040404);
-
-		vinc_write(priv, CSI2_FSLS(0), 0x2);
-		vinc_write(priv, CSI2_LSDV(0), 0x2);
-		vinc_write(priv, CSI2_DVLE(0), 0x2);
-		vinc_write(priv, CSI2_LEFE(0), 0x2);
-		vinc_write(priv, CSI2_FEFS(0), 0x2);
-		vinc_write(priv, CSI2_LELS(0), 0x4);
-		vinc_write(priv, CSI2_LOOP_BACK(0), 0x0);
-		vinc_write(priv, CSI2_RAW8(0), 0x0);
-		vinc_write(priv, CSI2_DPHY_TIM1(0),
-			   CSI2_TIM1_DLN_CNT_HS_PREP(0x06) |
-			   CSI2_TIM1_DLN_CNT_HS_ZERO(0x04) |
-			   CSI2_TIM1_DLN_CNT_HS_TRAIL(0x07) |
-			   CSI2_TIM1_DLN_CNT_HS_EXIT(0x02));
-		vinc_write(priv, CSI2_DPHY_TIM2(0),
-			   CSI2_TIM2_CLN_CNT_HS_PREP(0x06) |
-			   CSI2_TIM2_CLN_CNT_HS_ZERO(0x04) |
-			   CSI2_TIM2_CLN_CNT_HS_TRAIL(0x11) |
-			   CSI2_TIM2_CLN_CNT_HS_EXIT(0x03));
-		vinc_write(priv, CSI2_TRIM0(0), 0x02000000);
-		vinc_write(priv, CSI2_DEVICE_READY(0), 0x1);
-		vinc_write(priv, STREAM_INP_CFG(0), 0x2);
-	}
+	vinc_configure_input(priv);
 
 	vinc_write(priv, STREAM_INP_HCROP_CTR(0),
 		   (priv->crop1.c.width << 16) | priv->crop1.c.left);
