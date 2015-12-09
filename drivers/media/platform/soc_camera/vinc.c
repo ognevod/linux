@@ -185,14 +185,14 @@
 #define CC_CT_OFFSET_OFFSET0_1		0x14
 #define CC_CT_OFFSET_OFFSET2		0x18
 
-/* Bits fo AXI_MASTER_CFG register */
+/* Bits for AXI_MASTER_CFG register */
 #define AXI_MASTER_CFG_MAX_BURST(v)	(v & 0x7)
 #define AXI_MASTER_CFG_MAX_WR_ID(v)	((v & 0xF) << 4)
 #define AXI_MASTER_CFG_BUF_LAYOUT(v)	((v & 0xF) << 8)
 #define AXI_MASTER_CFG_4K_BOUND_EN	BIT(19)
 #define AXI_MASTER_CFG_GLOBAL_EN	BIT(31)
 
-/* Bits fo INTERRUPT register */
+/* Bits for INTERRUPT register */
 #define INTERRUPT_AXI_ERROR		BIT(0)
 #define INTERRUPT_PPORT_ERROR		BIT(12)
 #define INTERRUPT_CSI0			BIT(16)
@@ -200,14 +200,46 @@
 #define INTERRUPT_CSI1			BIT(18)
 #define INTERRUPT_CSI1_GEN		BIT(19)
 
-/* Bits fo CMOS_CTR register */
+/* Bits for PORT_CFG register */
+#define PORT_CFG_PIXEL_MODE(v)		(v & 0x3)
+#define PORT_CFG_PCLK_DIV		BIT(2)
+#define PORT_CFG_PCLK_NEG_DIV		BIT(3)
+#define PORT_CFG_PCLK_HALF_CLK		BIT(4)
+#define PORT_CFG_DIGITAL_DELAY(v)	((v & 0x7) << 5)
+#define PORT_CFG_VIN_SRC(v)		((v & 0x3) << 12)
+
+/* Bits for PINTERFACE_CFG register */
+#define PINTERFACE_CFG_CYCLE_NUM(v)	(v & 0x7)
+#define PINTERFACE_CFG_PIXEL_NUM_EVEN(v)	((v & 0x3) << 4)
+#define PINTERFACE_CFG_PIXEL_NUM_ODD(v)	((v & 0x3) << 8)
+#define PINTERFACE_CFG_PV_ALGN_MODE(v)	((v & 0xF) << 12)
+#define PINTERFACE_CFG_PORT_NUM_SYNC(v)	((v & 0x3) << 16)
+#define PINTERFACE_CFG_EMB_SYNC		BIT(18)
+#define PINTERFACE_CFG_EMB_SYNC_CORR	BIT(19)
+#define PINTERFACE_CFG_PHASE_CORR(v)	((v & 0x7) << 20)
+#define PINTERFACE_CFG_FORW_H(v)	((v & 0xFF) << 24)
+
+/* Bits for PINTERFACE_HVFSYNCregister */
+#define PINTERFACE_HVFSYNC_INVERS_H	BIT(0)
+#define PINTERFACE_HVFSYNC_INVERS_V	BIT(1)
+#define PINTERFACE_HVFSYNC_INVERS_F	BIT(2)
+#define PINTERFACE_HVFSYNC_BUILT_MODE(v)	((v & 0x7) << 3)
+#define PINTERFACE_HVFSYNC_DELAY_F_EN	BIT(6)
+#define PINTERFACE_HVFSYNC_DELAY_V(v)	((v & 0x1F) << 8)
+#define PINTERFACE_HVFSYNC_DELAY_F(v)	((v & 0x3F) << 16)
+#define PINTERFACE_HVFSYNC_PRE_DELAY_V(v)	((v & 0x1F) << 24)
+#define PINTERFACE_HVFSYNC_DELAY_VF_ODD_OFS(v)	((v & 0x7) << 29)
+
+
+
+/* Bits for CMOS_CTR register */
 #define CMOS_CTR_RESET			BIT(0)
 #define CMOS_CTR_PCLK_EN		BIT(1)
 #define CMOS_CTR_PCLK_SRC(v)		((v & 0x3) << 2)
 #define CMOS_CTR_CLK_DIV(v)		((v & 0xF) << 4)
 #define CMOS_CTR_FSYNC_EN		BIT(8)
 
-/* Bits fo CSI2_PORT_SYS_CTR register */
+/* Bits for CSI2_PORT_SYS_CTR register */
 #define CSI2_PORT_SYS_CTR_ENABLE	BIT(0)
 #define CSI2_PORT_SYS_CTR_TWO_PORTS	BIT(1)
 #define CSI2_PORT_SYS_CTR_FREQ_RATIO(v)	((v & 0x3F) << 8)
@@ -296,6 +328,7 @@ enum vinc_ctrls {
 	CTRL_CT,
 	CTRL_DR_EN,
 	CTRL_DR,
+	CTRL_TEST_PATTERN,
 	CTRLS_COUNT
 };
 
@@ -592,7 +625,32 @@ static void set_dr(struct vinc_dev *priv, u16 *dr)
 
 static void vinc_configure_input(struct vinc_dev *priv)
 {
-	if (priv->video_source == V4L2_MBUS_CSI2) {
+	if (priv->ctrls[CTRL_TEST_PATTERN]->val) {
+		u32 test_src = 0;
+
+		test_src |= priv->crop1.c.width + priv->crop1.c.left;
+		test_src |= (priv->crop1.c.height + priv->crop1.c.top) << 12;
+		test_src |= 5 << 24;
+		test_src |= (priv->ctrls[CTRL_TEST_PATTERN]->val - 1) << 29;
+
+		vinc_write(priv, PPORT_INP_MUX_CFG, 0x101);
+		vinc_write(priv, PPORT_CFG(0),
+				PORT_CFG_PIXEL_MODE(1) | PORT_CFG_VIN_SRC(1));
+		vinc_write(priv, PPORT_CFG(1),
+				PORT_CFG_PIXEL_MODE(1) | PORT_CFG_VIN_SRC(2));
+		vinc_write(priv, PPORT_CFG(2),
+				PORT_CFG_PIXEL_MODE(1) | PORT_CFG_VIN_SRC(3));
+		vinc_write(priv, PPORT_TEST_SRC, test_src);
+		vinc_write(priv, PINTERFACE_CFG(0),
+				PINTERFACE_CFG_CYCLE_NUM(1) |
+				PINTERFACE_CFG_PIXEL_NUM_EVEN(1) |
+				PINTERFACE_CFG_PORT_NUM_SYNC(2));
+		vinc_write(priv, PINTERFACE_CCMOV(0, 0), 0x321);
+		vinc_write(priv, PINTERFACE_HVFSYNC(0),
+				PINTERFACE_HVFSYNC_DELAY_V(0x11) |
+				PINTERFACE_HVFSYNC_PRE_DELAY_V(1));
+		vinc_write(priv, STREAM_INP_CFG(0), 0x0);
+	} else if (priv->video_source == V4L2_MBUS_CSI2) {
 		vinc_write(priv, CSI2_INTR(0), 0x0007FFFF);
 		vinc_write(priv, PPORT_INP_MUX_CFG, 0x0);
 		vinc_write(priv, PPORT_CFG(0), 0x0);
@@ -763,6 +821,18 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		else
 			priv->dr_change = 1;
 		break;
+	case V4L2_CID_TEST_PATTERN:
+		stream_ctr = vinc_read(priv, STREAM_CTR);
+		vinc_write(priv, STREAM_CTR, 0);
+		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+		if (priv->input_format == BAYER && !ctrl->val)
+			proc_cfg |= STREAM_PROC_CFG_CFA_EN;
+		else
+			proc_cfg &= ~STREAM_PROC_CFG_CFA_EN;
+		vinc_configure_input(priv);
+		vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+		vinc_write(priv, STREAM_CTR, stream_ctr);
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -825,6 +895,7 @@ static int vinc_try_ctrl(struct v4l2_ctrl *ctrl)
 	case V4L2_CID_CC:
 	case V4L2_CID_CT:
 	case V4L2_CID_DR:
+	case V4L2_CID_TEST_PATTERN:
 		return 0;
 	default:
 		return -EINVAL;
@@ -835,6 +906,14 @@ static struct v4l2_ctrl_ops ctrl_ops = {
 	.g_volatile_ctrl = vinc_g_ctrl,
 	.s_ctrl = vinc_s_ctrl,
 	.try_ctrl = vinc_try_ctrl
+};
+
+static const char * const vinc_test_pattern_menu[] = {
+	"Disabled",
+	"Vertical bars",
+	"Diagonal stripes",
+	"Horizontal bars",
+	"Increment",
 };
 
 static struct vinc_ctrl_cfg ctrl_cfg[] = {
@@ -1012,6 +1091,19 @@ static struct vinc_ctrl_cfg ctrl_cfg[] = {
 			.def = 0,
 			.dims[0] = CTRL_DR_ELEMENTS_COUNT,
 			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
+		}
+	},
+	{
+		.ctrl_id = CTRL_TEST_PATTERN,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_TEST_PATTERN,
+			.type = V4L2_CTRL_TYPE_MENU,
+			.min = 0,
+			.max = ARRAY_SIZE(vinc_test_pattern_menu) - 1,
+			.step = 0,
+			.def = 0,
+			.qmenu = vinc_test_pattern_menu
 		}
 	},
 };
@@ -1320,7 +1412,7 @@ static void vinc_configure(struct vinc_dev *priv)
 	vinc_write(priv, STREAM_INP_DECIM_CTR(0), 0);
 
 	proc_cfg = STREAM_PROC_CFG_DMA0_SRC(2);
-	if (priv->input_format == BAYER)
+	if (priv->input_format == BAYER && !priv->ctrls[CTRL_TEST_PATTERN]->val)
 		proc_cfg |= STREAM_PROC_CFG_CFA_EN;
 
 	if (priv->ctrls[CTRL_BP_EN]->cur.val)
