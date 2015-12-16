@@ -1249,6 +1249,7 @@ static int __vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f,
 	struct v4l2_subdev *sd = soc_camera_to_subdev(icd);
 	struct soc_mbus_pixelfmt *pixelfmt;
 	const struct soc_camera_format_xlate *xlate;
+	u32 width, height;
 	int ret;
 
 	pixelfmt = vinc_get_mbus_pixelfmt(pix->pixelformat);
@@ -1262,6 +1263,11 @@ static int __vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f,
 		return -EINVAL;
 	}
 
+	v4l_bound_align_image(&pix->width, 16, MAX_WIDTH_HEIGHT, 3,
+			      &pix->height, 2, MAX_WIDTH_HEIGHT, 1, 0);
+
+	width = pix->width;
+	height = pix->height;
 	mbus_fmt->code = xlate->code;
 	mbus_fmt->colorspace = pix->colorspace;
 	mbus_fmt->width = pix->width;
@@ -1275,15 +1281,16 @@ static int __vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f,
 		return ret;
 	}
 
-	v4l_bound_align_image(&pix->width, 16,
-			      min_t(u32, 4096, mbus_fmt->width), 3,
-			      &pix->height, 2,
-			      min_t(u32, 4096, mbus_fmt->height), 1, 0);
-
-	if (mbus_fmt->width != pix->width || mbus_fmt->height != pix->height ||
-			pix->width != 1280 || pix->height != 720) {
-		pix->width = min_t(u32, 1280, mbus_fmt->width);
-		pix->height = min_t(u32, 720, mbus_fmt->height);
+	if (mbus_fmt->width != width || mbus_fmt->height != height) {
+		/* If userspace request HD resolution then we will use
+		 * this resolution, even if sensor does not support it */
+		pix->width = min_t(u32, min_t(u32, 1280, mbus_fmt->width),
+				   MAX_WIDTH_HEIGHT);
+		pix->height = min_t(u32, min_t(u32, 720, mbus_fmt->height),
+				    MAX_WIDTH_HEIGHT);
+	} else {
+		pix->width = mbus_fmt->width;
+		pix->height = mbus_fmt->height;
 	}
 	dev_dbg(icd->parent,
 		"%s : result resolution: %dx%d, pixelformat: %#x (%s)\n",
