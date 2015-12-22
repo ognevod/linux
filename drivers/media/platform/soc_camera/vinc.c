@@ -277,6 +277,7 @@
 #define STREAM_PROC_CFG_444TO422_EN	BIT(7)
 #define STREAM_PROC_CFG_422TO420_EN	BIT(8)
 #define STREAM_PROC_CFG_STT_EN(v)	((v & 0x7) << 9)
+#define STREAM_PROC_CFG_STT_ZONE_OFFSET	12
 #define STREAM_PROC_CFG_STT_ZONE_EN(v)	((v & 0xF) << 12)
 #define STREAM_PROC_CFG_IM_EN		BIT(16)
 #define STREAM_PROC_CFG_CT_SRC(v)	((v & 0x1) << 23)
@@ -284,6 +285,34 @@
 #define STREAM_PROC_CFG_422TO420_SRC(v)	((v & 0x1) << 25)
 #define STREAM_PROC_CFG_DMA0_SRC(v)	((v & 0x7) << 26)
 #define STREAM_PROC_CFG_DMA1_SRC(v)	((v & 0x7) << 29)
+
+#define STT_EN_HIST			0x1
+#define STT_EN_AF			0x2
+#define STT_EN_ADD			0x4
+
+/* Bits for STREAM_PROC_CTR register */
+#define STREAM_PROC_CTR_BAYER_MONO	BIT(0)
+#define STREAM_PROC_CTR_BAYER_MODE(v)	((v & 0x3) << 1)
+#define STREAM_PROC_CTR_422TO444ALG(v)	((v & 0x3) << 6)
+#define STREAM_PROC_CTR_422TO444FILL	BIT(8)
+#define STREAM_PROC_CTR_444TO422ALG(v)	((v & 0x3) << 9)
+#define STREAM_PROC_CTR_444TO422FILL	BIT(11)
+#define STREAM_PROC_CTR_422TO420ALG	BIT(12)
+#define STREAM_PROC_CTR_HIST_THR	BIT(13)
+#define STREAM_PROC_CTR_AF_THR		BIT(14)
+#define STREAM_PROC_CTR_ADD_THR		BIT(15)
+#define STREAM_PROC_CTR_AF_COLOR(v)	((v & 0x3) << 16)
+#define STREAM_PROC_CTR_IM_COLOR(v)	((v & 0x3) << 21)
+
+/* Bits for STREAM_PROC_CLEAR register */
+#define STREAM_PROC_CLEAR_AF_CLR	BIT(0)
+#define STREAM_PROC_CLEAR_ADD_CLR	BIT(1)
+#define STREAM_PROC_CLEAR_THR_CLR	BIT(2)
+
+/* Bits for STREAM_PROC_STAT_CTR register */
+#define STREAM_PROC_STAT_CTR_ADDR_HIST(v)	(v & 0xFF)
+#define STREAM_PROC_STAT_CTR_NUM_ZONE(v)	((v & 0x3) << 16)
+#define STREAM_PROC_STAT_CTR_COLOR_HIST(v)	((v & 0x3) << 18)
 
 /* Bits for STREAM_DMA_WR_CTR register */
 #define DMA_WR_CTR_DMA_EN		BIT(0)
@@ -328,6 +357,25 @@ enum vinc_ctrls {
 	CTRL_CT,
 	CTRL_DR_EN,
 	CTRL_DR,
+	CTRL_STAT_EN,
+	CTRL_STAT_AF_COLOR,
+	CTRL_STAT_AF_TH,
+	CTRL_STAT_ZONE0,
+	CTRL_STAT_ZONE1,
+	CTRL_STAT_ZONE2,
+	CTRL_STAT_ZONE3,
+	CTRL_STAT_HIST0,
+	CTRL_STAT_HIST1,
+	CTRL_STAT_HIST2,
+	CTRL_STAT_HIST3,
+	CTRL_STAT_AF0,
+	CTRL_STAT_AF1,
+	CTRL_STAT_AF2,
+	CTRL_STAT_AF3,
+	CTRL_STAT_ADD0,
+	CTRL_STAT_ADD1,
+	CTRL_STAT_ADD2,
+	CTRL_STAT_ADD3,
 	CTRL_TEST_PATTERN,
 	CTRLS_COUNT
 };
@@ -339,6 +387,7 @@ struct vinc_dev {
 	unsigned int irq_s0;
 	unsigned int irq_s1;
 	void __iomem *base;
+	struct tasklet_struct stat_tasklet;
 
 	spinlock_t lock;		/* Protects video buffer lists */
 	struct list_head capture;
@@ -358,6 +407,7 @@ struct vinc_dev {
 	int cc_change:1;
 	int ct_change:1;
 	int dr_change:1;
+	int stat_odd:1;
 
 	struct v4l2_crop crop1;
 	struct v4l2_crop crop2;
@@ -623,6 +673,41 @@ static void set_dr(struct vinc_dev *priv, u16 *dr)
 		vinc_write(priv, STREAM_PROC_DR_DATA(0), dr[i]);
 }
 
+static void set_stat_af_color(struct vinc_dev *priv, u32 color)
+{
+	u32 proc_ctr = vinc_read(priv, STREAM_PROC_CTR(0));
+
+	proc_ctr &= ~STREAM_PROC_CTR_AF_COLOR(0x3);
+	proc_ctr |= STREAM_PROC_CTR_AF_COLOR(color);
+	vinc_write(priv, STREAM_PROC_CTR(0), proc_ctr);
+}
+
+static void vinc_stat_start(struct vinc_dev *priv)
+{
+	priv->stat_odd = 0;
+	vinc_write(priv, STREAM_PROC_CLEAR(0),
+		   STREAM_PROC_CLEAR_THR_CLR);
+}
+
+static void set_stat_zone(struct vinc_dev *priv, u32 zone_id,
+		     struct vinc_stat_zone *zone)
+{
+	u32 proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+
+	if (zone->enable) {
+		u32 lt = (zone->x_lt + priv->crop2.c.left) |
+				((zone->y_lt + priv->crop2.c.top) << 16);
+		u32 rb = (zone->x_rb + priv->crop2.c.left) |
+				((zone->y_rb + priv->crop2.c.top) << 16);
+
+		vinc_write(priv, STREAM_PROC_STAT_ZONE_LT(0, zone_id), lt);
+		vinc_write(priv, STREAM_PROC_STAT_ZONE_RB(0, zone_id), rb);
+		proc_cfg |= BIT(STREAM_PROC_CFG_STT_ZONE_OFFSET + zone_id);
+	} else
+		proc_cfg &= ~(BIT(STREAM_PROC_CFG_STT_ZONE_OFFSET + zone_id));
+	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+}
+
 static void vinc_configure_input(struct vinc_dev *priv)
 {
 	if (priv->ctrls[CTRL_TEST_PATTERN]->val) {
@@ -821,6 +906,33 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		else
 			priv->dr_change = 1;
 		break;
+	case V4L2_CID_STAT_ENABLE:
+		stream_ctr = vinc_read(priv, STREAM_CTR);
+		vinc_write(priv, STREAM_CTR, 0);
+		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+		proc_cfg &= ~STREAM_PROC_CFG_STT_EN(0x7);
+		proc_cfg |= STREAM_PROC_CFG_STT_EN(ctrl->val);
+		if (ctrl->val)
+			vinc_stat_start(priv);
+		vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+		vinc_write(priv, STREAM_CTR, stream_ctr);
+		break;
+	case V4L2_CID_STAT_AF_COLOR:
+		set_stat_af_color(priv, ctrl->val);
+		break;
+	case V4L2_CID_STAT_AF_TH:
+		vinc_write(priv, STREAM_PROC_STAT_TH(0), ctrl->val);
+		break;
+	case V4L2_CID_STAT_ZONE0:
+	case V4L2_CID_STAT_ZONE1:
+	case V4L2_CID_STAT_ZONE2:
+	case V4L2_CID_STAT_ZONE3:
+		stream_ctr = vinc_read(priv, STREAM_CTR);
+		vinc_write(priv, STREAM_CTR, 0);
+		set_stat_zone(priv, ctrl->id - V4L2_CID_STAT_ZONE0,
+			      ctrl->p_new.p);
+		vinc_write(priv, STREAM_CTR, stream_ctr);
+		break;
 	case V4L2_CID_TEST_PATTERN:
 		stream_ctr = vinc_read(priv, STREAM_CTR);
 		vinc_write(priv, STREAM_CTR, 0);
@@ -857,6 +969,7 @@ static int vinc_try_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct vinc_bad_pixel *pixel;
 	struct vinc_gamma_curve *gc;
+	struct vinc_stat_zone *zone;
 	int i;
 
 	switch (ctrl->id) {
@@ -892,9 +1005,24 @@ static int vinc_try_ctrl(struct v4l2_ctrl *ctrl)
 				return -ERANGE;
 		}
 		return 0;
+	case V4L2_CID_STAT_ZONE0:
+		zone = ctrl->p_new.p;
+		if (!zone->enable)
+			return 0;
+		if (zone->x_lt > MAX_WIDTH_HEIGHT ||
+				zone->y_lt > MAX_WIDTH_HEIGHT ||
+				zone->x_rb > MAX_WIDTH_HEIGHT ||
+				zone->y_rb > MAX_WIDTH_HEIGHT ||
+				zone->x_lt >= zone->x_rb ||
+				zone->y_lt >= zone->y_rb)
+			return -ERANGE;
+		return 0;
 	case V4L2_CID_CC:
 	case V4L2_CID_CT:
 	case V4L2_CID_DR:
+	case V4L2_CID_STAT_ENABLE:
+	case V4L2_CID_STAT_AF_COLOR:
+	case V4L2_CID_STAT_AF_TH:
 	case V4L2_CID_TEST_PATTERN:
 		return 0;
 	default:
@@ -906,6 +1034,12 @@ static struct v4l2_ctrl_ops ctrl_ops = {
 	.g_volatile_ctrl = vinc_g_ctrl,
 	.s_ctrl = vinc_s_ctrl,
 	.try_ctrl = vinc_try_ctrl
+};
+
+static const char * const vinc_af_color_menu[] = {
+	"Red/Cr",
+	"Green/Y",
+	"Blue/Cb",
 };
 
 static const char * const vinc_test_pattern_menu[] = {
@@ -1091,6 +1225,300 @@ static struct vinc_ctrl_cfg ctrl_cfg[] = {
 			.def = 0,
 			.dims[0] = CTRL_DR_ELEMENTS_COUNT,
 			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
+		}
+	},
+	{
+		.ctrl_id = CTRL_STAT_EN,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_STAT_ENABLE,
+			.name = "Statistics enable",
+			.type = V4L2_CTRL_TYPE_BITMASK,
+			.min = 0,
+			.max = 0x7,
+			.step = 0,
+			.def = 0,
+			.flags = 0
+		}
+	},
+	{
+		.ctrl_id = CTRL_STAT_AF_COLOR,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_STAT_AF_COLOR,
+			.name = "Autofocus component",
+			.type = V4L2_CTRL_TYPE_MENU,
+			.min = 0,
+			.max = ARRAY_SIZE(vinc_af_color_menu) - 1,
+			.step = 0,
+			.def = 0,
+			.qmenu = vinc_af_color_menu
+		}
+	},
+	{
+		.ctrl_id = CTRL_STAT_AF_TH,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_STAT_AF_TH,
+			.name = "Autofocus threshold",
+			.type = V4L2_CTRL_TYPE_INTEGER,
+			.min = 0,
+			.max = 0x7FF,
+			.step = 1,
+			.def = 0,
+			.flags = 0
+		}
+	},
+	{
+		.ctrl_id = CTRL_STAT_ZONE0,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_STAT_ZONE0,
+			.name = "Window of zone 0",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_stat_zone),
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
+		}
+	},
+	{
+		.ctrl_id = CTRL_STAT_ZONE1,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_STAT_ZONE1,
+			.name = "Window of zone 1",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_stat_zone),
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
+		}
+	},
+	{
+		.ctrl_id = CTRL_STAT_ZONE2,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_STAT_ZONE2,
+			.name = "Window of zone 2",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_stat_zone),
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
+		}
+	},
+	{
+		.ctrl_id = CTRL_STAT_ZONE3,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_STAT_ZONE3,
+			.name = "Window of zone 3",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_stat_zone),
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
+		}
+	},
+	{
+		.ctrl_id = CTRL_STAT_HIST0,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_STAT_HIST0,
+			.name = "Histogram in zone 0",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_stat_hist),
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+				 V4L2_CTRL_FLAG_READ_ONLY
+		}
+	},
+	{
+		.ctrl_id = CTRL_STAT_HIST1,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_STAT_HIST1,
+			.name = "Histogram in zone 1",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_stat_hist),
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+				 V4L2_CTRL_FLAG_READ_ONLY
+		}
+	},
+	{
+		.ctrl_id = CTRL_STAT_HIST2,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_STAT_HIST2,
+			.name = "Histogram in zone 2",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_stat_hist),
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+				 V4L2_CTRL_FLAG_READ_ONLY
+		}
+	},
+	{
+		.ctrl_id = CTRL_STAT_HIST3,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_STAT_HIST3,
+			.name = "Histogram in zone 3",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_stat_hist),
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+				 V4L2_CTRL_FLAG_READ_ONLY
+		}
+	},
+	{
+		.ctrl_id = CTRL_STAT_AF0,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_STAT_AF0,
+			.name = "Autofocus in zone 0",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_stat_af),
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+				 V4L2_CTRL_FLAG_READ_ONLY
+		}
+	},
+	{
+		.ctrl_id = CTRL_STAT_AF1,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_STAT_AF1,
+			.name = "Autofocus in zone 1",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_stat_af),
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+				 V4L2_CTRL_FLAG_READ_ONLY
+		}
+	},
+	{
+		.ctrl_id = CTRL_STAT_AF2,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_STAT_AF2,
+			.name = "Autofocus in zone 2",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_stat_af),
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+				 V4L2_CTRL_FLAG_READ_ONLY
+		}
+	},
+	{
+		.ctrl_id = CTRL_STAT_AF3,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_STAT_AF3,
+			.name = "Autofocus in zone 3",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_stat_af),
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+				 V4L2_CTRL_FLAG_READ_ONLY
+		}
+	},
+	{
+		.ctrl_id = CTRL_STAT_ADD0,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_STAT_ADD0,
+			.name = "Additional statistics in zone 0",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_stat_add),
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+				 V4L2_CTRL_FLAG_READ_ONLY
+		}
+	},
+	{
+		.ctrl_id = CTRL_STAT_ADD1,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_STAT_ADD1,
+			.name = "Additional statistics in zone 1",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_stat_add),
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+				 V4L2_CTRL_FLAG_READ_ONLY
+		}
+	},
+	{
+		.ctrl_id = CTRL_STAT_ADD2,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_STAT_ADD2,
+			.name = "Additional statistics in zone 2",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_stat_add),
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+				 V4L2_CTRL_FLAG_READ_ONLY
+		}
+	},
+	{
+		.ctrl_id = CTRL_STAT_ADD3,
+		.cfg = {
+			.ops = &ctrl_ops,
+			.id = V4L2_CID_STAT_ADD3,
+			.name = "Additional statistics in zone 3",
+			.type = V4L2_CTRL_COMPOUND_TYPES,
+			.min = 0,
+			.max = 0xFF,
+			.step = 1,
+			.def = 0,
+			.dims[0] = sizeof(struct vinc_stat_add),
+			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+				 V4L2_CTRL_FLAG_READ_ONLY
 		}
 	},
 	{
@@ -1405,7 +1833,8 @@ static int vinc_querycap(struct soc_camera_host *ici,
 
 static void vinc_configure(struct vinc_dev *priv)
 {
-	u32 lstep, fstep, axi_master_cfg, proc_cfg;
+	u32 lstep, fstep, axi_master_cfg, proc_cfg, proc_ctr;
+	int i;
 
 	vinc_write(priv, STREAM_CTR, 0);
 
@@ -1432,9 +1861,25 @@ static void vinc_configure(struct vinc_dev *priv)
 		proc_cfg |= STREAM_PROC_CFG_CT_EN;
 	if (priv->ctrls[CTRL_DR_EN]->cur.val)
 		proc_cfg |= STREAM_PROC_CFG_ADR_EN;
+	proc_cfg |= STREAM_PROC_CFG_STT_EN(priv->ctrls[CTRL_STAT_EN]->val);
+	for (i = 0; i < 4; i++) {
+		struct vinc_stat_zone *zone =
+				priv->ctrls[CTRL_STAT_ZONE0 + i]->p_cur.p;
+
+		if (zone->enable)
+			proc_cfg |= BIT(STREAM_PROC_CFG_STT_ZONE_OFFSET + i);
+	}
 
 	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
-	vinc_write(priv, STREAM_PROC_CTR(0), priv->bayer_mode << 1);
+	proc_ctr = STREAM_PROC_CTR_BAYER_MODE(priv->bayer_mode);
+	proc_ctr |= STREAM_PROC_CTR_AF_COLOR(
+			priv->ctrls[CTRL_STAT_AF_COLOR]->val);
+	proc_ctr |= STREAM_PROC_CTR_HIST_THR |
+			STREAM_PROC_CTR_AF_THR |
+			STREAM_PROC_CTR_ADD_THR;
+	vinc_write(priv, STREAM_PROC_CTR(0), proc_ctr);
+	if (priv->ctrls[CTRL_STAT_EN]->val)
+		vinc_stat_start(priv);
 
 	vinc_write(priv, STREAM_DMA_FBUF_CFG(0, 0), 0x00001);
 	vinc_write(priv, STREAM_DMA_FBUF_HORIZ(0, 0),
@@ -1547,9 +1992,96 @@ static void vinc_next_buffer(struct vinc_dev *priv, enum vb2_buffer_state state)
 	spin_unlock(&priv->lock);
 }
 
+static void vinc_stat_tasklet(unsigned long data)
+{
+	struct vinc_dev *priv = (struct vinc_dev *)data;
+	struct vinc_stat_zone *zone;
+	struct vinc_stat_hist *hist;
+	struct vinc_stat_af *af;
+	struct vinc_stat_add *add;
+	u32 stat_en;
+	u32 reg;
+	int z, i;
+
+	stat_en = priv->ctrls[CTRL_STAT_EN]->val;
+	if (!stat_en)
+		return;
+
+	for (z = 0; z < 4; z++) {
+		zone = priv->ctrls[CTRL_STAT_ZONE0 + z]->p_cur.p;
+		if (!zone->enable)
+			continue;
+
+		hist = priv->ctrls[CTRL_STAT_HIST0 + z]->p_cur.p;
+		if (stat_en & STT_EN_HIST) {
+			__u32 *component[3] = { hist->red, hist->green,
+						hist->blue };
+			int c;
+
+			for (c = 0; c < ARRAY_SIZE(component); c++) {
+				vinc_write(priv, STREAM_PROC_STAT_CTR(0),
+					   STREAM_PROC_STAT_CTR_NUM_ZONE(z) |
+					   STREAM_PROC_STAT_CTR_COLOR_HIST(c));
+				for (i = 0; i < VINC_STAT_HIST_COUNT; i++)
+					component[c][i] = vinc_read(priv,
+						STREAM_PROC_STAT_DATA(0));
+			}
+		}
+		if (stat_en & STT_EN_AF) {
+			af = priv->ctrls[CTRL_STAT_AF0 + z]->p_cur.p;
+			vinc_write(priv, STREAM_PROC_STAT_CTR(0),
+				   STREAM_PROC_STAT_CTR_NUM_ZONE(z));
+			af->hsobel = vinc_read(priv,
+					STREAM_PROC_STAT_HSOBEL(0));
+			af->vsobel = vinc_read(priv,
+					STREAM_PROC_STAT_VSOBEL(0));
+			af->lsobel = vinc_read(priv,
+					STREAM_PROC_STAT_LSOBEL(0));
+			af->rsobel = vinc_read(priv,
+					STREAM_PROC_STAT_RSOBEL(0));
+			vinc_write(priv, STREAM_PROC_CLEAR(0),
+				   STREAM_PROC_CLEAR_AF_CLR);
+		}
+		if (stat_en & STT_EN_ADD) {
+			add = priv->ctrls[CTRL_STAT_ADD0 + z]->p_cur.p;
+			reg = vinc_read(priv, STREAM_PROC_STAT_MIN(0));
+			add->min_b = reg & 0xFF;
+			add->min_g = (reg >> 8) & 0xFF;
+			add->min_r = (reg >> 16) & 0xFF;
+			reg = vinc_read(priv, STREAM_PROC_STAT_MAX(0));
+			add->max_b = reg & 0xFF;
+			add->max_g = (reg >> 8) & 0xFF;
+			add->max_r = (reg >> 16) & 0xFF;
+			add->sum_b = vinc_read(priv, STREAM_PROC_STAT_SUM_B(0));
+			add->sum_g = vinc_read(priv, STREAM_PROC_STAT_SUM_G(0));
+			add->sum_r = vinc_read(priv, STREAM_PROC_STAT_SUM_R(0));
+			reg = vinc_read(priv, STREAM_PROC_STAT_SUM2_HI(0));
+			add->sum2_b = reg & 0xFF;
+			add->sum2_g = (reg >> 8) & 0xFF;
+			add->sum2_r = (reg >> 16) & 0xFF;
+			add->sum2_b = (add->sum2_b << 32) |
+				vinc_read(priv, STREAM_PROC_STAT_SUM2_B(0));
+			add->sum2_g = (add->sum2_g << 32) |
+				vinc_read(priv, STREAM_PROC_STAT_SUM2_G(0));
+			add->sum2_r = (add->sum2_r << 32) |
+				vinc_read(priv, STREAM_PROC_STAT_SUM2_R(0));
+			vinc_write(priv, STREAM_PROC_CLEAR(0),
+				   STREAM_PROC_CLEAR_ADD_CLR);
+		}
+	}
+}
 
 static void vinc_eof_handler(struct vinc_dev *priv)
 {
+	if (priv->ctrls[CTRL_STAT_EN]->val) {
+		/* TODO: Tasklet must complete before the next frame starts.
+		 * Otherwise it will read broken statistic. We need to take
+		 * into account that tasklet can run when the next frame starts
+		 * (or protect ourselves from this situation). */
+		if (priv->stat_odd)
+			tasklet_schedule(&priv->stat_tasklet);
+		priv->stat_odd = ~priv->stat_odd;
+	}
 	if (priv->active) {
 		dev_dbg(priv->ici.v4l2_dev.dev, "Frame end\n");
 		vinc_next_buffer(priv, VB2_BUF_STATE_DONE);
@@ -1683,6 +2215,8 @@ static int vinc_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Failed to request required IRQs\n");
 		return err;
 	}
+	tasklet_init(&priv->stat_tasklet, vinc_stat_tasklet,
+		     (unsigned long)priv);
 
 	vinc_write(priv, CMOS_CTR(0), CMOS_CTR_PCLK_EN | CMOS_CTR_PCLK_SRC(0) |
 			CMOS_CTR_CLK_DIV(4) | CMOS_CTR_FSYNC_EN);

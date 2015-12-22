@@ -23,10 +23,30 @@
 #define V4L2_CID_CT			(V4L2_CID_CAMERA_CLASS_BASE + 0x1009)
 #define V4L2_CID_DR_ENABLE		(V4L2_CID_CAMERA_CLASS_BASE + 0x100A)
 #define V4L2_CID_DR			(V4L2_CID_CAMERA_CLASS_BASE + 0x100B)
+#define V4L2_CID_STAT_ENABLE		(V4L2_CID_CAMERA_CLASS_BASE + 0x100C)
+#define V4L2_CID_STAT_AF_COLOR		(V4L2_CID_CAMERA_CLASS_BASE + 0x100D)
+#define V4L2_CID_STAT_AF_TH		(V4L2_CID_CAMERA_CLASS_BASE + 0x100E)
+#define V4L2_CID_STAT_ZONE0		(V4L2_CID_CAMERA_CLASS_BASE + 0x100F)
+#define V4L2_CID_STAT_ZONE1		(V4L2_CID_CAMERA_CLASS_BASE + 0x1010)
+#define V4L2_CID_STAT_ZONE2		(V4L2_CID_CAMERA_CLASS_BASE + 0x1011)
+#define V4L2_CID_STAT_ZONE3		(V4L2_CID_CAMERA_CLASS_BASE + 0x1012)
+#define V4L2_CID_STAT_HIST0		(V4L2_CID_CAMERA_CLASS_BASE + 0x1013)
+#define V4L2_CID_STAT_HIST1		(V4L2_CID_CAMERA_CLASS_BASE + 0x1014)
+#define V4L2_CID_STAT_HIST2		(V4L2_CID_CAMERA_CLASS_BASE + 0x1015)
+#define V4L2_CID_STAT_HIST3		(V4L2_CID_CAMERA_CLASS_BASE + 0x1016)
+#define V4L2_CID_STAT_AF0		(V4L2_CID_CAMERA_CLASS_BASE + 0x1017)
+#define V4L2_CID_STAT_AF1		(V4L2_CID_CAMERA_CLASS_BASE + 0x1018)
+#define V4L2_CID_STAT_AF2		(V4L2_CID_CAMERA_CLASS_BASE + 0x1019)
+#define V4L2_CID_STAT_AF3		(V4L2_CID_CAMERA_CLASS_BASE + 0x101A)
+#define V4L2_CID_STAT_ADD0		(V4L2_CID_CAMERA_CLASS_BASE + 0x101B)
+#define V4L2_CID_STAT_ADD1		(V4L2_CID_CAMERA_CLASS_BASE + 0x101C)
+#define V4L2_CID_STAT_ADD2		(V4L2_CID_CAMERA_CLASS_BASE + 0x101D)
+#define V4L2_CID_STAT_ADD3		(V4L2_CID_CAMERA_CLASS_BASE + 0x101E)
 
 #define VINC_COMP_VALUES_COUNT		(1 << 12)
 #define VINC_CC_COEFF_COUNT		9
 #define VINC_CC_OFFSET_COUNT		3
+#define VINC_STAT_HIST_COUNT		256
 
 struct vinc_bad_pixel {
 	__u16 x;
@@ -43,6 +63,42 @@ struct vinc_cc {
 	__u16 coeff[VINC_CC_COEFF_COUNT];
 	__u16 offset[VINC_CC_OFFSET_COUNT];
 	__u8 scaling;
+};
+
+struct vinc_stat_zone {
+	__u16 enable;
+	__u16 x_lt;
+	__u16 y_lt;
+	__u16 x_rb;
+	__u16 y_rb;
+};
+
+struct vinc_stat_hist {
+	__u32 red[VINC_STAT_HIST_COUNT];
+	__u32 green[VINC_STAT_HIST_COUNT];
+	__u32 blue[VINC_STAT_HIST_COUNT];
+};
+
+struct vinc_stat_af {
+	__u32 hsobel;
+	__u32 vsobel;
+	__u32 lsobel;
+	__u32 rsobel;
+};
+
+struct vinc_stat_add {
+	__u64 sum2_r;
+	__u64 sum2_g;
+	__u64 sum2_b;
+	__u32 sum_r;
+	__u32 sum_g;
+	__u32 sum_b;
+	__u8 min_r;
+	__u8 min_g;
+	__u8 min_b;
+	__u8 max_r;
+	__u8 max_g;
+	__u8 max_b;
 };
 
 #endif /* _UAPI__LINUX_VINC_H */
