@@ -422,25 +422,19 @@ struct vinc_cam {
 	u32 code;
 };
 
-struct vinc_format {
-	struct soc_mbus_pixelfmt fmt;
-	u32 code;
-};
-
 struct vinc_ctrl_cfg {
 	enum vinc_ctrls ctrl_id;
 	struct v4l2_ctrl_config cfg;
 };
 
-static struct vinc_format vinc_formats[] = {
+static struct soc_mbus_pixelfmt vinc_formats[] = {
 	{
-		.fmt.name = "BGR 8+8+8+8",
-		.fmt.fourcc = V4L2_PIX_FMT_BGR32,
-		.fmt.packing = SOC_MBUS_PACKING_NONE,
-		.fmt.order = SOC_MBUS_ORDER_LE,
-		.fmt.layout = SOC_MBUS_LAYOUT_PACKED,
-		.fmt.bits_per_sample = 32,
-		.code = MEDIA_BUS_FMT_ARGB8888_1X32
+		.name = "BGR 8+8+8+8",
+		.fourcc = V4L2_PIX_FMT_BGR32,
+		.packing = SOC_MBUS_PACKING_NONE,
+		.order = SOC_MBUS_ORDER_LE,
+		.layout = SOC_MBUS_LAYOUT_PACKED,
+		.bits_per_sample = 32,
 	}
 };
 
@@ -1600,8 +1594,9 @@ static int vinc_get_formats(struct soc_camera_device *icd, unsigned int idx,
 		formats_count = ARRAY_SIZE(vinc_formats);
 		if (xlate) {
 			for (i = 0; i < formats_count; i++) {
-				xlate->host_fmt = &vinc_formats[i].fmt;
-				xlate->code = vinc_formats[i].code;
+				xlate->host_fmt = &vinc_formats[i];
+				xlate->code = code;
+				xlate++;
 			}
 		}
 		break;
@@ -1664,8 +1659,8 @@ static struct soc_mbus_pixelfmt *vinc_get_mbus_pixelfmt(u32 fourcc)
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(vinc_formats); i++) {
-		if (fourcc == vinc_formats[i].fmt.fourcc)
-			return &vinc_formats[i].fmt;
+		if (fourcc == vinc_formats[i].fourcc)
+			return &vinc_formats[i];
 	}
 	return NULL;
 }
