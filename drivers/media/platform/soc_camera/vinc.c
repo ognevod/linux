@@ -314,6 +314,25 @@
 #define STREAM_PROC_STAT_CTR_NUM_ZONE(v)	((v & 0x3) << 16)
 #define STREAM_PROC_STAT_CTR_COLOR_HIST(v)	((v & 0x3) << 18)
 
+/* Bits for STREAM_DMA_PIXEL_FMT register */
+#define STREAM_DMA_PIXEL_FMT_PLANES(v)	((v) & 0xF)
+#define STREAM_DMA_PIXEL_FMT_WIDTH(v)	(((v) & 0xF) << 4)
+#define STREAM_DMA_PIXEL_FMT_FORMAT(v)	(((v) & 0xF) << 8)
+#define STREAM_DMA_PIXEL_FMT_WITH_ALPHA	BIT(12)
+#define STREAM_DMA_PIXEL_FMT_PACK_TYPE(v)	(((v) & 0x1) << 16)
+
+#define PLANES_SINGLE			1
+#define PLANES_DUAL			3
+#define WIDTH_8				0
+#define WIDTH_16			8
+#define FORMAT_BGR			0x0
+#define FORMAT_RGB			0x1
+#define FORMAT_444			0x4
+#define FORMAT_422			0x5
+#define FORMAT_420			0x6
+#define FORMAT_BAYER			0x8
+#define FORMAT_MONO			0xC
+
 /* Bits for STREAM_DMA_WR_CTR register */
 #define DMA_WR_CTR_DMA_EN		BIT(0)
 #define DMA_WR_CTR_LINE_INT_PERIOD(v)	((v & 0xFFF) << 1)
@@ -341,6 +360,9 @@
 
 #define MAX_WIDTH_HEIGHT		4095
 #define MAX_COMP_VALUE			4095
+
+#define COEFF_FLOAT_TO_U16(coeff, scaling) ((u16)((s16)((coeff) * \
+		(1 << (15 - (scaling))) + ((coeff) < 0 ? -0.5 : 0.5))))
 
 enum vinc_input_format { UNKNOWN, BAYER, RGB, YCbCr };
 
@@ -435,7 +457,15 @@ static struct soc_mbus_pixelfmt vinc_formats[] = {
 		.order = SOC_MBUS_ORDER_LE,
 		.layout = SOC_MBUS_LAYOUT_PACKED,
 		.bits_per_sample = 32,
-	}
+	},
+	{
+		.name = "YUV 4:2:0 2 lines Y, 1 line UV interleaved",
+		.fourcc = V4L2_PIX_FMT_M420,
+		.packing = SOC_MBUS_PACKING_NONE,
+		.order = SOC_MBUS_ORDER_LE,
+		.layout = SOC_MBUS_LAYOUT_PACKED,
+		.bits_per_sample = 12,
+	},
 };
 
 /* per video frame buffer */
@@ -506,7 +536,20 @@ static void vinc_start_capture(struct vinc_dev *priv)
 	if (!priv->active)
 		return;
 	phys_addr_top = vb2_dma_contig_plane_dma_addr(priv->active, 0);
-	vinc_write(priv, STREAM_DMA_FBUF_BASE(0, 0, 0), phys_addr_top);
+	switch (priv->ici.icd->current_fmt->host_fmt->fourcc) {
+	case V4L2_PIX_FMT_BGR32:
+		vinc_write(priv, STREAM_DMA_FBUF_BASE(0, 0, 0), phys_addr_top);
+		break;
+	case V4L2_PIX_FMT_M420:
+		vinc_write(priv, STREAM_DMA_FBUF_BASE(0, 0, 0),
+			   phys_addr_top + (priv->crop2.c.width << 1));
+		vinc_write(priv, STREAM_DMA_FBUF_BASE(0, 0, 1), phys_addr_top);
+		break;
+	default:
+		dev_err(priv->ici.v4l2_dev.dev, "Unknown output fourcc %#x",
+			priv->ici.icd->current_fmt->host_fmt->fourcc);
+		return;
+	}
 	stream_ctr |= STREAM_CTR_DMA_CHANNELS_ENABLE;
 	vinc_write(priv, STREAM_CTR, stream_ctr);
 }
@@ -1681,7 +1724,7 @@ static int __vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f,
 
 	xlate = soc_camera_xlate_by_fourcc(icd, pix->pixelformat);
 	if (!xlate) {
-		dev_warn(icd->parent, "Format %x not found\n",
+		dev_warn(icd->parent, "Format %#x not found\n",
 			 pix->pixelformat);
 		return -EINVAL;
 	}
@@ -1737,6 +1780,7 @@ static int vinc_set_fmt(struct soc_camera_device *icd, struct v4l2_format *f)
 	struct vinc_dev *priv = ici->priv;
 	struct v4l2_subdev *sd = soc_camera_to_subdev(priv->ici.icd);
 	struct v4l2_mbus_framefmt mbus_fmt;
+	const struct soc_camera_format_xlate *xlate;
 	int ret;
 	int offset_x, offset_y;
 
@@ -1787,6 +1831,14 @@ static int vinc_set_fmt(struct soc_camera_device *icd, struct v4l2_format *f)
 		return ret;
 	}
 
+	xlate = soc_camera_xlate_by_fourcc(icd, pix->pixelformat);
+	if (!xlate) {
+		dev_warn(icd->parent, "Format %#x not found\n",
+			 pix->pixelformat);
+		return -EINVAL;
+	}
+	icd->current_fmt = xlate;
+
 	priv->crop1.c.width = pix->width + offset_x;
 	priv->crop1.c.height = pix->height + offset_y;
 	priv->crop1.c.left = 0;
@@ -1826,9 +1878,71 @@ static int vinc_querycap(struct soc_camera_host *ici,
 	return 0;
 }
 
+static void vinc_configure_bgr(struct vinc_dev *priv)
+{
+	u32 proc_cfg, lstep, fstep;
+
+	proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+	proc_cfg |= STREAM_PROC_CFG_DMA0_SRC(2);
+	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+
+	vinc_write(priv, STREAM_DMA_FBUF_CFG(0, 0), 0x00001);
+	lstep = priv->crop2.c.width * 4;
+	fstep = lstep * priv->crop2.c.height;
+	vinc_write(priv, STREAM_DMA_FBUF_LSTEP(0, 0, 0), lstep);
+	vinc_write(priv, STREAM_DMA_FBUF_FSTEP(0, 0, 0), fstep);
+	vinc_write(priv, STREAM_DMA_PIXEL_FMT(0, 0),
+		   STREAM_DMA_PIXEL_FMT_PLANES(PLANES_SINGLE) |
+		   STREAM_DMA_PIXEL_FMT_FORMAT(FORMAT_BGR));
+}
+
+static void vinc_configure_m420(struct vinc_dev *priv)
+{
+	u32 proc_cfg, lstep, fstep;
+	struct vinc_cc *ct = priv->ctrls[CTRL_CT]->p_cur.p;
+	int i;
+
+	ct->scaling = 0;
+	ct->coeff[0] = COEFF_FLOAT_TO_U16(0.587005, 0);
+	ct->coeff[1] = COEFF_FLOAT_TO_U16(0.113983, 0);
+	ct->coeff[2] = COEFF_FLOAT_TO_U16(0.299011, 0);
+	ct->coeff[3] = COEFF_FLOAT_TO_U16(-0.338836, 0);
+	ct->coeff[4] = COEFF_FLOAT_TO_U16(0.511413, 0);
+	ct->coeff[5] = COEFF_FLOAT_TO_U16(-0.172576, 0);
+	ct->coeff[6] = COEFF_FLOAT_TO_U16(-0.428253, 0);
+	ct->coeff[7] = COEFF_FLOAT_TO_U16(-0.083160, 0);
+	ct->coeff[8] = COEFF_FLOAT_TO_U16(0.511413, 0);
+	ct->offset[0] = 0x0;
+	ct->offset[1] = 0x2000;
+	ct->offset[2] = 0x2000;
+	set_cc_ct(priv, ct, 1);
+	priv->ctrls[CTRL_CT_EN]->cur.val = 1;
+
+	proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+	proc_cfg |= STREAM_PROC_CFG_CT_EN |
+			STREAM_PROC_CFG_444TO422_EN |
+			STREAM_PROC_CFG_422TO420_EN |
+			STREAM_PROC_CFG_444TO422_SRC(1) |
+			STREAM_PROC_CFG_422TO420_SRC(1) |
+			STREAM_PROC_CFG_DMA0_SRC(5);
+	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+
+	vinc_write(priv, STREAM_DMA_FBUF_CFG(0, 0), 0x00001);
+	lstep = priv->crop2.c.width;
+	fstep = lstep * priv->crop2.c.height;
+	for (i = 0; i < 2; i++) {
+		vinc_write(priv, STREAM_DMA_FBUF_LSTEP(0, 0, i),
+			   lstep | BIT(31));
+		vinc_write(priv, STREAM_DMA_FBUF_FSTEP(0, 0, i), fstep);
+	}
+	vinc_write(priv, STREAM_DMA_PIXEL_FMT(0, 0),
+		   STREAM_DMA_PIXEL_FMT_PLANES(PLANES_DUAL) |
+		   STREAM_DMA_PIXEL_FMT_FORMAT(FORMAT_420));
+}
+
 static void vinc_configure(struct vinc_dev *priv)
 {
-	u32 lstep, fstep, axi_master_cfg, proc_cfg, proc_ctr;
+	u32 axi_master_cfg, proc_cfg, proc_ctr;
 	int i;
 
 	vinc_write(priv, STREAM_CTR, 0);
@@ -1842,7 +1956,7 @@ static void vinc_configure(struct vinc_dev *priv)
 	vinc_write(priv, STREAM_INP_VCROP_ODD_CTR(0), 0);
 	vinc_write(priv, STREAM_INP_DECIM_CTR(0), 0);
 
-	proc_cfg = STREAM_PROC_CFG_DMA0_SRC(2);
+	proc_cfg = STREAM_PROC_CFG_STT_EN(priv->ctrls[CTRL_STAT_EN]->val);
 	if (priv->input_format == BAYER && !priv->ctrls[CTRL_TEST_PATTERN]->val)
 		proc_cfg |= STREAM_PROC_CFG_CFA_EN;
 
@@ -1856,7 +1970,7 @@ static void vinc_configure(struct vinc_dev *priv)
 		proc_cfg |= STREAM_PROC_CFG_CT_EN;
 	if (priv->ctrls[CTRL_DR_EN]->cur.val)
 		proc_cfg |= STREAM_PROC_CFG_ADR_EN;
-	proc_cfg |= STREAM_PROC_CFG_STT_EN(priv->ctrls[CTRL_STAT_EN]->val);
+
 	for (i = 0; i < 4; i++) {
 		struct vinc_stat_zone *zone =
 				priv->ctrls[CTRL_STAT_ZONE0 + i]->p_cur.p;
@@ -1876,17 +1990,24 @@ static void vinc_configure(struct vinc_dev *priv)
 	if (priv->ctrls[CTRL_STAT_EN]->val)
 		vinc_stat_start(priv);
 
-	vinc_write(priv, STREAM_DMA_FBUF_CFG(0, 0), 0x00001);
 	vinc_write(priv, STREAM_DMA_FBUF_HORIZ(0, 0),
 		   (priv->crop2.c.width << 16) | priv->crop2.c.left);
 	vinc_write(priv, STREAM_DMA_FBUF_VERT(0, 0),
 		   (priv->crop2.c.height << 16) | priv->crop2.c.top);
 	vinc_write(priv, STREAM_DMA_FBUF_DECIM(0, 0), 0x10000);
-	lstep = priv->crop2.c.width * 4;
-	fstep = lstep * priv->crop2.c.height;
-	vinc_write(priv, STREAM_DMA_FBUF_LSTEP(0, 0, 0), lstep);
-	vinc_write(priv, STREAM_DMA_FBUF_FSTEP(0, 0, 0), fstep);
-	vinc_write(priv, STREAM_DMA_PIXEL_FMT(0, 0), 1); /* Single plane, RGB */
+
+	switch (priv->ici.icd->current_fmt->host_fmt->fourcc) {
+	case V4L2_PIX_FMT_BGR32:
+		vinc_configure_bgr(priv);
+		break;
+	case V4L2_PIX_FMT_M420:
+		vinc_configure_m420(priv);
+		break;
+	default:
+		dev_warn(priv->ici.v4l2_dev.dev, "Unknown output format %#x\n",
+			 priv->ici.icd->current_fmt->host_fmt->fourcc);
+		break;
+	}
 
 	axi_master_cfg = vinc_read(priv, AXI_MASTER_CFG);
 	vinc_write(priv, AXI_MASTER_CFG,
