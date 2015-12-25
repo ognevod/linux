@@ -53,24 +53,24 @@
 #define INTERRUPT_RESET			0x24
 #define INTERRUPT_MASK			0x28
 
-#define PPORT_BASE(p)			(0x80 * p + 0x100)
+#define PPORT_BASE(p)			(0x80 * (p) + 0x100)
 #define PPORT_CFG(p)			(PPORT_BASE(p) + 0x0)
 
-#define PINTERFACE_BASE(p)		(0x100 * p + 0x300)
+#define PINTERFACE_BASE(p)		(0x100 * (p) + 0x300)
 #define PINTERFACE_CFG(p)		(PINTERFACE_BASE(p) + 0x0)
-#define PINTERFACE_CCMOV(p, c)		(PINTERFACE_BASE(p) + 0x20 + (c * 4))
+#define PINTERFACE_CCMOV(p, c)		(PINTERFACE_BASE(p) + 0x20 + ((c) * 4))
 #define PINTERFACE_HVFSYNC(p)		(PINTERFACE_BASE(p) + 0x80)
 
 #define PPORT_INP_MUX_CFG		0x700
 #define PPORT_STATUS			0x704
 #define PPORT_TEST_SRC			0x720
 
-#define CMOS_BASE(c)			(0x20 * c + 0x780)
+#define CMOS_BASE(c)			(0x20 * (c) + 0x780)
 #define CMOS_CTR(c)			(CMOS_BASE(c) + 0x0)
 #define CMOS_TIMER_HIGH(c)		(CMOS_BASE(c) + 0x4)
 #define CMOS_TIMER_LOW(c)		(CMOS_BASE(c) + 0x8)
 
-#define CSI2_PORT_BASE(c)		(0x200 * c + 0x800)
+#define CSI2_PORT_BASE(c)		(0x200 * (c) + 0x800)
 
 #define CSI2_DEVICE_READY(c)		(CSI2_PORT_BASE(c) + 0x0)
 #define CSI2_INTR(c)			(CSI2_PORT_BASE(c) + 0x4)
@@ -110,7 +110,7 @@
 #define CSI2_PORT_GENFIFO_DATA(c)	(CSI2_PORT_BASE(c) + 0x1c4)
 #define CSI2_PORT_GENFIFO_STATUS(c)	(CSI2_PORT_BASE(c) + 0x1c8)
 
-#define STREAM_BASE(s)			(0x400 * s + 0x1000)
+#define STREAM_BASE(s)			(0x400 * (s) + 0x1000)
 #define STREAM_INP_CFG(s)		(STREAM_BASE(s) + 0x0)
 #define STREAM_INP_HCROP_CTR(s)		(STREAM_BASE(s) + 0x4)
 #define STREAM_INP_VCROP_CTR(s)		(STREAM_BASE(s) + 0x8)
@@ -126,19 +126,19 @@
 #define STREAM_PROC_CLEAR(s)		(STREAM_BASE(s) + 0x60)
 #define STREAM_PROC_BP_MAP_CTR(s)	(STREAM_BASE(s) + 0x68)
 #define STREAM_PROC_BP_MAP_DATA(s)	(STREAM_BASE(s) + 0x6c)
-#define STREAM_PROC_BP_BAD_LINE(s, l)	(STREAM_BASE(s) + 0x70 + (l * 4))
-#define STREAM_PROC_BP_BAD_COLUMN(s, c)	(STREAM_BASE(s) + 0x90 + (c * 4))
+#define STREAM_PROC_BP_BAD_LINE(s, l)	(STREAM_BASE(s) + 0x70 + ((l) * 4))
+#define STREAM_PROC_BP_BAD_COLUMN(s, c)	(STREAM_BASE(s) + 0x90 + ((c) * 4))
 #define STREAM_PROC_DR_CTR(s)		(STREAM_BASE(s) + 0xb0)
 #define STREAM_PROC_DR_DATA(s)		(STREAM_BASE(s) + 0xb4)
 #define STREAM_PROC_DR_COUNT(s)		(STREAM_BASE(s) + 0xb8)
-#define STREAM_PROC_CC_COEFF(s, c)	(STREAM_BASE(s) + 0xc0 + (c * 4))
-#define STREAM_PROC_CC_OFFSET(s, o)	(STREAM_BASE(s) + 0xd4 + (o * 4))
+#define STREAM_PROC_CC_COEFF(s, c)	(STREAM_BASE(s) + 0xc0 + ((c) * 4))
+#define STREAM_PROC_CC_OFFSET(s, o)	(STREAM_BASE(s) + 0xd4 + ((o) * 4))
 #define STREAM_PROC_GC_CTR(s)		(STREAM_BASE(s) + 0xe0)
 #define STREAM_PROC_GC_DATA(s)		(STREAM_BASE(s) + 0xe4)
-#define STREAM_PROC_CT_COEFF(s, c)	(STREAM_BASE(s) + 0xf0 + (c * 4))
-#define STREAM_PROC_CT_OFFSET(s, o)	(STREAM_BASE(s) + 0x104 + (o * 4))
+#define STREAM_PROC_CT_COEFF(s, c)	(STREAM_BASE(s) + 0xf0 + ((c) * 4))
+#define STREAM_PROC_CT_OFFSET(s, o)	(STREAM_BASE(s) + 0x104 + ((o) * 4))
 
-#define STREAM_PROC_STAT_ZONE_BASE(s, z) (0xc * z + STREAM_BASE(s) + 0x110)
+#define STREAM_PROC_STAT_ZONE_BASE(s, z) (0xc * (z) + STREAM_BASE(s) + 0x110)
 #define STREAM_PROC_STAT_ZONE_LT(s, z)	(STREAM_PROC_STAT_ZONE_BASE(s, z) + 0x0)
 #define STREAM_PROC_STAT_ZONE_RB(s, z)	(STREAM_PROC_STAT_ZONE_BASE(s, z) + 0x4)
 
@@ -159,7 +159,7 @@
 #define STREAM_PROC_STAT_LSOBEL(s)	(STREAM_BASE(s) + 0x178)
 #define STREAM_PROC_STAT_RSOBEL(s)	(STREAM_BASE(s) + 0x17c)
 
-#define STREAM_DMA_BASE(s, d)		(0x100 * d + STREAM_BASE(s) + 0x200)
+#define STREAM_DMA_BASE(s, d)		(0x100 * (d) + STREAM_BASE(s) + 0x200)
 #define STREAM_DMA_FBUF_CFG(s, d)	(STREAM_DMA_BASE(s, d) + 0x0)
 #define STREAM_DMA_PIXEL_FMT(s, d)	(STREAM_DMA_BASE(s, d) + 0x4)
 #define STREAM_DMA_FBUF_HORIZ(s, d)	(STREAM_DMA_BASE(s, d) + 0x8)
@@ -167,15 +167,17 @@
 #define STREAM_DMA_FBUF_VERT_ODD(s, d)	(STREAM_DMA_BASE(s, d) + 0x10)
 #define STREAM_DMA_FBUF_DECIM(s, d)	(STREAM_DMA_BASE(s, d) + 0x14)
 
-#define STREAM_DMA_FBUF_BASE(s, d, b)	(0x10 * b + STREAM_DMA_BASE(s, d)\
+#define STREAM_DMA_FBUF_BASE(s, d, b)	(0x10 * (b) + STREAM_DMA_BASE(s, d)\
 					+ 0x20)
 #define STREAM_DMA_FBUF_LSTEP(s, d, b)	(STREAM_DMA_FBUF_BASE(s, d, b) + 0x4)
 #define STREAM_DMA_FBUF_FSTEP(s, d, b)	(STREAM_DMA_FBUF_BASE(s, d, b) + 0x8)
 
 #define STREAM_DMA_WR_CTR(s, d)		(STREAM_DMA_BASE(s, d) + 0x60)
 #define STREAM_DMA_WR_STATUS(s, d)	(STREAM_DMA_BASE(s, d) + 0x64)
-#define STREAM_DMA_WR_COUNT(s, d, c)	(STREAM_DMA_BASE(s, d) + 0x68 + (c * 4))
-#define STREAM_DMA_CUR_ADDR(s, d, a)	(STREAM_DMA_BASE(s, d) + 0x70 + (a * 4))
+#define STREAM_DMA_WR_COUNT(s, d, c)	(STREAM_DMA_BASE(s, d) + 0x68\
+					+ ((c) * 4))
+#define STREAM_DMA_CUR_ADDR(s, d, a)	(STREAM_DMA_BASE(s, d) + 0x70\
+					+ ((a) * 4))
 #define STREAM_DMA_TEST_DATA(s, d)	(STREAM_DMA_BASE(s, d) + 0x80)
 #define STREAM_DMA_TEST_CTR(s, d)	(STREAM_DMA_BASE(s, d) + 0x84)
 
@@ -186,9 +188,9 @@
 #define CC_CT_OFFSET_OFFSET2		0x18
 
 /* Bits for AXI_MASTER_CFG register */
-#define AXI_MASTER_CFG_MAX_BURST(v)	(v & 0x7)
-#define AXI_MASTER_CFG_MAX_WR_ID(v)	((v & 0xF) << 4)
-#define AXI_MASTER_CFG_BUF_LAYOUT(v)	((v & 0xF) << 8)
+#define AXI_MASTER_CFG_MAX_BURST(v)	((v) & 0x7)
+#define AXI_MASTER_CFG_MAX_WR_ID(v)	(((v) & 0xF) << 4)
+#define AXI_MASTER_CFG_BUF_LAYOUT(v)	(((v) & 0xF) << 8)
 #define AXI_MASTER_CFG_4K_BOUND_EN	BIT(19)
 #define AXI_MASTER_CFG_GLOBAL_EN	BIT(31)
 
@@ -201,65 +203,65 @@
 #define INTERRUPT_CSI1_GEN		BIT(19)
 
 /* Bits for PORT_CFG register */
-#define PORT_CFG_PIXEL_MODE(v)		(v & 0x3)
+#define PORT_CFG_PIXEL_MODE(v)		((v) & 0x3)
 #define PORT_CFG_PCLK_DIV		BIT(2)
 #define PORT_CFG_PCLK_NEG_DIV		BIT(3)
 #define PORT_CFG_PCLK_HALF_CLK		BIT(4)
-#define PORT_CFG_DIGITAL_DELAY(v)	((v & 0x7) << 5)
-#define PORT_CFG_VIN_SRC(v)		((v & 0x3) << 12)
+#define PORT_CFG_DIGITAL_DELAY(v)	(((v) & 0x7) << 5)
+#define PORT_CFG_VIN_SRC(v)		(((v) & 0x3) << 12)
 
 /* Bits for PINTERFACE_CFG register */
-#define PINTERFACE_CFG_CYCLE_NUM(v)	(v & 0x7)
-#define PINTERFACE_CFG_PIXEL_NUM_EVEN(v)	((v & 0x3) << 4)
-#define PINTERFACE_CFG_PIXEL_NUM_ODD(v)	((v & 0x3) << 8)
-#define PINTERFACE_CFG_PV_ALGN_MODE(v)	((v & 0xF) << 12)
-#define PINTERFACE_CFG_PORT_NUM_SYNC(v)	((v & 0x3) << 16)
+#define PINTERFACE_CFG_CYCLE_NUM(v)	((v) & 0x7)
+#define PINTERFACE_CFG_PIXEL_NUM_EVEN(v)	(((v) & 0x3) << 4)
+#define PINTERFACE_CFG_PIXEL_NUM_ODD(v)	(((v) & 0x3) << 8)
+#define PINTERFACE_CFG_PV_ALGN_MODE(v)	(((v) & 0xF) << 12)
+#define PINTERFACE_CFG_PORT_NUM_SYNC(v)	(((v) & 0x3) << 16)
 #define PINTERFACE_CFG_EMB_SYNC		BIT(18)
 #define PINTERFACE_CFG_EMB_SYNC_CORR	BIT(19)
-#define PINTERFACE_CFG_PHASE_CORR(v)	((v & 0x7) << 20)
-#define PINTERFACE_CFG_FORW_H(v)	((v & 0xFF) << 24)
+#define PINTERFACE_CFG_PHASE_CORR(v)	(((v) & 0x7) << 20)
+#define PINTERFACE_CFG_FORW_H(v)	(((v) & 0xFF) << 24)
 
 /* Bits for PINTERFACE_HVFSYNCregister */
 #define PINTERFACE_HVFSYNC_INVERS_H	BIT(0)
 #define PINTERFACE_HVFSYNC_INVERS_V	BIT(1)
 #define PINTERFACE_HVFSYNC_INVERS_F	BIT(2)
-#define PINTERFACE_HVFSYNC_BUILT_MODE(v)	((v & 0x7) << 3)
+#define PINTERFACE_HVFSYNC_BUILT_MODE(v)	(((v) & 0x7) << 3)
 #define PINTERFACE_HVFSYNC_DELAY_F_EN	BIT(6)
-#define PINTERFACE_HVFSYNC_DELAY_V(v)	((v & 0x1F) << 8)
-#define PINTERFACE_HVFSYNC_DELAY_F(v)	((v & 0x3F) << 16)
-#define PINTERFACE_HVFSYNC_PRE_DELAY_V(v)	((v & 0x1F) << 24)
-#define PINTERFACE_HVFSYNC_DELAY_VF_ODD_OFS(v)	((v & 0x7) << 29)
+#define PINTERFACE_HVFSYNC_DELAY_V(v)	(((v) & 0x1F) << 8)
+#define PINTERFACE_HVFSYNC_DELAY_F(v)	(((v) & 0x3F) << 16)
+#define PINTERFACE_HVFSYNC_PRE_DELAY_V(v)	(((v) & 0x1F) << 24)
+#define PINTERFACE_HVFSYNC_DELAY_VF_ODD_OFS(v)	(((v) & 0x7) << 29)
 
 
 
 /* Bits for CMOS_CTR register */
 #define CMOS_CTR_RESET			BIT(0)
 #define CMOS_CTR_PCLK_EN		BIT(1)
-#define CMOS_CTR_PCLK_SRC(v)		((v & 0x3) << 2)
-#define CMOS_CTR_CLK_DIV(v)		((v & 0xF) << 4)
+#define CMOS_CTR_PCLK_SRC(v)		(((v) & 0x3) << 2)
+#define CMOS_CTR_CLK_DIV(v)		(((v) & 0xF) << 4)
 #define CMOS_CTR_FSYNC_EN		BIT(8)
 
 /* Bits for CSI2_PORT_SYS_CTR register */
 #define CSI2_PORT_SYS_CTR_ENABLE	BIT(0)
 #define CSI2_PORT_SYS_CTR_TWO_PORTS	BIT(1)
-#define CSI2_PORT_SYS_CTR_FREQ_RATIO(v)	((v & 0x3F) << 8)
+#define CSI2_PORT_SYS_CTR_FREQ_RATIO(v)	(((v) & 0x3F) << 8)
 
 /* Bits for CSI2_DPHY_TIM1 register */
-#define CSI2_TIM1_DLN_CNT_HS_PREP(v)	(v & 0xFF)
-#define CSI2_TIM1_DLN_CNT_HS_ZERO(v)	((v & 0xFF) << 8)
-#define CSI2_TIM1_DLN_CNT_HS_TRAIL(v)	((v & 0xFF) << 16)
-#define CSI2_TIM1_DLN_CNT_HS_EXIT(v)	((v & 0xFF) << 24)
+#define CSI2_TIM1_DLN_CNT_HS_PREP(v)	((v) & 0xFF)
+#define CSI2_TIM1_DLN_CNT_HS_ZERO(v)	(((v) & 0xFF) << 8)
+#define CSI2_TIM1_DLN_CNT_HS_TRAIL(v)	(((v) & 0xFF) << 16)
+#define CSI2_TIM1_DLN_CNT_HS_EXIT(v)	(((v) & 0xFF) << 24)
 
 /* Bits for CSI2_DPHY_TIM2 register */
-#define CSI2_TIM2_CLN_CNT_HS_PREP(v)	(v & 0xFF)
-#define CSI2_TIM2_CLN_CNT_HS_ZERO(v)	((v & 0xFF) << 8)
-#define CSI2_TIM2_CLN_CNT_HS_TRAIL(v)	((v & 0xFF) << 16)
-#define CSI2_TIM2_CLN_CNT_HS_EXIT(v)	((v & 0xFF) << 24)
+#define CSI2_TIM2_CLN_CNT_HS_PREP(v)	((v) & 0xFF)
+#define CSI2_TIM2_CLN_CNT_HS_ZERO(v)	(((v) & 0xFF) << 8)
+#define CSI2_TIM2_CLN_CNT_HS_TRAIL(v)	(((v) & 0xFF) << 16)
+#define CSI2_TIM2_CLN_CNT_HS_EXIT(v)	(((v) & 0xFF) << 24)
 
 /* Bits for CSI2_DPHY_TIM3 register */
-#define CSI2_TIM3_CLN_CNT_LPX(v)	(v & 0xFF)
-#define CSI2_TIM3_DLN_CNT_LPX(v)	((v & 0xFF) << 8)
-#define CSI2_TIM3_CLN_CNT_PLL(v)	((v & 0xFFFF) << 16)
+#define CSI2_TIM3_CLN_CNT_LPX(v)	((v) & 0xFF)
+#define CSI2_TIM3_DLN_CNT_LPX(v)	(((v) & 0xFF) << 8)
+#define CSI2_TIM3_CLN_CNT_PLL(v)	(((v) & 0xFFFF) << 16)
 
 /* Bits for STREAM_INTERRUPT register */
 #define STREAM_INTERRUPT_PROC		BIT(0)
@@ -276,15 +278,15 @@
 #define STREAM_PROC_CFG_422TO444_EN	BIT(6)
 #define STREAM_PROC_CFG_444TO422_EN	BIT(7)
 #define STREAM_PROC_CFG_422TO420_EN	BIT(8)
-#define STREAM_PROC_CFG_STT_EN(v)	((v & 0x7) << 9)
+#define STREAM_PROC_CFG_STT_EN(v)	(((v) & 0x7) << 9)
 #define STREAM_PROC_CFG_STT_ZONE_OFFSET	12
-#define STREAM_PROC_CFG_STT_ZONE_EN(v)	((v & 0xF) << 12)
+#define STREAM_PROC_CFG_STT_ZONE_EN(v)	(((v) & 0xF) << 12)
 #define STREAM_PROC_CFG_IM_EN		BIT(16)
-#define STREAM_PROC_CFG_CT_SRC(v)	((v & 0x1) << 23)
-#define STREAM_PROC_CFG_444TO422_SRC(v)	((v & 0x1) << 24)
-#define STREAM_PROC_CFG_422TO420_SRC(v)	((v & 0x1) << 25)
-#define STREAM_PROC_CFG_DMA0_SRC(v)	((v & 0x7) << 26)
-#define STREAM_PROC_CFG_DMA1_SRC(v)	((v & 0x7) << 29)
+#define STREAM_PROC_CFG_CT_SRC(v)	(((v) & 0x1) << 23)
+#define STREAM_PROC_CFG_444TO422_SRC(v)	(((v) & 0x1) << 24)
+#define STREAM_PROC_CFG_422TO420_SRC(v)	(((v) & 0x1) << 25)
+#define STREAM_PROC_CFG_DMA0_SRC(v)	(((v) & 0x7) << 26)
+#define STREAM_PROC_CFG_DMA1_SRC(v)	(((v) & 0x7) << 29)
 
 #define STT_EN_HIST			0x1
 #define STT_EN_AF			0x2
@@ -292,17 +294,17 @@
 
 /* Bits for STREAM_PROC_CTR register */
 #define STREAM_PROC_CTR_BAYER_MONO	BIT(0)
-#define STREAM_PROC_CTR_BAYER_MODE(v)	((v & 0x3) << 1)
-#define STREAM_PROC_CTR_422TO444ALG(v)	((v & 0x3) << 6)
+#define STREAM_PROC_CTR_BAYER_MODE(v)	(((v) & 0x3) << 1)
+#define STREAM_PROC_CTR_422TO444ALG(v)	(((v) & 0x3) << 6)
 #define STREAM_PROC_CTR_422TO444FILL	BIT(8)
-#define STREAM_PROC_CTR_444TO422ALG(v)	((v & 0x3) << 9)
+#define STREAM_PROC_CTR_444TO422ALG(v)	(((v) & 0x3) << 9)
 #define STREAM_PROC_CTR_444TO422FILL	BIT(11)
 #define STREAM_PROC_CTR_422TO420ALG	BIT(12)
 #define STREAM_PROC_CTR_HIST_THR	BIT(13)
 #define STREAM_PROC_CTR_AF_THR		BIT(14)
 #define STREAM_PROC_CTR_ADD_THR		BIT(15)
-#define STREAM_PROC_CTR_AF_COLOR(v)	((v & 0x3) << 16)
-#define STREAM_PROC_CTR_IM_COLOR(v)	((v & 0x3) << 21)
+#define STREAM_PROC_CTR_AF_COLOR(v)	(((v) & 0x3) << 16)
+#define STREAM_PROC_CTR_IM_COLOR(v)	(((v) & 0x3) << 21)
 
 /* Bits for STREAM_PROC_CLEAR register */
 #define STREAM_PROC_CLEAR_AF_CLR	BIT(0)
@@ -310,9 +312,9 @@
 #define STREAM_PROC_CLEAR_THR_CLR	BIT(2)
 
 /* Bits for STREAM_PROC_STAT_CTR register */
-#define STREAM_PROC_STAT_CTR_ADDR_HIST(v)	(v & 0xFF)
-#define STREAM_PROC_STAT_CTR_NUM_ZONE(v)	((v & 0x3) << 16)
-#define STREAM_PROC_STAT_CTR_COLOR_HIST(v)	((v & 0x3) << 18)
+#define STREAM_PROC_STAT_CTR_ADDR_HIST(v)	((v) & 0xFF)
+#define STREAM_PROC_STAT_CTR_NUM_ZONE(v)	(((v) & 0x3) << 16)
+#define STREAM_PROC_STAT_CTR_COLOR_HIST(v)	(((v) & 0x3) << 18)
 
 /* Bits for STREAM_DMA_PIXEL_FMT register */
 #define STREAM_DMA_PIXEL_FMT_PLANES(v)	((v) & 0xF)
@@ -335,7 +337,7 @@
 
 /* Bits for STREAM_DMA_WR_CTR register */
 #define DMA_WR_CTR_DMA_EN		BIT(0)
-#define DMA_WR_CTR_LINE_INT_PERIOD(v)	((v & 0xFFF) << 1)
+#define DMA_WR_CTR_LINE_INT_PERIOD(v)	(((v) & 0xFFF) << 1)
 #define DMA_WR_CTR_FIELD_EN		BIT(13)
 #define DMA_WR_CTR_FRAME_END_EN		BIT(14)
 #define DMA_WR_CTR_FRAME_BEGIN_EN	BIT(15)
