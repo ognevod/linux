@@ -1720,6 +1720,13 @@ static int __vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f,
 	u32 width, height;
 	int ret;
 
+	pix->field = V4L2_FIELD_NONE;
+
+	/* TODO: Colorspace should be reconsidered */
+	pix->colorspace = V4L2_COLORSPACE_SRGB;
+	pix->ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
+	pix->quantization = V4L2_QUANTIZATION_DEFAULT;
+
 	pixelfmt = vinc_get_mbus_pixelfmt(pix->pixelformat);
 	if (!pixelfmt)
 		return -EINVAL;
