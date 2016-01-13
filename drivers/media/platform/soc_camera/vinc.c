@@ -2055,11 +2055,39 @@ static int vinc_init_videobuf(struct vb2_queue *q,
 static int vinc_get_parm(struct soc_camera_device *icd,
 			 struct v4l2_streamparm *parm)
 {
-	if (parm->type == V4L2_BUF_TYPE_VIDEO_CAPTURE) {
-		parm->parm.capture.capability = 0;
-		parm->parm.capture.capturemode = 0;
-		parm->parm.capture.extendedmode = 0;
+	int ret;
+	struct v4l2_streamparm sensor_parm = {
+		.type = V4L2_BUF_TYPE_VIDEO_CAPTURE
+	};
+	struct v4l2_subdev_frame_interval sensor_interval = {0};
+	struct v4l2_fract *tpf = &parm->parm.capture.timeperframe;
+	struct v4l2_subdev *sd = soc_camera_to_subdev(icd);
+
+	parm->parm.capture.capability = V4L2_CAP_TIMEPERFRAME;
+	parm->parm.capture.capturemode = 0;
+	parm->parm.capture.extendedmode = 0;
+	tpf->denominator = 0;
+	tpf->numerator = 0;
+
+	ret = v4l2_subdev_call(sd, video, g_parm, &sensor_parm);
+	if (!ret && (sensor_parm.parm.capture.capability &
+			V4L2_CAP_TIMEPERFRAME))
+		*tpf = sensor_parm.parm.capture.timeperframe;
+
+	if (!tpf->denominator || !tpf->numerator) {
+		ret = v4l2_subdev_call(sd, video, g_frame_interval,
+				       &sensor_interval);
+		if (!ret)
+			*tpf = sensor_interval.interval;
 	}
+
+	if (!tpf->denominator || !tpf->numerator) {
+		dev_notice(icd->parent,
+			   "Can not get framerate from sensor. Fallback to 30 FPS.\n");
+		tpf->denominator = 30;
+		tpf->numerator = 1;
+	}
+
 	return 0;
 }
 
