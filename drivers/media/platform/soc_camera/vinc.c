@@ -476,6 +476,11 @@ struct vinc_buffer {
 	struct list_head queue;
 };
 
+static uint memory_per_stream = CONFIG_VIDEO_VINC_MEMORY_PER_STREAM_MB * SZ_1M;
+module_param(memory_per_stream, uint, 0644);
+MODULE_PARM_DESC(memory_per_stream,
+		 "Maximum memory for video buffers in bytes");
+
 static void vinc_write(struct vinc_dev *priv,
 		      unsigned long reg_offs, u32 data)
 {
@@ -501,6 +506,7 @@ static int vinc_queue_setup(struct vb2_queue *vq,
 			struct soc_camera_device, vb2_vidq);
 	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
 	struct vinc_dev *priv = ici->priv;
+	unsigned int max_count;
 
 	if (fmt)
 		return -EINVAL;
@@ -513,6 +519,11 @@ static int vinc_queue_setup(struct vb2_queue *vq,
 
 	alloc_ctxs[0] = priv->alloc_ctx;
 
+	if (memory_per_stream) {
+		max_count = memory_per_stream / icd->sizeimage;
+		if (*count > max_count)
+			*count = max_count;
+	}
 	*num_planes = 1;
 
 	return 0;
