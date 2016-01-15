@@ -466,7 +466,7 @@ static struct soc_mbus_pixelfmt vinc_formats[] = {
 		.packing = SOC_MBUS_PACKING_NONE,
 		.order = SOC_MBUS_ORDER_LE,
 		.layout = SOC_MBUS_LAYOUT_PACKED,
-		.bits_per_sample = 12,
+		.bits_per_sample = 8,
 	},
 };
 
@@ -1729,6 +1729,7 @@ static int __vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f,
 	struct soc_mbus_pixelfmt *pixelfmt;
 	const struct soc_camera_format_xlate *xlate;
 	u32 width, height;
+	u32 min_bytesperline;
 	int ret;
 
 	pix->field = V4L2_FIELD_NONE;
@@ -1778,6 +1779,24 @@ static int __vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f,
 		pix->width = mbus_fmt->width;
 		pix->height = mbus_fmt->height;
 	}
+
+	if (pix->bytesperline > 0xFFF8)
+		pix->bytesperline = 0xFFF8;
+
+	pix->bytesperline &= ~0x7;
+	min_bytesperline = (pix->width * pixelfmt->bits_per_sample) / 8;
+	if (pix->bytesperline < min_bytesperline)
+		pix->bytesperline = min_bytesperline;
+
+	switch (pixelfmt->fourcc) {
+	case V4L2_PIX_FMT_M420:
+		pix->sizeimage = pix->bytesperline * ((pix->height * 3) / 2);
+		break;
+	default:
+		pix->sizeimage = pix->bytesperline * pix->height;
+		break;
+	}
+
 	dev_dbg(icd->parent,
 		"%s : result resolution: %dx%d, pixelformat: %#x (%s)\n",
 		__func__, pix->width, pix->height, pix->pixelformat,
@@ -1900,17 +1919,16 @@ static int vinc_querycap(struct soc_camera_host *ici,
 
 static void vinc_configure_bgr(struct vinc_dev *priv)
 {
-	u32 proc_cfg, lstep, fstep;
+	u32 proc_cfg;
+	struct soc_camera_device *icd = priv->ici.icd;
 
 	proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
 	proc_cfg |= STREAM_PROC_CFG_DMA0_SRC(2);
 	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
 
 	vinc_write(priv, STREAM_DMA_FBUF_CFG(0, 0), 0x00001);
-	lstep = priv->crop2.c.width * 4;
-	fstep = lstep * priv->crop2.c.height;
-	vinc_write(priv, STREAM_DMA_FBUF_LSTEP(0, 0, 0), lstep);
-	vinc_write(priv, STREAM_DMA_FBUF_FSTEP(0, 0, 0), fstep);
+	vinc_write(priv, STREAM_DMA_FBUF_LSTEP(0, 0, 0), icd->bytesperline);
+	vinc_write(priv, STREAM_DMA_FBUF_FSTEP(0, 0, 0), icd->sizeimage);
 	vinc_write(priv, STREAM_DMA_PIXEL_FMT(0, 0),
 		   STREAM_DMA_PIXEL_FMT_PLANES(PLANES_SINGLE) |
 		   STREAM_DMA_PIXEL_FMT_FORMAT(FORMAT_BGR));
@@ -1918,8 +1936,9 @@ static void vinc_configure_bgr(struct vinc_dev *priv)
 
 static void vinc_configure_m420(struct vinc_dev *priv)
 {
-	u32 proc_cfg, lstep, fstep;
+	u32 proc_cfg;
 	struct vinc_cc *ct = priv->ctrls[CTRL_CT]->p_cur.p;
+	struct soc_camera_device *icd = priv->ici.icd;
 	int i;
 
 	ct->scaling = 0;
@@ -1948,12 +1967,11 @@ static void vinc_configure_m420(struct vinc_dev *priv)
 	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
 
 	vinc_write(priv, STREAM_DMA_FBUF_CFG(0, 0), 0x00001);
-	lstep = priv->crop2.c.width;
-	fstep = lstep * priv->crop2.c.height;
 	for (i = 0; i < 2; i++) {
 		vinc_write(priv, STREAM_DMA_FBUF_LSTEP(0, 0, i),
-			   lstep | BIT(31));
-		vinc_write(priv, STREAM_DMA_FBUF_FSTEP(0, 0, i), fstep);
+			   icd->bytesperline | BIT(31));
+		vinc_write(priv, STREAM_DMA_FBUF_FSTEP(0, 0, i),
+			   icd->sizeimage);
 	}
 	vinc_write(priv, STREAM_DMA_PIXEL_FMT(0, 0),
 		   STREAM_DMA_PIXEL_FMT_PLANES(PLANES_DUAL) |
