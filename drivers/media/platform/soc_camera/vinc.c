@@ -626,15 +626,13 @@ static void vinc_configure_input(struct vinc_dev *priv)
 				PINTERFACE_HVFSYNC_PRE_DELAY_V(1));
 		vinc_write(priv, STREAM_INP_CFG(0), 0x0);
 	} else if (priv->video_source == V4L2_MBUS_CSI2) {
-		vinc_write(priv, CSI2_INTR(0), 0x0007FFFF);
 		vinc_write(priv, PPORT_INP_MUX_CFG, 0x0);
 		vinc_write(priv, PPORT_CFG(0), 0x0);
 		vinc_write(priv, PPORT_CFG(1), 0x0);
 		vinc_write(priv, PPORT_CFG(2), 0x0);
 
-		vinc_write(priv, CSI2_PORT_SYS_CTR(0),
-			   CSI2_PORT_SYS_CTR_ENABLE |
-			   CSI2_PORT_SYS_CTR_FREQ_RATIO(2));
+		vinc_write(priv, CSI2_DEVICE_READY(0), 0x0);
+		vinc_write(priv, CSI2_INTR(0), 0x0007FFFF);
 		vinc_write(priv, CSI2_PORT_GENFIFO_CTR(0), 0x0);
 
 		/* 1lane, timeout=max */
@@ -678,11 +676,37 @@ static int vinc_start_streaming(struct vb2_queue *q, unsigned int count)
 			struct soc_camera_device, vb2_vidq);
 	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
 	struct vinc_dev *priv = ici->priv;
+	int retry_count = 10;
+	unsigned long timeout;
+	u32 csi2_port_sys_ctr = vinc_read(priv, CSI2_PORT_SYS_CTR(0));
+	u32 csi2_intr;
 
 	dev_dbg(icd->parent, "Start streaming (count: %u)\n", count);
 
-	vinc_write(priv, CSI2_PORT_SYS_CTR(0), CSI2_PORT_SYS_CTR_FREQ_RATIO(2) |
-			CSI2_PORT_SYS_CTR_ENABLE);
+	/* Workaround for mcom issue rf#1361 (see errata)
+	 * Check that VINC captures video and reenable MIPI port otherwise. */
+	do {
+		vinc_write(priv, CSI2_PORT_SYS_CTR(0),
+			   csi2_port_sys_ctr & ~CSI2_PORT_SYS_CTR_ENABLE);
+		vinc_write(priv, CSI2_PORT_SYS_CTR(0),
+			   csi2_port_sys_ctr | CSI2_PORT_SYS_CTR_ENABLE);
+		vinc_configure_input(priv);
+
+		timeout = jiffies + msecs_to_jiffies(30);
+		do {
+			csi2_intr = vinc_read(priv, CSI2_INTR(0));
+			if (!(csi2_intr & BIT(9)))
+				schedule();
+			else
+				break;
+		} while (time_before(jiffies, timeout));
+	} while (!(csi2_intr & BIT(9)) && retry_count--);
+
+	if (retry_count < 0) {
+		dev_err(icd->parent, "Can not receive video from sensor\n");
+		return -EIO;
+	}
+
 	vinc_write(priv, STREAM_DMA_WR_CTR(0, 0), DMA_WR_CTR_FRAME_END_EN |
 			DMA_WR_CTR_DMA_EN);
 	vinc_write(priv, STREAM_CTR, STREAM_CTR_STREAM0_ENABLE);
@@ -711,7 +735,7 @@ static void vinc_stop_streaming(struct vb2_queue *q)
 	vinc_write(priv, STREAM_DMA_WR_CTR(0, 0), 0x0);
 	csi2_port_sys_ctr = vinc_read(priv, CSI2_PORT_SYS_CTR(0));
 	vinc_write(priv, CSI2_PORT_SYS_CTR(0),
-		   csi2_port_sys_ctr ^ STREAM_CTR_STREAM0_ENABLE);
+		   csi2_port_sys_ctr & ~CSI2_PORT_SYS_CTR_ENABLE);
 	/* GLOBAL_ENABLE still enable for sensor clocks */
 
 	spin_lock_irq(&priv->lock);
@@ -1900,8 +1924,6 @@ static void vinc_configure(struct vinc_dev *priv)
 	int i;
 
 	vinc_write(priv, STREAM_CTR, 0);
-
-	vinc_configure_input(priv);
 
 	vinc_write(priv, STREAM_INP_HCROP_CTR(0),
 		   (priv->crop1.c.width << 16) | priv->crop1.c.left);
