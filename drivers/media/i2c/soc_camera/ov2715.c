@@ -320,12 +320,32 @@ static int ov2715_s_crop(struct v4l2_subdev *sd, const struct v4l2_crop *a)
 	return -EINVAL;
 }
 
+static int ov2715_g_parm(struct v4l2_subdev *sd, struct v4l2_streamparm *param)
+{
+	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	struct ov2715_priv *priv = to_ov2715(client);
+
+	if (param->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+		return -EINVAL;
+
+	param->parm.capture = (struct v4l2_captureparm) {
+		.capability = V4L2_CAP_TIMEPERFRAME,
+		.timeperframe = {
+			.numerator = 1,
+			.denominator = priv->fps
+		}
+	};
+
+	return 0;
+}
+
 static struct v4l2_subdev_video_ops ov2715_subdev_video_ops = {
 	.g_mbus_fmt	= ov2715_try_fmt,
 	.s_mbus_fmt	= ov2715_try_fmt,
 	.try_mbus_fmt	= ov2715_try_fmt,
 	.cropcap	= ov2715_cropcap,
 	.s_crop		= ov2715_s_crop,
+	.g_parm		= ov2715_g_parm,
 	.enum_mbus_fmt	= ov2715_enum_fmt,
 	.g_mbus_config	= ov2715_g_mbus_config,
 };
