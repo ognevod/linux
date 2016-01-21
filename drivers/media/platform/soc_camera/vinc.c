@@ -263,6 +263,12 @@
 #define CSI2_TIM3_DLN_CNT_LPX(v)	(((v) & 0xFF) << 8)
 #define CSI2_TIM3_CLN_CNT_PLL(v)	(((v) & 0xFFFF) << 16)
 
+/* Bits for STREAM_INP_DECIM_CTR register */
+#define STREAM_INP_DECIM_HDECIM(v)	((v) & 0xF)
+#define STREAM_INP_DECIM_VDECIM(v)	(((v) & 0xF) << 4)
+#define STREAM_INP_DECIM_FDECIM(v)	(((v) & 0x3F) << 8)
+#define STREAM_INP_DECIM_INTERLACE_MODE	BIT(16)
+
 /* Bits for STREAM_INTERRUPT register */
 #define STREAM_INTERRUPT_PROC		BIT(0)
 #define STREAM_INTERRUPT_DMA0		BIT(8)
@@ -443,6 +449,7 @@ struct vinc_dev {
 
 	struct v4l2_crop crop1;
 	struct v4l2_crop crop2;
+	u32 fdecim;
 
 	int sequence;
 };
@@ -1930,7 +1937,8 @@ static void vinc_configure(struct vinc_dev *priv)
 	vinc_write(priv, STREAM_INP_VCROP_CTR(0),
 		   (priv->crop1.c.height << 16) | priv->crop1.c.top);
 	vinc_write(priv, STREAM_INP_VCROP_ODD_CTR(0), 0);
-	vinc_write(priv, STREAM_INP_DECIM_CTR(0), 0);
+	vinc_write(priv, STREAM_INP_DECIM_CTR(0),
+		   STREAM_INP_DECIM_FDECIM(priv->fdecim - 1));
 
 	proc_cfg = STREAM_PROC_CFG_STT_EN(priv->cluster.stat.enable->val);
 	if (priv->input_format == BAYER && !priv->test_pattern->val)
@@ -2029,6 +2037,8 @@ static int vinc_get_parm(struct soc_camera_device *icd,
 	struct v4l2_subdev_frame_interval sensor_interval = {0};
 	struct v4l2_fract *tpf = &parm->parm.capture.timeperframe;
 	struct v4l2_subdev *sd = soc_camera_to_subdev(icd);
+	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
+	struct vinc_dev *priv = ici->priv;
 
 	parm->parm.capture.capability = V4L2_CAP_TIMEPERFRAME;
 	parm->parm.capture.capturemode = 0;
@@ -2054,7 +2064,44 @@ static int vinc_get_parm(struct soc_camera_device *icd,
 		tpf->denominator = 30;
 		tpf->numerator = 1;
 	}
+	tpf->numerator *= priv->fdecim;
+	/* TODO: Add fraction reduction */
 
+	return 0;
+}
+
+static int vinc_set_parm(struct soc_camera_device *icd,
+			 struct v4l2_streamparm *parm)
+{
+	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
+	struct vinc_dev *priv = ici->priv;
+	struct v4l2_fract tpf, *current_tpf = &parm->parm.capture.timeperframe;
+	u32 decim_ctr = vinc_read(priv, STREAM_INP_DECIM_CTR(0));
+
+	if (parm->parm.capture.extendedmode)
+		return -EINVAL;
+
+	priv->fdecim = 1;
+	tpf = parm->parm.capture.timeperframe;
+	vinc_get_parm(icd, parm);
+
+	/*
+	 * Here we have:
+	 * tpf - timeperframe requested by user (can contain zeros)
+	 * current_tpf - timeperframe returned by sensor (can not contain zeros)
+	 */
+	if (tpf.denominator)
+		priv->fdecim = (tpf.numerator * current_tpf->denominator) /
+				(tpf.denominator * current_tpf->numerator);
+
+	priv->fdecim = clamp_val(priv->fdecim, 1, 64);
+
+	current_tpf->numerator *= priv->fdecim;
+	/* TODO: Add fraction reduction */
+
+	decim_ctr &= ~STREAM_INP_DECIM_FDECIM(0x3F);
+	decim_ctr |= STREAM_INP_DECIM_FDECIM(priv->fdecim - 1);
+	vinc_write(priv, STREAM_INP_DECIM_CTR(0), decim_ctr);
 	return 0;
 }
 
@@ -2068,6 +2115,7 @@ static struct soc_camera_host_ops vinc_host_ops = {
 	.set_bus_param	= vinc_set_bus_param,
 	.init_videobuf2	= vinc_init_videobuf,
 	.get_parm       = vinc_get_parm,
+	.set_parm       = vinc_set_parm,
 };
 
 
@@ -2304,6 +2352,7 @@ static int vinc_probe(struct platform_device *pdev)
 
 	priv->video_source = V4L2_MBUS_CSI2;
 	priv->input_format = BAYER;
+	priv->fdecim = 1;
 
 	priv->ici.priv = priv;
 	priv->ici.v4l2_dev.dev = &pdev->dev;
