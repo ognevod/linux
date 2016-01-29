@@ -107,7 +107,7 @@ static const struct dwc2_core_params params_rk3066 = {
 };
 
 static const struct dwc2_core_params params_mcom = {
-	.otg_cap			= 2,	/* non-HNP/non-SRP */
+	.otg_cap			= -1,
 	.otg_ver			= -1,
 	.dma_enable			= -1,
 	.dma_desc_enable		= 0,
