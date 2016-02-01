@@ -595,6 +595,80 @@ static void vinc_buf_queue(struct vb2_buffer *vb)
 	spin_unlock_irq(&priv->lock);
 }
 
+static void vinc_configure_input(struct vinc_dev *priv)
+{
+	if (priv->ctrls[CTRL_TEST_PATTERN]->val) {
+		u32 test_src = 0;
+
+		test_src |= priv->crop1.c.width + priv->crop1.c.left;
+		test_src |= (priv->crop1.c.height + priv->crop1.c.top) << 12;
+		test_src |= 5 << 24;
+		test_src |= (priv->ctrls[CTRL_TEST_PATTERN]->val - 1) << 29;
+
+		vinc_write(priv, PPORT_INP_MUX_CFG, 0x101);
+		vinc_write(priv, PPORT_CFG(0),
+				PORT_CFG_PIXEL_MODE(1) | PORT_CFG_VIN_SRC(1));
+		vinc_write(priv, PPORT_CFG(1),
+				PORT_CFG_PIXEL_MODE(1) | PORT_CFG_VIN_SRC(2));
+		vinc_write(priv, PPORT_CFG(2),
+				PORT_CFG_PIXEL_MODE(1) | PORT_CFG_VIN_SRC(3));
+		vinc_write(priv, PPORT_TEST_SRC, test_src);
+		vinc_write(priv, PINTERFACE_CFG(0),
+				PINTERFACE_CFG_CYCLE_NUM(1) |
+				PINTERFACE_CFG_PIXEL_NUM_EVEN(1) |
+				PINTERFACE_CFG_PORT_NUM_SYNC(2));
+		vinc_write(priv, PINTERFACE_CCMOV(0, 0), 0x321);
+		vinc_write(priv, PINTERFACE_HVFSYNC(0),
+				PINTERFACE_HVFSYNC_DELAY_V(0x11) |
+				PINTERFACE_HVFSYNC_PRE_DELAY_V(1));
+		vinc_write(priv, STREAM_INP_CFG(0), 0x0);
+	} else if (priv->video_source == V4L2_MBUS_CSI2) {
+		vinc_write(priv, CSI2_INTR(0), 0x0007FFFF);
+		vinc_write(priv, PPORT_INP_MUX_CFG, 0x0);
+		vinc_write(priv, PPORT_CFG(0), 0x0);
+		vinc_write(priv, PPORT_CFG(1), 0x0);
+		vinc_write(priv, PPORT_CFG(2), 0x0);
+
+		vinc_write(priv, CSI2_PORT_SYS_CTR(0),
+			   CSI2_PORT_SYS_CTR_ENABLE |
+			   CSI2_PORT_SYS_CTR_FREQ_RATIO(2));
+		vinc_write(priv, CSI2_PORT_GENFIFO_CTR(0), 0x0);
+
+		/* 1lane, timeout=max */
+		vinc_write(priv, CSI2_FUNC_PROG(0), 0x1ffffc |
+				((priv->csi2_lanes - 1) & 0x3));
+		vinc_write(priv, CSI2_DPHY_TIM3(0),
+			   CSI2_TIM3_CLN_CNT_LPX(0xBF) |
+			   CSI2_TIM3_DLN_CNT_LPX(0x12));
+		vinc_write(priv, CSI2_SYNC_COUNT(0), 0x14141414);
+		vinc_write(priv, CSI2_RCV_COUNT(0), 0x04040404);
+
+		vinc_write(priv, CSI2_FSLS(0), 0x2);
+		vinc_write(priv, CSI2_LSDV(0), 0x2);
+		vinc_write(priv, CSI2_DVLE(0), 0x2);
+		vinc_write(priv, CSI2_LEFE(0), 0x2);
+		vinc_write(priv, CSI2_FEFS(0), 0x2);
+		vinc_write(priv, CSI2_LELS(0), 0x4);
+		vinc_write(priv, CSI2_LOOP_BACK(0), 0x0);
+		vinc_write(priv, CSI2_RAW8(0), 0x0);
+		vinc_write(priv, CSI2_DPHY_TIM1(0),
+			   CSI2_TIM1_DLN_CNT_HS_PREP(0x06) |
+			   CSI2_TIM1_DLN_CNT_HS_ZERO(0x04) |
+			   CSI2_TIM1_DLN_CNT_HS_TRAIL(0x07) |
+			   CSI2_TIM1_DLN_CNT_HS_EXIT(0x02));
+		vinc_write(priv, CSI2_DPHY_TIM2(0),
+			   CSI2_TIM2_CLN_CNT_HS_PREP(0x06) |
+			   CSI2_TIM2_CLN_CNT_HS_ZERO(0x04) |
+			   CSI2_TIM2_CLN_CNT_HS_TRAIL(0x11) |
+			   CSI2_TIM2_CLN_CNT_HS_EXIT(0x03));
+		vinc_write(priv, CSI2_TRIM0(0), 0x02000000);
+		vinc_write(priv, CSI2_DEVICE_READY(0), 0x1);
+		vinc_write(priv, STREAM_INP_CFG(0), 0x2);
+	} else
+		dev_err(priv->ici.v4l2_dev.dev, "Unknown input format %#x",
+			priv->video_source);
+}
+
 static int vinc_start_streaming(struct vb2_queue *q, unsigned int count)
 {
 	struct soc_camera_device *icd = container_of(q,
@@ -756,80 +830,6 @@ static void set_stat_zone(struct vinc_dev *priv, u32 zone_id,
 	} else
 		proc_cfg &= ~(BIT(STREAM_PROC_CFG_STT_ZONE_OFFSET + zone_id));
 	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
-}
-
-static void vinc_configure_input(struct vinc_dev *priv)
-{
-	if (priv->ctrls[CTRL_TEST_PATTERN]->val) {
-		u32 test_src = 0;
-
-		test_src |= priv->crop1.c.width + priv->crop1.c.left;
-		test_src |= (priv->crop1.c.height + priv->crop1.c.top) << 12;
-		test_src |= 5 << 24;
-		test_src |= (priv->ctrls[CTRL_TEST_PATTERN]->val - 1) << 29;
-
-		vinc_write(priv, PPORT_INP_MUX_CFG, 0x101);
-		vinc_write(priv, PPORT_CFG(0),
-				PORT_CFG_PIXEL_MODE(1) | PORT_CFG_VIN_SRC(1));
-		vinc_write(priv, PPORT_CFG(1),
-				PORT_CFG_PIXEL_MODE(1) | PORT_CFG_VIN_SRC(2));
-		vinc_write(priv, PPORT_CFG(2),
-				PORT_CFG_PIXEL_MODE(1) | PORT_CFG_VIN_SRC(3));
-		vinc_write(priv, PPORT_TEST_SRC, test_src);
-		vinc_write(priv, PINTERFACE_CFG(0),
-				PINTERFACE_CFG_CYCLE_NUM(1) |
-				PINTERFACE_CFG_PIXEL_NUM_EVEN(1) |
-				PINTERFACE_CFG_PORT_NUM_SYNC(2));
-		vinc_write(priv, PINTERFACE_CCMOV(0, 0), 0x321);
-		vinc_write(priv, PINTERFACE_HVFSYNC(0),
-				PINTERFACE_HVFSYNC_DELAY_V(0x11) |
-				PINTERFACE_HVFSYNC_PRE_DELAY_V(1));
-		vinc_write(priv, STREAM_INP_CFG(0), 0x0);
-	} else if (priv->video_source == V4L2_MBUS_CSI2) {
-		vinc_write(priv, CSI2_INTR(0), 0x0007FFFF);
-		vinc_write(priv, PPORT_INP_MUX_CFG, 0x0);
-		vinc_write(priv, PPORT_CFG(0), 0x0);
-		vinc_write(priv, PPORT_CFG(1), 0x0);
-		vinc_write(priv, PPORT_CFG(2), 0x0);
-
-		vinc_write(priv, CSI2_PORT_SYS_CTR(0),
-			   CSI2_PORT_SYS_CTR_ENABLE |
-			   CSI2_PORT_SYS_CTR_FREQ_RATIO(2));
-		vinc_write(priv, CSI2_PORT_GENFIFO_CTR(0), 0x0);
-
-		/* 1lane, timeout=max */
-		vinc_write(priv, CSI2_FUNC_PROG(0), 0x1ffffc |
-				((priv->csi2_lanes - 1) & 0x3));
-		vinc_write(priv, CSI2_DPHY_TIM3(0),
-			   CSI2_TIM3_CLN_CNT_LPX(0xBF) |
-			   CSI2_TIM3_DLN_CNT_LPX(0x12));
-		vinc_write(priv, CSI2_SYNC_COUNT(0), 0x14141414);
-		vinc_write(priv, CSI2_RCV_COUNT(0), 0x04040404);
-
-		vinc_write(priv, CSI2_FSLS(0), 0x2);
-		vinc_write(priv, CSI2_LSDV(0), 0x2);
-		vinc_write(priv, CSI2_DVLE(0), 0x2);
-		vinc_write(priv, CSI2_LEFE(0), 0x2);
-		vinc_write(priv, CSI2_FEFS(0), 0x2);
-		vinc_write(priv, CSI2_LELS(0), 0x4);
-		vinc_write(priv, CSI2_LOOP_BACK(0), 0x0);
-		vinc_write(priv, CSI2_RAW8(0), 0x0);
-		vinc_write(priv, CSI2_DPHY_TIM1(0),
-			   CSI2_TIM1_DLN_CNT_HS_PREP(0x06) |
-			   CSI2_TIM1_DLN_CNT_HS_ZERO(0x04) |
-			   CSI2_TIM1_DLN_CNT_HS_TRAIL(0x07) |
-			   CSI2_TIM1_DLN_CNT_HS_EXIT(0x02));
-		vinc_write(priv, CSI2_DPHY_TIM2(0),
-			   CSI2_TIM2_CLN_CNT_HS_PREP(0x06) |
-			   CSI2_TIM2_CLN_CNT_HS_ZERO(0x04) |
-			   CSI2_TIM2_CLN_CNT_HS_TRAIL(0x11) |
-			   CSI2_TIM2_CLN_CNT_HS_EXIT(0x03));
-		vinc_write(priv, CSI2_TRIM0(0), 0x02000000);
-		vinc_write(priv, CSI2_DEVICE_READY(0), 0x1);
-		vinc_write(priv, STREAM_INP_CFG(0), 0x2);
-	} else
-		dev_err(priv->ici.v4l2_dev.dev, "Unknown input format %#x",
-			priv->video_source);
 }
 
 static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
