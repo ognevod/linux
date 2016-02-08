@@ -970,7 +970,11 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		break;
 	case V4L2_CID_DR_ENABLE:
 		dr = (struct vinc_cluster_dr *)ctrl->cluster;
+		/* To enable/disable DR block we need to stop video */
+		stream_ctr = vinc_read(priv, STREAM_CTR);
+		vinc_write(priv, STREAM_CTR, 0);
 		cluster_activate(priv, STREAM_PROC_CFG_ADR_EN, ctrl->cluster);
+		vinc_write(priv, STREAM_CTR, stream_ctr);
 		if (dr->enable->val && (dr->enable->is_new || dr->dr->is_new))
 			set_dr(priv, dr->dr->p_new.p_u16);
 		break;
