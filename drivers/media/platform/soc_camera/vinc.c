@@ -366,42 +366,54 @@
 #define COEFF_FLOAT_TO_U16(coeff, scaling) ((u16)((s16)((coeff) * \
 		(1 << (15 - (scaling))) + ((coeff) < 0 ? -0.5 : 0.5))))
 
+#define CLUSTER_SIZE(c) (sizeof(c) / sizeof(struct v4l2_ctrl *))
+
 enum vinc_input_format { UNKNOWN, BAYER, RGB, YCbCr };
 
-enum vinc_ctrls {
-	CTRL_BP_EN,
-	CTRL_BP_PIX,
-	CTRL_BP_ROW,
-	CTRL_BP_COL,
-	CTRL_GC_EN,
-	CTRL_GC,
-	CTRL_CC_EN,
-	CTRL_CC,
-	CTRL_CT_EN,
-	CTRL_CT,
-	CTRL_DR_EN,
-	CTRL_DR,
-	CTRL_STAT_EN,
-	CTRL_STAT_AF_COLOR,
-	CTRL_STAT_AF_TH,
-	CTRL_STAT_ZONE0,
-	CTRL_STAT_ZONE1,
-	CTRL_STAT_ZONE2,
-	CTRL_STAT_ZONE3,
-	CTRL_STAT_HIST0,
-	CTRL_STAT_HIST1,
-	CTRL_STAT_HIST2,
-	CTRL_STAT_HIST3,
-	CTRL_STAT_AF0,
-	CTRL_STAT_AF1,
-	CTRL_STAT_AF2,
-	CTRL_STAT_AF3,
-	CTRL_STAT_ADD0,
-	CTRL_STAT_ADD1,
-	CTRL_STAT_ADD2,
-	CTRL_STAT_ADD3,
-	CTRL_TEST_PATTERN,
-	CTRLS_COUNT
+struct vinc_cluster_bp {
+	struct v4l2_ctrl *enable;
+	struct v4l2_ctrl *pix;
+	struct v4l2_ctrl *row;
+	struct v4l2_ctrl *col;
+};
+
+struct vinc_cluster_gamma {
+	struct v4l2_ctrl *enable;
+	struct v4l2_ctrl *curve;
+};
+
+struct vinc_cluster_cc {
+	struct v4l2_ctrl *enable;
+	struct v4l2_ctrl *cc;
+};
+
+struct vinc_cluster_ct {
+	struct v4l2_ctrl *enable;
+	struct v4l2_ctrl *ct;
+};
+
+struct vinc_cluster_dr {
+	struct v4l2_ctrl *enable;
+	struct v4l2_ctrl *dr;
+};
+
+struct vinc_cluster_stat {
+	struct v4l2_ctrl *enable;
+	struct v4l2_ctrl *af_color;
+	struct v4l2_ctrl *af_th;
+	struct v4l2_ctrl *zone[4];
+	struct v4l2_ctrl *hist[4];
+	struct v4l2_ctrl *af[4];
+	struct v4l2_ctrl *add[4];
+};
+
+struct vinc_cluster {
+	struct vinc_cluster_bp bp;
+	struct vinc_cluster_gamma gamma;
+	struct vinc_cluster_cc cc;
+	struct vinc_cluster_ct ct;
+	struct vinc_cluster_dr dr;
+	struct vinc_cluster_stat stat;
 };
 
 struct vinc_dev {
@@ -425,12 +437,8 @@ struct vinc_dev {
 	enum vinc_input_format input_format;
 	u32 bayer_mode;
 
-	struct v4l2_ctrl *ctrls[CTRLS_COUNT];
-	int bp_change:1;
-	int gc_change:1;
-	int cc_change:1;
-	int ct_change:1;
-	int dr_change:1;
+	struct vinc_cluster cluster;
+	struct v4l2_ctrl *test_pattern;
 	int stat_odd:1;
 
 	struct v4l2_crop crop1;
@@ -444,11 +452,6 @@ struct vinc_cam {
 	unsigned int width;
 	unsigned int height;
 	u32 code;
-};
-
-struct vinc_ctrl_cfg {
-	enum vinc_ctrls ctrl_id;
-	struct v4l2_ctrl_config cfg;
 };
 
 static struct soc_mbus_pixelfmt vinc_formats[] = {
@@ -597,13 +600,13 @@ static void vinc_buf_queue(struct vb2_buffer *vb)
 
 static void vinc_configure_input(struct vinc_dev *priv)
 {
-	if (priv->ctrls[CTRL_TEST_PATTERN]->val) {
+	if (priv->test_pattern->val) {
 		u32 test_src = 0;
 
 		test_src |= priv->crop1.c.width + priv->crop1.c.left;
 		test_src |= (priv->crop1.c.height + priv->crop1.c.top) << 12;
 		test_src |= 5 << 24;
-		test_src |= (priv->ctrls[CTRL_TEST_PATTERN]->val - 1) << 29;
+		test_src |= (priv->test_pattern->val - 1) << 29;
 
 		vinc_write(priv, PPORT_INP_MUX_CFG, 0x101);
 		vinc_write(priv, PPORT_CFG(0),
@@ -832,156 +835,106 @@ static void set_stat_zone(struct vinc_dev *priv, u32 zone_id,
 	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
 }
 
+static void cluster_activate(struct vinc_dev *priv, u32 block_mask,
+			     struct v4l2_ctrl **cluster)
+{
+	u32 proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+	struct v4l2_ctrl *master = cluster[0];
+	int i;
+
+	if (master->val)
+		proc_cfg |= block_mask;
+	else
+		proc_cfg &= ~block_mask;
+	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+	for (i = 1; i < master->ncontrols; i++)
+		v4l2_ctrl_activate(cluster[i], master->val);
+}
+
 static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct soc_camera_device *icd = container_of(ctrl->handler,
 			struct soc_camera_device, ctrl_handler);
 	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
 	struct vinc_dev *priv = ici->priv;
+	struct vinc_cluster_bp *bp;
+	struct vinc_cluster_gamma *gamma;
+	struct vinc_cluster_cc *cc;
+	struct vinc_cluster_ct *ct;
+	struct vinc_cluster_dr *dr;
+	struct vinc_cluster_stat *stat;
 	u32 proc_cfg, stream_ctr;
+	int i;
 
 	switch (ctrl->id) {
 	case V4L2_CID_BAD_CORRECTION_ENABLE:
+		bp = (struct vinc_cluster_bp *)ctrl->cluster;
 		/* For programming BP block we need to stop video */
 		stream_ctr = vinc_read(priv, STREAM_CTR);
 		vinc_write(priv, STREAM_CTR, 0);
-		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
-		if (ctrl->val)
-			proc_cfg |= STREAM_PROC_CFG_BPC_EN;
-		else
-			proc_cfg &= ~STREAM_PROC_CFG_BPC_EN;
-		vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
-		if (ctrl->val && priv->bp_change) {
-			set_bad_pixels(priv, priv->ctrls[CTRL_BP_PIX]->p_cur.p);
-			set_bad_rows_cols(priv,
-					  priv->ctrls[CTRL_BP_ROW]->p_cur.p_u16,
-					  0);
-			set_bad_rows_cols(priv,
-					  priv->ctrls[CTRL_BP_COL]->p_cur.p_u16,
-					  1);
-			priv->bp_change = 0;
+		cluster_activate(priv, STREAM_PROC_CFG_BPC_EN, ctrl->cluster);
+		if (bp->enable->val) {
+			if (bp->enable->is_new || bp->pix->is_new)
+				set_bad_pixels(priv, bp->pix->p_new.p);
+			if (bp->enable->is_new || bp->row->is_new)
+				set_bad_rows_cols(priv, bp->row->p_new.p_u16,
+						  0);
+			if (bp->enable->is_new || bp->col->is_new)
+				set_bad_rows_cols(priv, bp->col->p_new.p_u16,
+						  1);
 		}
 		vinc_write(priv, STREAM_CTR, stream_ctr);
-		break;
-	case V4L2_CID_BAD_PIXELS:
-		if (priv->ctrls[CTRL_BP_EN]->cur.val) {
-			stream_ctr = vinc_read(priv, STREAM_CTR);
-			vinc_write(priv, STREAM_CTR, 0);
-			set_bad_pixels(priv, ctrl->p_new.p);
-			vinc_write(priv, STREAM_CTR, stream_ctr);
-		} else
-			priv->bp_change = 1;
-		break;
-	case V4L2_CID_BAD_ROWS:
-	case V4L2_CID_BAD_COLS:
-		if (priv->ctrls[CTRL_BP_EN]->cur.val) {
-			stream_ctr = vinc_read(priv, STREAM_CTR);
-			vinc_write(priv, STREAM_CTR, 0);
-			set_bad_rows_cols(priv, ctrl->p_new.p_u16,
-					  ctrl->id == V4L2_CID_BAD_ROWS ?
-							  0 : 1);
-			vinc_write(priv, STREAM_CTR, stream_ctr);
-		} else
-			priv->bp_change = 1;
 		break;
 	case V4L2_CID_GAMMA_CURVE_ENABLE:
-		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
-		if (ctrl->val)
-			proc_cfg |= STREAM_PROC_CFG_GC_EN;
-		else
-			proc_cfg &= ~STREAM_PROC_CFG_GC_EN;
-		vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
-		if (ctrl->val && priv->gc_change) {
-			set_gc_curve(priv, priv->ctrls[CTRL_GC]->p_cur.p);
-			priv->gc_change = 0;
-		}
-		break;
-	case V4L2_CID_GAMMA_CURVE:
-		if (priv->ctrls[CTRL_GC_EN]->cur.val)
-			set_gc_curve(priv, ctrl->p_new.p);
-		else
-			priv->gc_change = 1;
+		gamma = (struct vinc_cluster_gamma *)ctrl->cluster;
+		cluster_activate(priv, STREAM_PROC_CFG_GC_EN, ctrl->cluster);
+		if (gamma->enable->val && (gamma->enable->is_new ||
+					   gamma->curve->is_new))
+			set_gc_curve(priv, gamma->curve->p_new.p);
 		break;
 	case V4L2_CID_CC_ENABLE:
-		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
-		if (ctrl->val)
-			proc_cfg |= STREAM_PROC_CFG_CC_EN;
-		else
-			proc_cfg &= ~STREAM_PROC_CFG_CC_EN;
-		vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
-		if (ctrl->val && priv->cc_change) {
-			set_cc_ct(priv, priv->ctrls[CTRL_CC]->p_cur.p, 0);
-			priv->cc_change = 0;
-		}
-		break;
-	case V4L2_CID_CC:
-		if (priv->ctrls[CTRL_CC_EN]->cur.val)
-			set_cc_ct(priv, ctrl->p_new.p, 0);
-		else
-			priv->cc_change = 1;
+		cc = (struct vinc_cluster_cc *)ctrl->cluster;
+		cluster_activate(priv, STREAM_PROC_CFG_CC_EN, ctrl->cluster);
+		if (cc->cc->is_new)
+			set_cc_ct(priv, cc->cc->p_new.p, 0);
 		break;
 	case V4L2_CID_CT_ENABLE:
-		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
-		if (ctrl->val)
-			proc_cfg |= STREAM_PROC_CFG_CT_EN;
-		else
-			proc_cfg &= ~STREAM_PROC_CFG_CT_EN;
-		vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
-		if (ctrl->val && priv->ct_change) {
-			set_cc_ct(priv, priv->ctrls[CTRL_CT]->p_cur.p, 1);
-			priv->ct_change = 0;
-		}
-		break;
-	case V4L2_CID_CT:
-		if (priv->ctrls[CTRL_CT_EN]->cur.val)
-			set_cc_ct(priv, ctrl->p_new.p, 1);
-		else
-			priv->ct_change = 1;
+		ct = (struct vinc_cluster_ct *)ctrl->cluster;
+		cluster_activate(priv, STREAM_PROC_CFG_CT_EN, ctrl->cluster);
+		if (ct->ct->is_new)
+			set_cc_ct(priv, ct->ct->p_new.p, 1);
 		break;
 	case V4L2_CID_DR_ENABLE:
-		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
-		if (ctrl->val)
-			proc_cfg |= STREAM_PROC_CFG_ADR_EN;
-		else
-			proc_cfg &= ~STREAM_PROC_CFG_ADR_EN;
-		vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
-		if (ctrl->val && priv->dr_change) {
-			set_dr(priv, priv->ctrls[CTRL_DR]->p_cur.p_u16);
-			priv->dr_change = 0;
-		}
-		break;
-	case V4L2_CID_DR:
-		if (priv->ctrls[CTRL_DR_EN]->cur.val)
-			set_dr(priv, ctrl->p_new.p_u16);
-		else
-			priv->dr_change = 1;
+		dr = (struct vinc_cluster_dr *)ctrl->cluster;
+		cluster_activate(priv, STREAM_PROC_CFG_ADR_EN, ctrl->cluster);
+		if (dr->enable->val && (dr->enable->is_new || dr->dr->is_new))
+			set_dr(priv, dr->dr->p_new.p_u16);
 		break;
 	case V4L2_CID_STAT_ENABLE:
-		stream_ctr = vinc_read(priv, STREAM_CTR);
-		vinc_write(priv, STREAM_CTR, 0);
-		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
-		proc_cfg &= ~STREAM_PROC_CFG_STT_EN(0x7);
-		proc_cfg |= STREAM_PROC_CFG_STT_EN(ctrl->val);
-		if (ctrl->val)
-			vinc_stat_start(priv);
-		vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
-		vinc_write(priv, STREAM_CTR, stream_ctr);
-		break;
-	case V4L2_CID_STAT_AF_COLOR:
-		set_stat_af_color(priv, ctrl->val);
-		break;
-	case V4L2_CID_STAT_AF_TH:
-		vinc_write(priv, STREAM_PROC_STAT_TH(0), ctrl->val);
-		break;
-	case V4L2_CID_STAT_ZONE0:
-	case V4L2_CID_STAT_ZONE1:
-	case V4L2_CID_STAT_ZONE2:
-	case V4L2_CID_STAT_ZONE3:
-		stream_ctr = vinc_read(priv, STREAM_CTR);
-		vinc_write(priv, STREAM_CTR, 0);
-		set_stat_zone(priv, ctrl->id - V4L2_CID_STAT_ZONE0,
-			      ctrl->p_new.p);
-		vinc_write(priv, STREAM_CTR, stream_ctr);
+		stat = (struct vinc_cluster_stat *)ctrl->cluster;
+		if (stat->enable->is_new) {
+			stream_ctr = vinc_read(priv, STREAM_CTR);
+			vinc_write(priv, STREAM_CTR, 0);
+			proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+			proc_cfg &= ~STREAM_PROC_CFG_STT_EN(0x7);
+			proc_cfg |= STREAM_PROC_CFG_STT_EN(stat->enable->val);
+			if (stat->enable->val)
+				vinc_stat_start(priv);
+			vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+			vinc_write(priv, STREAM_CTR, stream_ctr);
+		}
+		set_stat_af_color(priv, stat->af_color->val);
+		vinc_write(priv, STREAM_PROC_STAT_TH(0), stat->af_th->val);
+		for (i = 0; i < 4; i++) {
+			if (!stat->zone[i]->is_new)
+				continue;
+			stream_ctr = vinc_read(priv, STREAM_CTR);
+			vinc_write(priv, STREAM_CTR, 0);
+			set_stat_zone(priv,
+				      stat->zone[i]->id - V4L2_CID_STAT_ZONE0,
+				      stat->zone[i]->p_new.p);
+			vinc_write(priv, STREAM_CTR, stream_ctr);
+		}
 		break;
 	case V4L2_CID_TEST_PATTERN:
 		stream_ctr = vinc_read(priv, STREAM_CTR);
@@ -1017,62 +970,86 @@ static int vinc_g_ctrl(struct v4l2_ctrl *ctrl)
 
 static int vinc_try_ctrl(struct v4l2_ctrl *ctrl)
 {
-	struct vinc_bad_pixel *pixel;
+	struct vinc_cluster_bp *bp;
+	struct vinc_cluster_gamma *gamma;
+	struct vinc_cluster_stat *stat;
 	struct vinc_gamma_curve *gc;
 	struct vinc_stat_zone *zone;
 	int i;
 
 	switch (ctrl->id) {
-	case V4L2_CID_BAD_CORRECTION_ENABLE:
-	case V4L2_CID_GAMMA_CURVE_ENABLE:
 	case V4L2_CID_CC_ENABLE:
 	case V4L2_CID_CT_ENABLE:
 	case V4L2_CID_DR_ENABLE:
 		return (u32)ctrl->val < 2 ? 0 : -ERANGE;
-	case V4L2_CID_BAD_PIXELS:
-		pixel = ctrl->p_new.p;
-		for (i = 0; i < CTRL_BAD_PIXELS_COUNT; i++) {
-			if (((pixel[i].x > MAX_WIDTH_HEIGHT) ||
-			     (pixel[i].y > MAX_WIDTH_HEIGHT)) &&
-			    (pixel[i].x != 0xFFFF) && (pixel[i].y != 0xFFFF))
-				return -ERANGE;
-		}
-		return 0;
-	case V4L2_CID_BAD_ROWS:
-	case V4L2_CID_BAD_COLS:
-		for (i = 0; i < CTRL_BAD_ROWSCOLS_COUNT; i++) {
-			if (ctrl->p_new.p_u16[i] > MAX_WIDTH_HEIGHT &&
-			    ctrl->p_new.p_u16[i] != 0xFFFF)
-				return -ERANGE;
-		}
-		return 0;
-	case V4L2_CID_GAMMA_CURVE:
-		gc = ctrl->p_new.p;
-		for (i = 0; i < CTRL_GC_ELEMENTS_COUNT; i++) {
-			if (gc->red[i] > MAX_COMP_VALUE ||
-			    gc->green[i] > MAX_COMP_VALUE ||
-			    gc->blue[i] > MAX_COMP_VALUE)
-				return -ERANGE;
-		}
-		return 0;
-	case V4L2_CID_STAT_ZONE0:
-		zone = ctrl->p_new.p;
-		if (!zone->enable)
-			return 0;
-		if (zone->x_lt > MAX_WIDTH_HEIGHT ||
-				zone->y_lt > MAX_WIDTH_HEIGHT ||
-				zone->x_rb > MAX_WIDTH_HEIGHT ||
-				zone->y_rb > MAX_WIDTH_HEIGHT ||
-				zone->x_lt >= zone->x_rb ||
-				zone->y_lt >= zone->y_rb)
+	case V4L2_CID_BAD_CORRECTION_ENABLE:
+		bp = (struct vinc_cluster_bp *)ctrl->cluster;
+		if ((u32)bp->enable->val > 1)
 			return -ERANGE;
+
+		if (bp->pix->is_new) {
+			struct vinc_bad_pixel *pixel = bp->pix->p_new.p;
+
+			for (i = 0; i < CTRL_BAD_PIXELS_COUNT; i++) {
+				if (((pixel[i].x > MAX_WIDTH_HEIGHT) ||
+				     (pixel[i].y > MAX_WIDTH_HEIGHT)) &&
+				     (pixel[i].x != 0xFFFF) &&
+				     (pixel[i].y != 0xFFFF))
+					return -ERANGE;
+			}
+		}
+		if (bp->row->is_new) {
+			u16 *row = bp->row->p_new.p_u16;
+
+			for (i = 0; i < CTRL_BAD_ROWSCOLS_COUNT; i++) {
+				if (row[i] > MAX_WIDTH_HEIGHT &&
+				    row[i] != 0xFFFF)
+					return -ERANGE;
+			}
+		}
+		if (bp->col->is_new) {
+			u16 *col = bp->col->p_new.p_u16;
+
+			for (i = 0; i < CTRL_BAD_ROWSCOLS_COUNT; i++) {
+				if (col[i] > MAX_WIDTH_HEIGHT &&
+				    col[i] != 0xFFFF)
+					return -ERANGE;
+			}
+		}
 		return 0;
-	case V4L2_CID_CC:
-	case V4L2_CID_CT:
-	case V4L2_CID_DR:
+	case V4L2_CID_GAMMA_CURVE_ENABLE:
+		gamma = (struct vinc_cluster_gamma *)ctrl->cluster;
+		if ((u32)gamma->enable->val > 1)
+			return -ERANGE;
+
+		if (gamma->curve->is_new) {
+			gc = gamma->curve->p_new.p;
+			for (i = 0; i < CTRL_GC_ELEMENTS_COUNT; i++) {
+				if (gc->red[i] > MAX_COMP_VALUE ||
+				    gc->green[i] > MAX_COMP_VALUE ||
+				    gc->blue[i] > MAX_COMP_VALUE)
+					return -ERANGE;
+			}
+		}
+		return 0;
 	case V4L2_CID_STAT_ENABLE:
-	case V4L2_CID_STAT_AF_COLOR:
-	case V4L2_CID_STAT_AF_TH:
+		stat = (struct vinc_cluster_stat *)ctrl->cluster;
+		if ((u32)stat->enable->val > 7)
+			return -ERANGE;
+
+		for (i = 0; i < 4; i++) {
+			zone = stat->zone[i]->p_new.p;
+			if (!stat->zone[i]->is_new || !zone->enable)
+				continue;
+			if (zone->x_lt > MAX_WIDTH_HEIGHT ||
+					zone->y_lt > MAX_WIDTH_HEIGHT ||
+					zone->x_rb > MAX_WIDTH_HEIGHT ||
+					zone->y_rb > MAX_WIDTH_HEIGHT ||
+					zone->x_lt >= zone->x_rb ||
+					zone->y_lt >= zone->y_rb)
+				return -ERANGE;
+		}
+		return 0;
 	case V4L2_CID_TEST_PATTERN:
 		return 0;
 	default:
@@ -1100,489 +1077,393 @@ static const char * const vinc_test_pattern_menu[] = {
 	"Increment",
 };
 
-static struct vinc_ctrl_cfg ctrl_cfg[] = {
+static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
-		.ctrl_id = CTRL_BP_EN,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_BAD_CORRECTION_ENABLE,
-			.name = "Bad pixels/rows/columns repair enable",
-			.type = V4L2_CTRL_TYPE_BOOLEAN,
-			.min = 0,
-			.max = 1,
-			.step = 1,
-			.def = 0,
-			.flags = 0
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_BAD_CORRECTION_ENABLE,
+		.name = "Bad pixels/rows/columns repair enable",
+		.type = V4L2_CTRL_TYPE_BOOLEAN,
+		.min = 0,
+		.max = 1,
+		.step = 1,
+		.def = 0,
+		.flags = 0
 	},
 	{
-		.ctrl_id = CTRL_BP_PIX,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_BAD_PIXELS,
-			.name = "Bad pixels",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_bad_pixel) *
-					CTRL_BAD_PIXELS_COUNT,
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_BAD_PIXELS,
+		.name = "Bad pixels",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0xFF,
+		.dims[0] = sizeof(struct vinc_bad_pixel) *
+				CTRL_BAD_PIXELS_COUNT,
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
 	},
 	{
-		.ctrl_id = CTRL_BP_ROW,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_BAD_ROWS,
-			.name = "Bad rows",
-			.type = V4L2_CTRL_TYPE_U16,
-			.min = 0,
-			.max = 0xFFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = CTRL_BAD_ROWSCOLS_COUNT,
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_BAD_ROWS,
+		.name = "Bad rows",
+		.type = V4L2_CTRL_TYPE_U16,
+		.min = 0,
+		.max = 0xFFF,
+		.step = 1,
+		.def = 0xFFF,
+		.dims[0] = CTRL_BAD_ROWSCOLS_COUNT,
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
 	},
 	{
-		.ctrl_id = CTRL_BP_COL,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_BAD_COLS,
-			.name = "Bad columns",
-			.type = V4L2_CTRL_TYPE_U16,
-			.min = 0,
-			.max = 0xFFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = CTRL_BAD_ROWSCOLS_COUNT,
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_BAD_COLS,
+		.name = "Bad columns",
+		.type = V4L2_CTRL_TYPE_U16,
+		.min = 0,
+		.max = 0xFFF,
+		.step = 1,
+		.def = 0xFFF,
+		.dims[0] = CTRL_BAD_ROWSCOLS_COUNT,
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
 	},
 	{
-		.ctrl_id = CTRL_GC_EN,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_GAMMA_CURVE_ENABLE,
-			.name = "Gamma curve enable",
-			.type = V4L2_CTRL_TYPE_BOOLEAN,
-			.min = 0,
-			.max = 1,
-			.step = 1,
-			.def = 0,
-			.flags = 0
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_GAMMA_CURVE_ENABLE,
+		.name = "Gamma curve enable",
+		.type = V4L2_CTRL_TYPE_BOOLEAN,
+		.min = 0,
+		.max = 1,
+		.step = 1,
+		.def = 0,
+		.flags = 0
 	},
 	{
-		.ctrl_id = CTRL_GC,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_GAMMA_CURVE,
-			.name = "Gamma curve",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_gamma_curve),
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_GAMMA_CURVE,
+		.name = "Gamma curve",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = sizeof(struct vinc_gamma_curve),
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
 	},
 	{
-		.ctrl_id = CTRL_CC_EN,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_CC_ENABLE,
-			.name = "Color correction enable",
-			.type = V4L2_CTRL_TYPE_BOOLEAN,
-			.min = 0,
-			.max = 1,
-			.step = 1,
-			.def = 0,
-			.flags = 0
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_CC_ENABLE,
+		.name = "Color correction enable",
+		.type = V4L2_CTRL_TYPE_BOOLEAN,
+		.min = 0,
+		.max = 1,
+		.step = 1,
+		.def = 0,
+		.flags = 0
 	},
 	{
-		.ctrl_id = CTRL_CC,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_CC,
-			.name = "Color correction",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_cc),
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_CC,
+		.name = "Color correction",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = sizeof(struct vinc_cc),
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
 	},
 	{
-		.ctrl_id = CTRL_CT_EN,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_CT_ENABLE,
-			.name = "Color tranformation enable",
-			.type = V4L2_CTRL_TYPE_BOOLEAN,
-			.min = 0,
-			.max = 1,
-			.step = 1,
-			.def = 0,
-			.flags = 0
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_CT_ENABLE,
+		.name = "Color tranformation enable",
+		.type = V4L2_CTRL_TYPE_BOOLEAN,
+		.min = 0,
+		.max = 1,
+		.step = 1,
+		.def = 0,
+		.flags = 0
 	},
 	{
-		.ctrl_id = CTRL_CT,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_CT,
-			.name = "Color tranformation",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_cc),
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_CT,
+		.name = "Color tranformation",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = sizeof(struct vinc_cc),
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
 	},
 	{
-		.ctrl_id = CTRL_DR_EN,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_DR_ENABLE,
-			.name = "Dynamic range enable",
-			.type = V4L2_CTRL_TYPE_BOOLEAN,
-			.min = 0,
-			.max = 1,
-			.step = 1,
-			.def = 0,
-			.flags = 0
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_DR_ENABLE,
+		.name = "Dynamic range enable",
+		.type = V4L2_CTRL_TYPE_BOOLEAN,
+		.min = 0,
+		.max = 1,
+		.step = 1,
+		.def = 0,
+		.flags = 0
 	},
 	{
-		.ctrl_id = CTRL_DR,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_DR,
-			.name = "Dynamic range",
-			.type = V4L2_CTRL_TYPE_U16,
-			.min = 0,
-			.max = 0xFFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = CTRL_DR_ELEMENTS_COUNT,
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_DR,
+		.name = "Dynamic range",
+		.type = V4L2_CTRL_TYPE_U16,
+		.min = 0,
+		.max = 0xFFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = CTRL_DR_ELEMENTS_COUNT,
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
 	},
 	{
-		.ctrl_id = CTRL_STAT_EN,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_STAT_ENABLE,
-			.name = "Statistics enable",
-			.type = V4L2_CTRL_TYPE_BITMASK,
-			.min = 0,
-			.max = 0x7,
-			.step = 0,
-			.def = 0,
-			.flags = 0
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_STAT_ENABLE,
+		.name = "Statistics enable",
+		.type = V4L2_CTRL_TYPE_BITMASK,
+		.min = 0,
+		.max = 0x7,
+		.step = 0,
+		.def = 0,
+		.flags = 0
 	},
 	{
-		.ctrl_id = CTRL_STAT_AF_COLOR,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_STAT_AF_COLOR,
-			.name = "Autofocus component",
-			.type = V4L2_CTRL_TYPE_MENU,
-			.min = 0,
-			.max = ARRAY_SIZE(vinc_af_color_menu) - 1,
-			.step = 0,
-			.def = 0,
-			.qmenu = vinc_af_color_menu
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_STAT_AF_COLOR,
+		.name = "Autofocus component",
+		.type = V4L2_CTRL_TYPE_MENU,
+		.min = 0,
+		.max = ARRAY_SIZE(vinc_af_color_menu) - 1,
+		.step = 0,
+		.def = 0,
+		.qmenu = vinc_af_color_menu
 	},
 	{
-		.ctrl_id = CTRL_STAT_AF_TH,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_STAT_AF_TH,
-			.name = "Autofocus threshold",
-			.type = V4L2_CTRL_TYPE_INTEGER,
-			.min = 0,
-			.max = 0x7FF,
-			.step = 1,
-			.def = 0,
-			.flags = 0
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_STAT_AF_TH,
+		.name = "Autofocus threshold",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.min = 0,
+		.max = 0x7FF,
+		.step = 1,
+		.def = 0,
+		.flags = 0
 	},
 	{
-		.ctrl_id = CTRL_STAT_ZONE0,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_STAT_ZONE0,
-			.name = "Window of zone 0",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_stat_zone),
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_STAT_ZONE0,
+		.name = "Window of zone 0",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = sizeof(struct vinc_stat_zone),
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
 	},
 	{
-		.ctrl_id = CTRL_STAT_ZONE1,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_STAT_ZONE1,
-			.name = "Window of zone 1",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_stat_zone),
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_STAT_ZONE1,
+		.name = "Window of zone 1",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = sizeof(struct vinc_stat_zone),
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
 	},
 	{
-		.ctrl_id = CTRL_STAT_ZONE2,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_STAT_ZONE2,
-			.name = "Window of zone 2",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_stat_zone),
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_STAT_ZONE2,
+		.name = "Window of zone 2",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = sizeof(struct vinc_stat_zone),
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
 	},
 	{
-		.ctrl_id = CTRL_STAT_ZONE3,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_STAT_ZONE3,
-			.name = "Window of zone 3",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_stat_zone),
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_STAT_ZONE3,
+		.name = "Window of zone 3",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = sizeof(struct vinc_stat_zone),
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
 	},
 	{
-		.ctrl_id = CTRL_STAT_HIST0,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_STAT_HIST0,
-			.name = "Histogram in zone 0",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_stat_hist),
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
-				 V4L2_CTRL_FLAG_READ_ONLY
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_STAT_HIST0,
+		.name = "Histogram in zone 0",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = sizeof(struct vinc_stat_hist),
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+			 V4L2_CTRL_FLAG_READ_ONLY
 	},
 	{
-		.ctrl_id = CTRL_STAT_HIST1,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_STAT_HIST1,
-			.name = "Histogram in zone 1",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_stat_hist),
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
-				 V4L2_CTRL_FLAG_READ_ONLY
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_STAT_HIST1,
+		.name = "Histogram in zone 1",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = sizeof(struct vinc_stat_hist),
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+			 V4L2_CTRL_FLAG_READ_ONLY
 	},
 	{
-		.ctrl_id = CTRL_STAT_HIST2,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_STAT_HIST2,
-			.name = "Histogram in zone 2",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_stat_hist),
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
-				 V4L2_CTRL_FLAG_READ_ONLY
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_STAT_HIST2,
+		.name = "Histogram in zone 2",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = sizeof(struct vinc_stat_hist),
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+			 V4L2_CTRL_FLAG_READ_ONLY
 	},
 	{
-		.ctrl_id = CTRL_STAT_HIST3,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_STAT_HIST3,
-			.name = "Histogram in zone 3",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_stat_hist),
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
-				 V4L2_CTRL_FLAG_READ_ONLY
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_STAT_HIST3,
+		.name = "Histogram in zone 3",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = sizeof(struct vinc_stat_hist),
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+			 V4L2_CTRL_FLAG_READ_ONLY
 	},
 	{
-		.ctrl_id = CTRL_STAT_AF0,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_STAT_AF0,
-			.name = "Autofocus in zone 0",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_stat_af),
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
-				 V4L2_CTRL_FLAG_READ_ONLY
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_STAT_AF0,
+		.name = "Autofocus in zone 0",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = sizeof(struct vinc_stat_af),
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+			 V4L2_CTRL_FLAG_READ_ONLY
 	},
 	{
-		.ctrl_id = CTRL_STAT_AF1,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_STAT_AF1,
-			.name = "Autofocus in zone 1",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_stat_af),
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
-				 V4L2_CTRL_FLAG_READ_ONLY
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_STAT_AF1,
+		.name = "Autofocus in zone 1",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = sizeof(struct vinc_stat_af),
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+			 V4L2_CTRL_FLAG_READ_ONLY
 	},
 	{
-		.ctrl_id = CTRL_STAT_AF2,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_STAT_AF2,
-			.name = "Autofocus in zone 2",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_stat_af),
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
-				 V4L2_CTRL_FLAG_READ_ONLY
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_STAT_AF2,
+		.name = "Autofocus in zone 2",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = sizeof(struct vinc_stat_af),
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+			 V4L2_CTRL_FLAG_READ_ONLY
 	},
 	{
-		.ctrl_id = CTRL_STAT_AF3,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_STAT_AF3,
-			.name = "Autofocus in zone 3",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_stat_af),
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
-				 V4L2_CTRL_FLAG_READ_ONLY
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_STAT_AF3,
+		.name = "Autofocus in zone 3",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = sizeof(struct vinc_stat_af),
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+			 V4L2_CTRL_FLAG_READ_ONLY
 	},
 	{
-		.ctrl_id = CTRL_STAT_ADD0,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_STAT_ADD0,
-			.name = "Additional statistics in zone 0",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_stat_add),
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
-				 V4L2_CTRL_FLAG_READ_ONLY
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_STAT_ADD0,
+		.name = "Additional statistics in zone 0",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = sizeof(struct vinc_stat_add),
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+			 V4L2_CTRL_FLAG_READ_ONLY
 	},
 	{
-		.ctrl_id = CTRL_STAT_ADD1,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_STAT_ADD1,
-			.name = "Additional statistics in zone 1",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_stat_add),
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
-				 V4L2_CTRL_FLAG_READ_ONLY
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_STAT_ADD1,
+		.name = "Additional statistics in zone 1",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = sizeof(struct vinc_stat_add),
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+			 V4L2_CTRL_FLAG_READ_ONLY
 	},
 	{
-		.ctrl_id = CTRL_STAT_ADD2,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_STAT_ADD2,
-			.name = "Additional statistics in zone 2",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_stat_add),
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
-				 V4L2_CTRL_FLAG_READ_ONLY
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_STAT_ADD2,
+		.name = "Additional statistics in zone 2",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = sizeof(struct vinc_stat_add),
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+			 V4L2_CTRL_FLAG_READ_ONLY
 	},
 	{
-		.ctrl_id = CTRL_STAT_ADD3,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_STAT_ADD3,
-			.name = "Additional statistics in zone 3",
-			.type = V4L2_CTRL_COMPOUND_TYPES,
-			.min = 0,
-			.max = 0xFF,
-			.step = 1,
-			.def = 0,
-			.dims[0] = sizeof(struct vinc_stat_add),
-			.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
-				 V4L2_CTRL_FLAG_READ_ONLY
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_STAT_ADD3,
+		.name = "Additional statistics in zone 3",
+		.type = V4L2_CTRL_COMPOUND_TYPES,
+		.min = 0,
+		.max = 0xFF,
+		.step = 1,
+		.def = 0,
+		.dims[0] = sizeof(struct vinc_stat_add),
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD |
+			 V4L2_CTRL_FLAG_READ_ONLY
 	},
 	{
-		.ctrl_id = CTRL_TEST_PATTERN,
-		.cfg = {
-			.ops = &ctrl_ops,
-			.id = V4L2_CID_TEST_PATTERN,
-			.type = V4L2_CTRL_TYPE_MENU,
-			.min = 0,
-			.max = ARRAY_SIZE(vinc_test_pattern_menu) - 1,
-			.step = 0,
-			.def = 0,
-			.qmenu = vinc_test_pattern_menu
-		}
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_TEST_PATTERN,
+		.type = V4L2_CTRL_TYPE_MENU,
+		.min = 0,
+		.max = ARRAY_SIZE(vinc_test_pattern_menu) - 1,
+		.step = 0,
+		.def = 0,
+		.qmenu = vinc_test_pattern_menu
 	},
 };
 
@@ -1590,30 +1471,65 @@ static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 				struct vinc_dev *priv)
 {
 	int i;
+	struct v4l2_ctrl *tmp_ctrl;
 
 	for (i = 0; i < ARRAY_SIZE(ctrl_cfg); i++) {
-		priv->ctrls[ctrl_cfg[i].ctrl_id] = v4l2_ctrl_new_custom(hdl,
-				&ctrl_cfg[i].cfg, NULL);
-		if (!priv->ctrls[ctrl_cfg[i].ctrl_id]) {
+		tmp_ctrl = v4l2_ctrl_new_custom(hdl, &ctrl_cfg[i], NULL);
+		if (!tmp_ctrl) {
 			dev_err(priv->ici.v4l2_dev.dev,
 				"Can not create control %#x\n",
-				ctrl_cfg[i].cfg.id);
+				ctrl_cfg[i].id);
 			return hdl->error;
 		}
 	}
 
-	priv->bp_change = 1;
-	priv->gc_change = 1;
-	priv->cc_change = 1;
-	priv->ct_change = 1;
-	priv->dr_change = 1;
+	priv->cluster.bp.enable = v4l2_ctrl_find(hdl,
+			V4L2_CID_BAD_CORRECTION_ENABLE);
+	priv->cluster.bp.pix = v4l2_ctrl_find(hdl, V4L2_CID_BAD_PIXELS);
+	priv->cluster.bp.row = v4l2_ctrl_find(hdl, V4L2_CID_BAD_ROWS);
+	priv->cluster.bp.col = v4l2_ctrl_find(hdl, V4L2_CID_BAD_COLS);
+	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_bp),
+			  &priv->cluster.bp.enable);
 
-	memset(priv->ctrls[CTRL_BP_PIX]->p_cur.p, 0xFF,
-	       sizeof(struct vinc_bad_pixel) * CTRL_BAD_PIXELS_COUNT);
-	memset(priv->ctrls[CTRL_BP_PIX]->p_cur.p, 0xFF,
-	       sizeof(u16) * CTRL_BAD_ROWSCOLS_COUNT);
-	memset(priv->ctrls[CTRL_BP_PIX]->p_cur.p, 0xFF,
-	       sizeof(u16) * CTRL_BAD_ROWSCOLS_COUNT);
+	priv->cluster.gamma.enable = v4l2_ctrl_find(hdl,
+			V4L2_CID_GAMMA_CURVE_ENABLE);
+	priv->cluster.gamma.curve = v4l2_ctrl_find(hdl, V4L2_CID_GAMMA_CURVE);
+	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_gamma),
+			  &priv->cluster.gamma.enable);
+
+	priv->cluster.cc.enable = v4l2_ctrl_find(hdl, V4L2_CID_CC_ENABLE);
+	priv->cluster.cc.cc = v4l2_ctrl_find(hdl, V4L2_CID_CC);
+	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_cc),
+			  &priv->cluster.cc.enable);
+
+	priv->cluster.ct.enable = v4l2_ctrl_find(hdl, V4L2_CID_CT_ENABLE);
+	priv->cluster.ct.ct = v4l2_ctrl_find(hdl, V4L2_CID_CT);
+	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_ct),
+			  &priv->cluster.ct.enable);
+
+	priv->cluster.dr.enable = v4l2_ctrl_find(hdl, V4L2_CID_DR_ENABLE);
+	priv->cluster.dr.dr = v4l2_ctrl_find(hdl, V4L2_CID_DR);
+	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_dr),
+			  &priv->cluster.dr.enable);
+
+	priv->cluster.stat.enable = v4l2_ctrl_find(hdl, V4L2_CID_STAT_ENABLE);
+	priv->cluster.stat.af_color = v4l2_ctrl_find(hdl,
+			V4L2_CID_STAT_AF_COLOR);
+	priv->cluster.stat.af_th = v4l2_ctrl_find(hdl, V4L2_CID_STAT_AF_TH);
+	for (i = 0; i < 4; i++) {
+		priv->cluster.stat.zone[i] = v4l2_ctrl_find(hdl,
+				V4L2_CID_STAT_ZONE0 + i);
+		priv->cluster.stat.hist[i] = v4l2_ctrl_find(hdl,
+				V4L2_CID_STAT_HIST0 + i);
+		priv->cluster.stat.af[i] = v4l2_ctrl_find(hdl,
+				V4L2_CID_STAT_AF0 + i);
+		priv->cluster.stat.add[i] = v4l2_ctrl_find(hdl,
+				V4L2_CID_STAT_ADD0 + i);
+	}
+	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_stat),
+			  &priv->cluster.stat.enable);
+
+	priv->test_pattern = v4l2_ctrl_find(hdl, V4L2_CID_TEST_PATTERN);
 
 	return hdl->error;
 }
@@ -1937,7 +1853,7 @@ static void vinc_configure_bgr(struct vinc_dev *priv)
 static void vinc_configure_m420(struct vinc_dev *priv)
 {
 	u32 proc_cfg;
-	struct vinc_cc *ct = priv->ctrls[CTRL_CT]->p_cur.p;
+	struct vinc_cc *ct = priv->cluster.ct.ct->p_cur.p;
 	struct soc_camera_device *icd = priv->ici.icd;
 	int i;
 
@@ -1955,7 +1871,7 @@ static void vinc_configure_m420(struct vinc_dev *priv)
 	ct->offset[1] = 0x2000;
 	ct->offset[2] = 0x2000;
 	set_cc_ct(priv, ct, 1);
-	priv->ctrls[CTRL_CT_EN]->cur.val = 1;
+	priv->cluster.ct.enable->cur.val = 1;
 
 	proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
 	proc_cfg |= STREAM_PROC_CFG_CT_EN |
@@ -1994,24 +1910,24 @@ static void vinc_configure(struct vinc_dev *priv)
 	vinc_write(priv, STREAM_INP_VCROP_ODD_CTR(0), 0);
 	vinc_write(priv, STREAM_INP_DECIM_CTR(0), 0);
 
-	proc_cfg = STREAM_PROC_CFG_STT_EN(priv->ctrls[CTRL_STAT_EN]->val);
-	if (priv->input_format == BAYER && !priv->ctrls[CTRL_TEST_PATTERN]->val)
+	proc_cfg = STREAM_PROC_CFG_STT_EN(priv->cluster.stat.enable->val);
+	if (priv->input_format == BAYER && !priv->test_pattern->val)
 		proc_cfg |= STREAM_PROC_CFG_CFA_EN;
 
-	if (priv->ctrls[CTRL_BP_EN]->cur.val)
+	if (priv->cluster.bp.enable->cur.val)
 		proc_cfg |= STREAM_PROC_CFG_BPC_EN;
-	if (priv->ctrls[CTRL_GC_EN]->cur.val)
+	if (priv->cluster.gamma.enable->cur.val)
 		proc_cfg |= STREAM_PROC_CFG_GC_EN;
-	if (priv->ctrls[CTRL_CC_EN]->cur.val)
+	if (priv->cluster.cc.enable->cur.val)
 		proc_cfg |= STREAM_PROC_CFG_CC_EN;
-	if (priv->ctrls[CTRL_CT_EN]->cur.val)
+	if (priv->cluster.ct.enable->cur.val)
 		proc_cfg |= STREAM_PROC_CFG_CT_EN;
-	if (priv->ctrls[CTRL_DR_EN]->cur.val)
+	if (priv->cluster.dr.enable->cur.val)
 		proc_cfg |= STREAM_PROC_CFG_ADR_EN;
 
 	for (i = 0; i < 4; i++) {
 		struct vinc_stat_zone *zone =
-				priv->ctrls[CTRL_STAT_ZONE0 + i]->p_cur.p;
+				priv->cluster.stat.zone[i]->p_cur.p;
 
 		if (zone->enable)
 			proc_cfg |= BIT(STREAM_PROC_CFG_STT_ZONE_OFFSET + i);
@@ -2020,12 +1936,12 @@ static void vinc_configure(struct vinc_dev *priv)
 	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
 	proc_ctr = STREAM_PROC_CTR_BAYER_MODE(priv->bayer_mode);
 	proc_ctr |= STREAM_PROC_CTR_AF_COLOR(
-			priv->ctrls[CTRL_STAT_AF_COLOR]->val);
+			priv->cluster.stat.af_color->val);
 	proc_ctr |= STREAM_PROC_CTR_HIST_THR |
 			STREAM_PROC_CTR_AF_THR |
 			STREAM_PROC_CTR_ADD_THR;
 	vinc_write(priv, STREAM_PROC_CTR(0), proc_ctr);
-	if (priv->ctrls[CTRL_STAT_EN]->val)
+	if (priv->cluster.stat.enable->val)
 		vinc_stat_start(priv);
 
 	vinc_write(priv, STREAM_DMA_FBUF_HORIZ(0, 0),
@@ -2185,16 +2101,16 @@ static void vinc_stat_tasklet(unsigned long data)
 	u32 reg;
 	int z, i;
 
-	stat_en = priv->ctrls[CTRL_STAT_EN]->val;
+	stat_en = priv->cluster.stat.enable->val;
 	if (!stat_en)
 		return;
 
 	for (z = 0; z < 4; z++) {
-		zone = priv->ctrls[CTRL_STAT_ZONE0 + z]->p_cur.p;
+		zone = priv->cluster.stat.zone[z]->p_cur.p;
 		if (!zone->enable)
 			continue;
 
-		hist = priv->ctrls[CTRL_STAT_HIST0 + z]->p_cur.p;
+		hist = priv->cluster.stat.hist[z]->p_cur.p;
 		if (stat_en & STT_EN_HIST) {
 			__u32 *component[3] = { hist->red, hist->green,
 						hist->blue };
@@ -2210,7 +2126,7 @@ static void vinc_stat_tasklet(unsigned long data)
 			}
 		}
 		if (stat_en & STT_EN_AF) {
-			af = priv->ctrls[CTRL_STAT_AF0 + z]->p_cur.p;
+			af = priv->cluster.stat.af[z]->p_cur.p;
 			vinc_write(priv, STREAM_PROC_STAT_CTR(0),
 				   STREAM_PROC_STAT_CTR_NUM_ZONE(z));
 			af->hsobel = vinc_read(priv,
@@ -2225,7 +2141,7 @@ static void vinc_stat_tasklet(unsigned long data)
 				   STREAM_PROC_CLEAR_AF_CLR);
 		}
 		if (stat_en & STT_EN_ADD) {
-			add = priv->ctrls[CTRL_STAT_ADD0 + z]->p_cur.p;
+			add = priv->cluster.stat.add[z]->p_cur.p;
 			reg = vinc_read(priv, STREAM_PROC_STAT_MIN(0));
 			add->min_b = reg & 0xFF;
 			add->min_g = (reg >> 8) & 0xFF;
@@ -2255,7 +2171,7 @@ static void vinc_stat_tasklet(unsigned long data)
 
 static void vinc_eof_handler(struct vinc_dev *priv)
 {
-	if (priv->ctrls[CTRL_STAT_EN]->val) {
+	if (priv->cluster.stat.enable->val) {
 		/* TODO: Tasklet must complete before the next frame starts.
 		 * Otherwise it will read broken statistic. We need to take
 		 * into account that tasklet can run when the next frame starts
