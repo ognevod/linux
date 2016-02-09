@@ -380,9 +380,6 @@
 #define MAX_WIDTH_HEIGHT		4095
 #define MAX_COMP_VALUE			4095
 
-#define COEFF_FLOAT_TO_U16(coeff, scaling) ((u16)((s16)((coeff) * \
-		(1 << (15 - (scaling))) + ((coeff) < 0 ? -0.5 : 0.5))))
-
 #define CLUSTER_SIZE(c) (sizeof(c) / sizeof(struct v4l2_ctrl *))
 
 enum vinc_input_format { UNKNOWN, BAYER, RGB, YCbCr };
@@ -403,6 +400,7 @@ struct vinc_cluster_gamma {
 struct vinc_cluster_cc {
 	struct v4l2_ctrl *enable;
 	struct v4l2_ctrl *cc;
+	struct v4l2_ctrl *dowb;
 };
 
 struct vinc_cluster_ct {
@@ -951,7 +949,7 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 	struct vinc_cluster_dr *dr;
 	struct vinc_cluster_stat *stat;
 	u32 proc_cfg, stream_ctr;
-	int i;
+	int i, init, std_is_new;
 
 	switch (ctrl->id) {
 	case V4L2_CID_BAD_CORRECTION_ENABLE:
@@ -1002,12 +1000,46 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		}
 		break;
 	}
-	case V4L2_CID_CC_ENABLE:
+	case V4L2_CID_CC_ENABLE: {
+		struct vinc_cc *p_cc;
+
 		cc = (struct vinc_cluster_cc *)ctrl->cluster;
+		p_cc = cc->cc->p_cur.p;
+		/*TODO: is_new flags for other cc controls must be
+		added to std_is_new condition */
+		std_is_new = cc->dowb->is_new;
+		init = cc->enable->is_new & cc->cc->is_new &
+			std_is_new;
 		cluster_activate(priv, STREAM_PROC_CFG_CC_EN, ctrl->cluster);
-		if (cc->cc->is_new)
-			set_cc_ct(priv, cc->cc->p_new.p, 0);
+		if (cc->dowb->is_new && !init) {
+			struct vinc_stat_add *add;
+
+			add = priv->cluster.stat.add[3]->p_cur.p;
+			kernel_neon_begin();
+			vinc_calculate_wb_matrix(add->sum_r,
+				add->sum_g, add->sum_b, cc->dowb->priv);
+			kernel_neon_end();
+		}
+		if (std_is_new) {
+			void *coeffs[] = { cc->dowb->priv };
+
+			kernel_neon_begin();
+			vinc_calculate_cc(coeffs, cc->cc->p_cur.p);
+			kernel_neon_end();
+			/* TODO: function "change_write_only_flags" must be
+			 * added for cc controls with exception of
+			 * DO_WHITE_BALANCE */
+			cc->cc->flags |= V4L2_CTRL_FLAG_UPDATE;
+		} else if (cc->cc->is_new) {
+			p_cc = cc->cc->p_new.p;
+			/* TODO: function "change_write_only_flags" must be
+			 * added for cc controls with exception of
+			 * DO_WHITE_BALANCE */
+			cc->cc->flags &= ~V4L2_CTRL_FLAG_UPDATE;
+		}
+		set_cc_ct(priv, p_cc, 0);
 		break;
+	}
 	case V4L2_CID_CT_ENABLE:
 		ct = (struct vinc_cluster_ct *)ctrl->cluster;
 		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
@@ -1204,6 +1236,13 @@ static const char * const vinc_test_pattern_menu[] = {
 static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
+		.id = V4L2_CID_DO_WHITE_BALANCE,
+		.name = "Do white balance",
+		.type = V4L2_CTRL_TYPE_BUTTON,
+		.flags = V4L2_CTRL_FLAG_UPDATE
+	},
+	{
+		.ops = &ctrl_ops,
 		.id = V4L2_CID_GAMMA,
 		.name = "Gamma",
 		.type = V4L2_CTRL_TYPE_INTEGER,
@@ -1292,8 +1331,8 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 		.min = 0,
 		.max = 1,
 		.step = 1,
-		.def = 0,
-		.flags = 0
+		.def = 1,
+		.flags = V4L2_CTRL_FLAG_UPDATE
 	},
 	{
 		.ops = &ctrl_ops,
@@ -1305,7 +1344,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 		.step = 1,
 		.def = 0,
 		.dims[0] = sizeof(struct vinc_cc),
-		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD | V4L2_CTRL_FLAG_UPDATE
 	},
 	{
 		.ops = &ctrl_ops,
@@ -1635,6 +1674,7 @@ static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 
 	priv->cluster.cc.enable = v4l2_ctrl_find(hdl, V4L2_CID_CC_ENABLE);
 	priv->cluster.cc.cc = v4l2_ctrl_find(hdl, V4L2_CID_CC);
+	priv->cluster.cc.dowb = v4l2_ctrl_find(hdl, V4L2_CID_DO_WHITE_BALANCE);
 	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_cc),
 			  &priv->cluster.cc.enable);
 
@@ -1666,7 +1706,11 @@ static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 			  &priv->cluster.stat.enable);
 
 	priv->test_pattern = v4l2_ctrl_find(hdl, V4L2_CID_TEST_PATTERN);
-
+	priv->cluster.cc.dowb->priv = kzalloc(sizeof(struct matrix),
+					      GFP_KERNEL);
+	kernel_neon_begin();
+	vinc_calculate_wb_matrix(1, 1, 1, priv->cluster.cc.dowb->priv);
+	kernel_neon_end();
 	return hdl->error;
 }
 
@@ -2028,7 +2072,8 @@ static void vinc_configure_m420(struct vinc_dev *priv)
 
 static void vinc_configure(struct vinc_dev *priv)
 {
-	u32 axi_master_cfg, proc_ctr;
+	u32 axi_master_cfg, proc_ctr, proc_cfg;
+	struct vinc_stat_zone *zone;
 
 	vinc_write(priv, STREAM_CTR, 0);
 
@@ -2039,6 +2084,19 @@ static void vinc_configure(struct vinc_dev *priv)
 	vinc_write(priv, STREAM_INP_VCROP_ODD_CTR(0), 0);
 	vinc_write(priv, STREAM_INP_DECIM_CTR(0),
 		   STREAM_INP_DECIM_FDECIM(priv->fdecim - 1));
+
+	zone = priv->cluster.stat.zone[3]->p_cur.p;
+	zone->enable = 1;
+	zone->x_lt = priv->crop1.c.left;
+	zone->y_lt = priv->crop1.c.top;
+	zone->x_rb = priv->crop1.c.left + priv->crop1.c.width - 1;
+	zone->y_rb = priv->crop1.c.top + priv->crop1.c.height - 1;
+	priv->cluster.stat.enable->val = 0x4;
+
+	proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+	proc_cfg |= STREAM_PROC_CFG_STT_EN(priv->cluster.stat.enable->val);
+	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+	set_stat_zone(priv, 3, priv->cluster.stat.zone[3]->p_cur.p);
 
 	proc_ctr = STREAM_PROC_CTR_BAYER_MODE(priv->bayer_mode);
 	proc_ctr |= STREAM_PROC_CTR_AF_COLOR(
@@ -2284,10 +2342,12 @@ static void vinc_stat_tasklet(unsigned long data)
 			af->rsobel = vinc_read(priv,
 					STREAM_PROC_STAT_RSOBEL(0));
 			vinc_write(priv, STREAM_PROC_CLEAR(0),
-				   STREAM_PROC_CLEAR_AF_CLR);
+					STREAM_PROC_CLEAR_AF_CLR);
 		}
 		if (stat_en & STT_EN_ADD) {
 			add = priv->cluster.stat.add[z]->p_cur.p;
+			vinc_write(priv, STREAM_PROC_STAT_CTR(0),
+				   STREAM_PROC_STAT_CTR_NUM_ZONE(z));
 			reg = vinc_read(priv, STREAM_PROC_STAT_MIN(0));
 			add->min_b = reg & 0xFF;
 			add->min_g = (reg >> 8) & 0xFF;
