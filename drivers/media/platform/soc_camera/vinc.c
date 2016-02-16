@@ -298,6 +298,15 @@
 #define STT_EN_AF			0x2
 #define STT_EN_ADD			0x4
 
+#define DMA_SRC_CROP			0
+#define DMA_SRC_DR			0x1
+#define DMA_SRC_444			0x2
+#define DMA_SRC_CT			0x3
+#define DMA_SRC_422			0x4
+#define DMA_SRC_420			0x5
+#define DMA_SRC_IS			0x6
+#define DMA_SRC_MASK			0x7
+
 /* Bits for STREAM_PROC_CTR register */
 #define STREAM_PROC_CTR_BAYER_MONO	BIT(0)
 #define STREAM_PROC_CTR_BAYER_MODE(v)	(((v) & 0x3) << 1)
@@ -768,6 +777,21 @@ static struct vb2_ops vinc_videobuf_ops = {
 	.stop_streaming		= vinc_stop_streaming,
 };
 
+static u32 vinc_get_dma_src(struct vinc_dev *priv)
+{
+	switch (priv->ici.icd->current_fmt->host_fmt->fourcc) {
+	case V4L2_PIX_FMT_BGR32:
+		return (priv->cluster.ct.enable->val ? DMA_SRC_CT :
+				DMA_SRC_444);
+	case V4L2_PIX_FMT_M420:
+		return DMA_SRC_420;
+	default:
+		dev_warn(priv->ici.v4l2_dev.dev, "Unknown output format %#x\n",
+			 priv->ici.icd->current_fmt->host_fmt->fourcc);
+		return DMA_SRC_CROP;
+	}
+}
+
 static void set_bad_pixels(struct vinc_dev *priv, struct vinc_bad_pixel *bp)
 {
 	int i;
@@ -931,7 +955,16 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		break;
 	case V4L2_CID_CT_ENABLE:
 		ct = (struct vinc_cluster_ct *)ctrl->cluster;
-		cluster_activate(priv, STREAM_PROC_CFG_CT_EN, ctrl->cluster);
+		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+		if (ctrl->val)
+			proc_cfg |= STREAM_PROC_CFG_CT_EN;
+		else
+			proc_cfg &= ~STREAM_PROC_CFG_CT_EN;
+		proc_cfg &= ~STREAM_PROC_CFG_DMA0_SRC(DMA_SRC_MASK);
+		proc_cfg |= STREAM_PROC_CFG_DMA0_SRC(vinc_get_dma_src(priv));
+		vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+
+		v4l2_ctrl_activate(ct->ct, ct->enable->val);
 		if (ct->ct->is_new)
 			set_cc_ct(priv, ct->ct->p_new.p, 1);
 		break;
@@ -996,6 +1029,7 @@ static int vinc_g_ctrl(struct v4l2_ctrl *ctrl)
 
 	dev_dbg(priv->ici.v4l2_dev.dev, "%s: %#x (%s)\n",
 		__func__, ctrl->id, ctrl->name);
+
 	return 0;
 }
 
@@ -1866,12 +1900,9 @@ static int vinc_querycap(struct soc_camera_host *ici,
 
 static void vinc_configure_bgr(struct vinc_dev *priv)
 {
-	u32 proc_cfg;
 	struct soc_camera_device *icd = priv->ici.icd;
 
-	proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
-	proc_cfg |= STREAM_PROC_CFG_DMA0_SRC(2);
-	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+	v4l2_ctrl_s_ctrl(priv->cluster.ct.enable, 0);
 
 	vinc_write(priv, STREAM_DMA_FBUF_CFG(0, 0), 0x00001);
 	vinc_write(priv, STREAM_DMA_FBUF_LSTEP(0, 0, 0), icd->bytesperline);
@@ -1902,15 +1933,14 @@ static void vinc_configure_m420(struct vinc_dev *priv)
 	ct->offset[1] = 0x2000;
 	ct->offset[2] = 0x2000;
 	set_cc_ct(priv, ct, 1);
-	priv->cluster.ct.enable->cur.val = 1;
+	v4l2_ctrl_s_ctrl(priv->cluster.ct.enable, 1);
 
 	proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
 	proc_cfg |= STREAM_PROC_CFG_CT_EN |
 			STREAM_PROC_CFG_444TO422_EN |
 			STREAM_PROC_CFG_422TO420_EN |
 			STREAM_PROC_CFG_444TO422_SRC(1) |
-			STREAM_PROC_CFG_422TO420_SRC(1) |
-			STREAM_PROC_CFG_DMA0_SRC(5);
+			STREAM_PROC_CFG_422TO420_SRC(1);
 	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
 
 	vinc_write(priv, STREAM_DMA_FBUF_CFG(0, 0), 0x00001);
