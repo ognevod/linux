@@ -1927,8 +1927,7 @@ static void vinc_configure_m420(struct vinc_dev *priv)
 
 static void vinc_configure(struct vinc_dev *priv)
 {
-	u32 axi_master_cfg, proc_cfg, proc_ctr;
-	int i;
+	u32 axi_master_cfg, proc_ctr;
 
 	vinc_write(priv, STREAM_CTR, 0);
 
@@ -1940,30 +1939,6 @@ static void vinc_configure(struct vinc_dev *priv)
 	vinc_write(priv, STREAM_INP_DECIM_CTR(0),
 		   STREAM_INP_DECIM_FDECIM(priv->fdecim - 1));
 
-	proc_cfg = STREAM_PROC_CFG_STT_EN(priv->cluster.stat.enable->val);
-	if (priv->input_format == BAYER && !priv->test_pattern->val)
-		proc_cfg |= STREAM_PROC_CFG_CFA_EN;
-
-	if (priv->cluster.bp.enable->cur.val)
-		proc_cfg |= STREAM_PROC_CFG_BPC_EN;
-	if (priv->cluster.gamma.enable->cur.val)
-		proc_cfg |= STREAM_PROC_CFG_GC_EN;
-	if (priv->cluster.cc.enable->cur.val)
-		proc_cfg |= STREAM_PROC_CFG_CC_EN;
-	if (priv->cluster.ct.enable->cur.val)
-		proc_cfg |= STREAM_PROC_CFG_CT_EN;
-	if (priv->cluster.dr.enable->cur.val)
-		proc_cfg |= STREAM_PROC_CFG_ADR_EN;
-
-	for (i = 0; i < 4; i++) {
-		struct vinc_stat_zone *zone =
-				priv->cluster.stat.zone[i]->p_cur.p;
-
-		if (zone->enable)
-			proc_cfg |= BIT(STREAM_PROC_CFG_STT_ZONE_OFFSET + i);
-	}
-
-	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
 	proc_ctr = STREAM_PROC_CTR_BAYER_MODE(priv->bayer_mode);
 	proc_ctr |= STREAM_PROC_CTR_AF_COLOR(
 			priv->cluster.stat.af_color->val);
