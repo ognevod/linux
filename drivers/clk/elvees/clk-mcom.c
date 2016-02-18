@@ -98,6 +98,7 @@ static void __init enable_clocks(struct cmctr_pdata *pd)
 	reg |= (GATE_CORE_CTR_L0_EN |
 		GATE_CORE_CTR_DDR0_EN |
 		GATE_CORE_CTR_VPIN_EN |
+		GATE_CORE_CTR_VPOUT_EN |
 		GATE_CORE_CTR_VPU_EN |
 		GATE_CORE_CTR_GPU_EN);
 	cmctr_writel(pd, GATE_CORE_CTR, reg);
