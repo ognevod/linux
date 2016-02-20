@@ -65,6 +65,7 @@ config VIDEO_VINC
 	depends on VIDEO_DEV && SOC_CAMERA
 	select VIDEOBUF2_DMA_CONTIG
 	select SOC_CAMERA_SCALE_CROP
+	select KERNEL_MODE_NEON
 	---help---
 	  This is a v4l2 driver for the Elvees VINC camera interface
 

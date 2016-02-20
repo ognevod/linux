@@ -41,6 +41,9 @@
 #include <media/videobuf2-dma-contig.h>
 #include <media/v4l2-mediabus.h>
 #include <media/soc_mediabus.h>
+#include <asm/neon.h>
+
+#include "vinc-neon.h"
 
 #define MODULE_NAME "vinc"
 
@@ -394,6 +397,7 @@ struct vinc_cluster_bp {
 struct vinc_cluster_gamma {
 	struct v4l2_ctrl *enable;
 	struct v4l2_ctrl *curve;
+	struct v4l2_ctrl *gamma;
 };
 
 struct vinc_cluster_cc {
@@ -893,6 +897,8 @@ static void set_stat_zone(struct vinc_dev *priv, u32 zone_id,
 	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
 }
 
+/* TODO: Split this function into two: the one that activates cluster and
+ * the other that enables/disables HW block. */
 static void cluster_activate(struct vinc_dev *priv, u32 block_mask,
 			     struct v4l2_ctrl **cluster)
 {
@@ -907,6 +913,29 @@ static void cluster_activate(struct vinc_dev *priv, u32 block_mask,
 	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
 	for (i = 1; i < master->ncontrols; i++)
 		v4l2_ctrl_activate(cluster[i], master->val);
+}
+
+static void cluster_activate_only(struct vinc_dev *priv,
+				  struct v4l2_ctrl **cluster)
+{
+	struct v4l2_ctrl *master = cluster[0];
+	int i;
+
+	for (i = 1; i < master->ncontrols; i++)
+		v4l2_ctrl_activate(cluster[i], master->val);
+}
+
+static void enable_block(struct vinc_dev *priv, u32 block_mask,
+			 bool const enable)
+{
+	u32 proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+
+	if (enable)
+		proc_cfg |= block_mask;
+	else
+		proc_cfg &= ~block_mask;
+
+	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
 }
 
 static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
@@ -943,13 +972,36 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		}
 		vinc_write(priv, STREAM_CTR, stream_ctr);
 		break;
-	case V4L2_CID_GAMMA_CURVE_ENABLE:
+	case V4L2_CID_GAMMA_CURVE_ENABLE: {
+		struct vinc_gamma_curve *p_gamma;
+
 		gamma = (struct vinc_cluster_gamma *)ctrl->cluster;
-		cluster_activate(priv, STREAM_PROC_CFG_GC_EN, ctrl->cluster);
-		if (gamma->enable->val && (gamma->enable->is_new ||
-					   gamma->curve->is_new))
-			set_gc_curve(priv, gamma->curve->p_new.p);
+		p_gamma = gamma->curve->p_cur.p;
+		if (gamma->gamma->is_new) {
+			kernel_neon_begin();
+			vinc_calculate_gamma_curve(gamma->gamma->val,
+					      gamma->curve->p_cur.p);
+			kernel_neon_end();
+			gamma->gamma->flags &= ~V4L2_CTRL_FLAG_WRITE_ONLY;
+			gamma->curve->flags |= V4L2_CTRL_FLAG_UPDATE;
+		} else if (gamma->curve->is_new) {
+			gamma->gamma->flags |= V4L2_CTRL_FLAG_WRITE_ONLY;
+			gamma->curve->flags &= ~V4L2_CTRL_FLAG_UPDATE;
+			p_gamma = gamma->curve->p_new.p;
+		}
+
+		if (gamma->enable->is_new)
+			cluster_activate_only(priv, ctrl->cluster);
+
+		if (gamma->enable->val && (gamma->gamma->val != 16 ||
+			gamma->gamma->flags & V4L2_CTRL_FLAG_WRITE_ONLY)) {
+			enable_block(priv, STREAM_PROC_CFG_GC_EN, true);
+			set_gc_curve(priv, p_gamma);
+		} else {
+			enable_block(priv, STREAM_PROC_CFG_GC_EN, false);
+		}
 		break;
+	}
 	case V4L2_CID_CC_ENABLE:
 		cc = (struct vinc_cluster_cc *)ctrl->cluster;
 		cluster_activate(priv, STREAM_PROC_CFG_CC_EN, ctrl->cluster);
@@ -1152,6 +1204,17 @@ static const char * const vinc_test_pattern_menu[] = {
 static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
+		.id = V4L2_CID_GAMMA,
+		.name = "Gamma",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.min = 1,
+		.max = 31,
+		.step = 1,
+		.def = 16,
+		.flags = V4L2_CTRL_FLAG_UPDATE | V4L2_CTRL_FLAG_EXECUTE_ON_WRITE
+	},
+	{
+		.ops = &ctrl_ops,
 		.id = V4L2_CID_BAD_CORRECTION_ENABLE,
 		.name = "Bad pixels/rows/columns repair enable",
 		.type = V4L2_CTRL_TYPE_BOOLEAN,
@@ -1206,8 +1269,8 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 		.min = 0,
 		.max = 1,
 		.step = 1,
-		.def = 0,
-		.flags = 0
+		.def = 1,
+		.flags = V4L2_CTRL_FLAG_UPDATE
 	},
 	{
 		.ops = &ctrl_ops,
@@ -1219,7 +1282,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 		.step = 1,
 		.def = 0,
 		.dims[0] = sizeof(struct vinc_gamma_curve),
-		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD
+		.flags = V4L2_CTRL_FLAG_HAS_PAYLOAD | V4L2_CTRL_FLAG_UPDATE
 	},
 	{
 		.ops = &ctrl_ops,
@@ -1566,6 +1629,7 @@ static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 	priv->cluster.gamma.enable = v4l2_ctrl_find(hdl,
 			V4L2_CID_GAMMA_CURVE_ENABLE);
 	priv->cluster.gamma.curve = v4l2_ctrl_find(hdl, V4L2_CID_GAMMA_CURVE);
+	priv->cluster.gamma.gamma = v4l2_ctrl_find(hdl, V4L2_CID_GAMMA);
 	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_gamma),
 			  &priv->cluster.gamma.enable);
 
