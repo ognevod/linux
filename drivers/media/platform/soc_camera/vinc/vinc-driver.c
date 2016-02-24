@@ -41,8 +41,6 @@
 #include <media/v4l2-mediabus.h>
 #include <media/soc_mediabus.h>
 
-#include "soc_scale_crop.h"
-
 #define MODULE_NAME "vinc"
 
 /* VINC registers */
