@@ -281,7 +281,7 @@ static int vpoutfb_probe(struct platform_device *pdev)
 	par->mmio_base = devm_ioremap_resource(&pdev->dev, devres);
 	if (IS_ERR(par->mmio_base)) {
 		dev_err(&pdev->dev, "Cannot remap mem resource\n");
-		goto error_fb_clocks;
+		goto error_clocks;
 	}
 	par->mem_virt = dma_alloc_coherent(&pdev->dev,
 					   par->mem_size,
