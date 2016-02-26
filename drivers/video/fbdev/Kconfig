@@ -2485,9 +2485,9 @@ config FB_SSD1307
 config FB_VPOUT
 	tristate "Elvees VPOUT framebuffer support"
 	depends on FB && I2C
-	select FB_CFB_FILLRECT
-	select FB_CFB_COPYAREA
-	select FB_CFB_IMAGEBLIT
+	select FB_SYS_FILLRECT
+	select FB_SYS_COPYAREA
+	select FB_SYS_IMAGEBLIT
 	help
 	  This driver implements support for the video output
 	  controller used in Elvees MCom hardware
