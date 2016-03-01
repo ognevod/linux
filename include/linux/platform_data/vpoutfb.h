@@ -9,12 +9,13 @@
  * (at your option) any later version.
  */
 
-#ifndef __PLATFORM_DATA_VPOUTFB_H__
-#define _VPOUTFB_H
+#ifndef PLATFORM_DATA_VPOUTFB_H
+#define PLATFORM_DATA_VPOUTFB_H
 
 #include <drm/drm_fourcc.h>
 #include <linux/fb.h>
 #include <linux/kernel.h>
+#include <linux/of.h>
 
 /* Will not implement indexed color for now */
 #define VPOUTFB_FORMATS \
@@ -56,6 +57,8 @@ struct vpoutfb_platform_data {
 	u32 width;
 	u32 height;
 	struct vpoutfb_format *format;
+	struct device_node *output_node;
+	const char *output_name;
 };
 
-#endif /* __PLATFORM_DATA_VPOUTFB_H__ */
+#endif /* PLATFORM_DATA_VPOUTFB_H */

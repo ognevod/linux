@@ -20,12 +20,17 @@
 #include <linux/dma-mapping.h>
 #include <linux/errno.h>
 #include <linux/fb.h>
+#include <linux/gpio.h>
+#include <linux/i2c.h>
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/platform_data/vpoutfb.h>
 #include <linux/clk-provider.h>
 #include <linux/of_platform.h>
+#include <linux/of_gpio.h>
+#include "vpoutfb.h"
+#include "it66121.h"
 
 #define LCDCSR 0x0
 #define LCDDIV 0x4
@@ -40,10 +45,9 @@
 #define LCDOF1 0x38
 
 #define MODE_HDMI 0x300
-#define CSR_EN 1
-#define CSR_RUN (1 << 1)
-#define CSR_INIT (1 << 2)
-
+#define CSR_EN		BIT(0)
+#define CSR_RUN		BIT(1)
+#define CSR_INIT	BIT(2)
 
 static struct fb_fix_screeninfo vpoutfb_fix = {
 	.id		= "vpout",
@@ -57,20 +61,6 @@ static struct fb_var_screeninfo vpoutfb_var = {
 	.width		= -1,
 	.activate	= FB_ACTIVATE_NOW,
 	.vmode		= FB_VMODE_NONINTERLACED,
-};
-
-#define PSEUDO_PALETTE_SIZE 16
-
-struct vpoutfb_par {
-	u32 palette[PSEUDO_PALETTE_SIZE];
-	void __iomem		*mmio_base;
-	void __iomem		*mem_virt;
-	dma_addr_t		mem_phys;
-	size_t			mem_size;
-#if defined CONFIG_OF && defined CONFIG_COMMON_CLK
-	int clk_count;
-	struct clk **clks;
-#endif
 };
 
 /*
@@ -106,6 +96,8 @@ static void vpoutfb_destroy(struct fb_info *info)
 	if (info->screen_base)
 		dma_free_coherent(info->dev, par->mem_size,
 				  par->mem_virt, par->mem_phys);
+	/* Reset HDMI device */
+	it66121_reset(&par->hdmidata);
 }
 
 static struct fb_ops vpoutfb_ops = {
@@ -156,7 +148,18 @@ static int vpoutfb_parse_dt(struct platform_device *pdev,
 		dev_err(&pdev->dev, "Invalid format value\n");
 		return -EINVAL;
 	}
-
+	pdata->output_node = of_parse_phandle(np, "output", 0);
+	if (!pdata->output_node) {
+		dev_err(&pdev->dev, "Can't parse output property\n");
+		return -EINVAL;
+	}
+	ret = of_property_read_string(pdata->output_node,
+				      "compatible",
+				      &pdata->output_name);
+	if (ret) {
+		dev_err(&pdev->dev, "Can't parse output's compatibility\n");
+		return ret;
+	}
 	return 0;
 }
 
@@ -361,6 +364,16 @@ static int vpoutfb_probe(struct platform_device *pdev)
 	if (ret < 0) {
 		dev_err(&pdev->dev, "Unable to register vpoutfb: %d\n", ret);
 		goto error_unmap;
+	}
+
+	if (!strcmp(pdata.output_name, "ite,it66121")) {
+		ret = it66121_init(&par->hdmidata, info, pdata.output_node);
+		if (ret < 0) {
+			dev_err(&pdev->dev,
+				"Unable to init HDMI adapter: %d\n",
+				ret);
+			goto error_unmap;
+		}
 	}
 
 	dev_info(&pdev->dev, "fb%d: vpoutfb registered!\n", info->node);

@@ -1,0 +1,27 @@
+
+#ifndef VPOUTFB_H
+#define VPOUTFB_H
+
+#include <linux/clk-provider.h>
+#include <linux/fb.h>
+#include <linux/gpio.h>
+#include <linux/of.h>
+#include "it66121.h"
+
+#define PSEUDO_PALETTE_SIZE 16
+
+struct vpoutfb_par {
+	u32 palette[PSEUDO_PALETTE_SIZE];
+	void __iomem			*mmio_base;
+	void __iomem			*mem_virt;
+	dma_addr_t			mem_phys;
+	size_t				mem_size;
+	struct it66121_device_data	hdmidata;
+
+#if defined CONFIG_OF && defined CONFIG_COMMON_CLK
+	int clk_count;
+	struct clk **clks;
+#endif
+};
+
+#endif /* VPOUTFB_H */
