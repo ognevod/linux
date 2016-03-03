@@ -2522,7 +2522,7 @@ static struct platform_driver vinc_driver = {
 	.remove		= vinc_remove,
 };
 
-module_platform_driver_probe(vinc_driver, vinc_probe);
+module_platform_driver(vinc_driver);
 
 MODULE_DESCRIPTION("VINC driver");
 MODULE_AUTHOR("Vasiliy Zasukhin <vzasukhin@elvees.com>");
