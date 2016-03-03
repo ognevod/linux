@@ -32,6 +32,7 @@
 #include <linux/vinc.h>
 #include <linux/pm_runtime.h>
 #include <linux/sched.h>
+#include <linux/clk.h>
 
 #include <media/v4l2-async.h>
 #include <media/v4l2-common.h>
@@ -459,6 +460,10 @@ struct vinc_dev {
 	u32 fdecim;
 
 	int sequence;
+
+	struct clk *pclk;
+	struct clk *aclk;
+	struct clk *sclk;
 };
 
 struct vinc_cam {
@@ -2329,6 +2334,65 @@ static irqreturn_t vinc_irq_s1(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
+static int vinc_clk_init(struct vinc_dev *priv, struct platform_device *pdev)
+{
+	int err;
+
+	priv->pclk = devm_clk_get(&pdev->dev, "pclk");
+	if (IS_ERR(priv->pclk)) {
+		err = PTR_ERR(priv->pclk);
+		dev_err(&pdev->dev,
+			"failed to get pclk (%u)\n", err);
+		return err;
+	}
+
+	priv->aclk = devm_clk_get(&pdev->dev, "aclk");
+	if (IS_ERR(priv->aclk)) {
+		err = PTR_ERR(priv->aclk);
+		dev_err(&pdev->dev,
+			"failed to get aclk (%u)\n", err);
+		return err;
+	}
+
+	priv->sclk = devm_clk_get(&pdev->dev, "sclk");
+	if (IS_ERR(priv->sclk)) {
+		err = PTR_ERR(priv->sclk);
+		dev_err(&pdev->dev,
+			"failed to get sclk (%u)\n", err);
+		return err;
+	}
+
+	err = clk_prepare_enable(priv->pclk);
+	if (err) {
+		dev_err(&pdev->dev,
+			"failed to enable pclk (%u)\n", err);
+		return err;
+	}
+
+	err = clk_prepare_enable(priv->aclk);
+	if (err) {
+		dev_err(&pdev->dev,
+			"failed to enable aclk (%u)\n", err);
+		goto disable_pclk;
+	}
+
+	err = clk_prepare_enable(priv->sclk);
+	if (err) {
+		dev_err(&pdev->dev,
+			"failed to enable sclk (%u)\n", err);
+		goto disable_aclk;
+	}
+
+	return 0;
+
+disable_aclk:
+	clk_disable_unprepare(priv->aclk);
+disable_pclk:
+	clk_disable_unprepare(priv->pclk);
+
+	return err;
+}
+
 static int vinc_probe(struct platform_device *pdev)
 {
 	struct vinc_dev *priv;
@@ -2344,6 +2408,11 @@ static int vinc_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Failed to get memory resource\n");
 		return -ENODEV;
 	}
+
+	/* Try to get and enable clocks */
+	err = vinc_clk_init(priv, pdev);
+	if (err)
+		return err;
 
 	priv->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(priv->base))
@@ -2430,6 +2499,10 @@ static int vinc_remove(struct platform_device *pdev)
 	if (platform_get_resource(pdev, IORESOURCE_MEM, 1))
 		dma_release_declared_memory(&pdev->dev);
 	vb2_dma_contig_cleanup_ctx(priv->alloc_ctx);
+
+	clk_disable_unprepare(priv->pclk);
+	clk_disable_unprepare(priv->aclk);
+	clk_disable_unprepare(priv->sclk);
 
 	return 0;
 }
