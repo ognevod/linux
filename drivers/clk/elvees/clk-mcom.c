@@ -1,204 +1,315 @@
 /*
- *  Copyright 2015 ELVEES NeoTek CJSC
+ * Copyright 2016, Elvees NeoTek JSC
+ * Copyright 2012 Tony Prisk <linux@prisktech.co.nz>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * Based on clk-vt8500.c
  *
- * This is the temporary version of MCom CMCTR driver. It will be replaced
- * by full-featured version in future.
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  */
 
-#include <linux/bitops.h>
+#include <linux/io.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
-#include <linux/io.h>
-#include <linux/clk-provider.h>
 #include <linux/slab.h>
-#include <linux/log2.h>
+#include <linux/bitops.h>
+#include <linux/clkdev.h>
+#include <linux/clk-provider.h>
 
-#define DIV_MPU_CTR     0x004
-#define DIV_ATB_CTR     0x008
-#define DIV_APB_CTR     0x00C
-#define GATE_MPU_CTR    0x014
-#define DIV_NFC_CTR     0x038
-#define DIV_SYS1_CTR    0x040
-#define DIV_SYS2_CTR    0x044
-#define GATE_CORE_CTR   0x048
-#define GATE_SYS_CTR    0x04C
-#define GATE_DSP_CTR    0x068
+#define to_mcom_clk_pll(_hw) container_of(_hw, struct mcom_clk_pll, hw)
 
-#define SEL_APLL        0x100
-#define SEL_CPLL        0x104
-#define SEL_DPLL        0x108
-#define SEL_SPLL        0x10C
-#define SEL_VPLL        0x110
-#define SEL_UPLL        0x114
+/* All clocks share the same lock. It means none can be changed concurrently */
+static DEFINE_SPINLOCK(mcom_clk_lock);
 
-#define GATE_CORE_CTR_L0_EN    BIT(0)
-#define GATE_CORE_CTR_DDR0_EN  BIT(1)
-#define GATE_CORE_CTR_DDR1_EN  BIT(2)
-#define GATE_CORE_CTR_VPIN_EN  BIT(3)
-#define GATE_CORE_CTR_VPOUT_EN BIT(4)
-#define GATE_CORE_CTR_VPU_EN   BIT(5)
-#define GATE_CORE_CTR_GPU_EN   BIT(6)
+static void __iomem *cmctr_base;
 
-#define GATE_SYS_CTR_I2S_EN    BIT(1)
-#define GATE_SYS_CTR_SDMMC0_EN BIT(2)
-#define GATE_SYS_CTR_SDMMC1_EN BIT(3)
-#define GATE_SYS_CTR_EMAC_EN   BIT(4)
-#define GATE_SYS_CTR_USB_EN    BIT(5)
-#define GATE_SYS_CTR_UART0_EN  BIT(12)
-#define GATE_SYS_CTR_UART1_EN  BIT(13)
-#define GATE_SYS_CTR_UART2_EN  BIT(14)
-#define GATE_SYS_CTR_UART3_EN  BIT(15)
-#define GATE_SYS_CTR_I2C0_EN   BIT(16)
-#define GATE_SYS_CTR_I2C1_EN   BIT(17)
-#define GATE_SYS_CTR_I2C2_EN   BIT(18)
-#define GATE_SYS_CTR_SPI0_EN   BIT(19)
-#define GATE_SYS_CTR_SPI1_EN   BIT(20)
-#define GATE_SYS_CTR_NFC_EN    BIT(21)
-
-#define GATE_DSP_CTR_DSP0_EN   BIT(0)
-#define GATE_DSP_CTR_DSP1_EN   BIT(1)
-#define GATE_DSP_CTR_DSPEXT_EN BIT(2)
-#define GATE_DSP_CTR_DSPENC_EN BIT(3)
-
-#define cmctr_readl(port, reg) __raw_readl((port)->reg_base + reg)
-#define cmctr_writel(port, reg, value) \
-	__raw_writel((value), (port)->reg_base + reg)
-
-struct cmctr_pdata {
-	void __iomem *reg_base;
+struct mcom_clk_pll {
+	struct clk_hw	hw;
+	void __iomem	*reg;
+	spinlock_t	*lock;
+	u8 mult;
 };
 
-static void __init enable_clocks(struct cmctr_pdata *pd)
+static inline void mcom_clk_pll_wait_for_lock(struct mcom_clk_pll *pll)
 {
-	u32 reg;
+	u32 val;
 
-	reg = cmctr_readl(pd, GATE_SYS_CTR);
-	reg |= (GATE_SYS_CTR_I2S_EN |
-		GATE_SYS_CTR_SDMMC0_EN |
-		GATE_SYS_CTR_EMAC_EN |
-		GATE_SYS_CTR_USB_EN |
-		GATE_SYS_CTR_UART0_EN |
-		GATE_SYS_CTR_UART1_EN |
-		GATE_SYS_CTR_UART2_EN |
-		GATE_SYS_CTR_UART3_EN |
-		GATE_SYS_CTR_I2C0_EN |
-		GATE_SYS_CTR_I2C1_EN |
-		GATE_SYS_CTR_I2C2_EN |
-		GATE_SYS_CTR_SPI0_EN |
-		GATE_SYS_CTR_SPI1_EN |
-		GATE_SYS_CTR_NFC_EN);
-	cmctr_writel(pd, GATE_SYS_CTR, reg);
-
-	reg = cmctr_readl(pd, GATE_CORE_CTR);
-	reg |= (GATE_CORE_CTR_L0_EN |
-		GATE_CORE_CTR_DDR0_EN |
-		GATE_CORE_CTR_VPIN_EN |
-		GATE_CORE_CTR_VPOUT_EN |
-		GATE_CORE_CTR_VPU_EN |
-		GATE_CORE_CTR_GPU_EN);
-	cmctr_writel(pd, GATE_CORE_CTR, reg);
-
-	reg = cmctr_readl(pd, GATE_DSP_CTR);
-	reg |= (GATE_DSP_CTR_DSP0_EN |
-		GATE_DSP_CTR_DSP1_EN |
-		GATE_DSP_CTR_DSPEXT_EN);
-	cmctr_writel(pd, GATE_DSP_CTR, reg);
+	do {
+		val = readl(pll->reg);
+	} while (!(val & BIT(31)));
 }
 
-static u32 __init read_property(char const *const name, char const *const path)
+/* The only way to enable PLL is to set
+ * multiplier to none zero value.
+ */
+static int mcom_clk_pll_enable(struct clk_hw *hw)
 {
-	struct device_node *node;
-	u32 read_value;
+	struct mcom_clk_pll *pll = to_mcom_clk_pll(hw);
+	unsigned long flags = 0;
+
+	spin_lock_irqsave(pll->lock, flags);
+	writel((pll->mult - 1), pll->reg);
+	spin_unlock_irqrestore(pll->lock, flags);
+
+	/* We should wait for PLL lock before exiting */
+	mcom_clk_pll_wait_for_lock(pll);
+
+	return 0;
+}
+
+/* Set PLL multiplier to 0 to disable PLL */
+static void mcom_clk_pll_disable(struct clk_hw *hw)
+{
+	struct mcom_clk_pll *pll = to_mcom_clk_pll(hw);
+	unsigned long flags = 0;
+
+	spin_lock_irqsave(pll->lock, flags);
+	pll->mult = (readl(pll->reg) + 1);
+	writel(0, pll->reg);
+	spin_unlock_irqrestore(pll->lock, flags);
+}
+
+static int mcom_clk_pll_is_enabled(struct clk_hw *hw)
+{
+	struct mcom_clk_pll *pll = to_mcom_clk_pll(hw);
+	u32 en_val = readl(pll->reg);
+
+	return en_val ? 1 : 0;
+}
+
+static unsigned long mcom_clk_pll_recalc_rate(struct clk_hw *hw,
+					      unsigned long parent_rate)
+{
+	struct mcom_clk_pll *pll = to_mcom_clk_pll(hw);
+	u8 mult = readl(pll->reg);
+
+	return parent_rate * (mult + 1);
+}
+
+static long mcom_clk_pll_round_rate(struct clk_hw *hw, unsigned long rate,
+				    unsigned long *prate)
+{
+	u8 mult;
+
+	mult = rate / *prate;
+
+	if (!mult)
+		mult = 1;
+
+	return *prate * mult;
+}
+
+static int mcom_clk_pll_set_rate(struct clk_hw *hw, unsigned long rate,
+				 unsigned long parent_rate)
+{
+	struct mcom_clk_pll *pll = to_mcom_clk_pll(hw);
+	u8 mult;
+	unsigned long flags = 0;
+
+	mult =  rate / parent_rate;
+
+	spin_lock_irqsave(pll->lock, flags);
+	writel((mult - 1), pll->reg);
+	spin_unlock_irqrestore(pll->lock, flags);
+
+	/* We should wait for PLL lock before exiting */
+	mcom_clk_pll_wait_for_lock(pll);
+
+	return 0;
+}
+
+static const struct clk_ops mcom_clk_pll_ops = {
+	.enable = mcom_clk_pll_enable,
+	.disable = mcom_clk_pll_disable,
+	.is_enabled = mcom_clk_pll_is_enabled,
+	.recalc_rate = mcom_clk_pll_recalc_rate,
+	.round_rate = mcom_clk_pll_round_rate,
+	.set_rate = mcom_clk_pll_set_rate,
+};
+
+static __init void mcom_clk_pll_init(struct device_node *node)
+{
+	u32 reg, clk_mult;
+	struct clk *clk;
+	struct mcom_clk_pll *pll;
+	struct clk_init_data init;
+	const char *clk_name = node->name;
+	const char *parent_name = of_clk_get_parent_name(node, 0);
 	int rc;
 
-	node = of_find_node_by_path(path);
-	if (!node) {
-		pr_err("Can not find %s in DTS\n", path);
-		return 0;
+	if (!cmctr_base) {
+		pr_err_once("%s: cmctr_base is not defined\n", node->name);
+		return;
 	}
 
-	rc = of_property_read_u32(node, name, &read_value);
+	pll = kzalloc(sizeof(struct mcom_clk_pll), GFP_KERNEL);
+	if (!pll)
+		return;
+
+	rc = of_property_read_u32(node, "reg", &reg);
 	if (rc) {
-		pr_err("%s: Can not read %s property\n", path, name);
-		return 0;
+		pr_err("%s: Can not read reg property\n", clk_name);
+		kfree(pll);
+		return;
 	}
 
-	return read_value;
+	pll->reg = cmctr_base + reg;
+
+	rc = of_property_read_u32(node, "clk-mult-initial", &clk_mult);
+	if (!rc) {
+		unsigned long flags = 0;
+
+		pll->mult = clk_mult;
+		spin_lock_irqsave(&mcom_clk_lock, flags);
+		writel((clk_mult - 1), pll->reg);
+		/* Wait for pll lock ? */
+		spin_unlock_irqrestore(&mcom_clk_lock, flags);
+	}
+
+	of_property_read_string(node, "clock-output-names", &clk_name);
+
+	init.name = clk_name;
+	init.ops = &mcom_clk_pll_ops;
+	init.flags = 0;
+	init.parent_names = &parent_name;
+	init.num_parents = 1;
+
+	pll->lock = &mcom_clk_lock;
+	pll->hw.init = &init;
+
+	clk = clk_register(NULL, &pll->hw);
+	if (IS_ERR(clk)) {
+		pr_err("%s: Can not register clk\n", clk_name);
+		kfree(pll);
+		return;
+	}
+
+	rc = of_clk_add_provider(node, of_clk_src_simple_get, clk);
+	if (rc) {
+		pr_err("%s: Can not add clk provider\n", clk_name);
+		return;
+	}
 }
 
-static void __init set_pll(struct cmctr_pdata *const pd, unsigned const sel,
-			   char const *const path)
+static void __init mcom_clk_gate_init(struct device_node *node)
 {
-	u32 clock_mult;
+	u32 reg, bit;
+	struct clk *clk;
+	const char *clk_name = node->name;
+	const char *parent_name = of_clk_get_parent_name(node, 0);
+	int rc;
 
-	clock_mult = read_property("clock-mult", path);
-
-	if (clock_mult == 0 || clock_mult > 256) {
-		pr_err("%s: Incorrect clock-mult (%u)\n", path, clock_mult);
+	if (!cmctr_base) {
+		pr_err_once("%s: cmctr_base is not defined\n", node->name);
 		return;
 	}
 
-	/* We must write (clock_mult - 1) to sel in order to set
-	 * 24*clock_mult clock frequency.
-	 */
+	of_property_read_string(node, "clock-output-names", &clk_name);
 
-	cmctr_writel(pd, sel, clock_mult - 1);
-	if (clock_mult != 1) {
-		do {
-			clock_mult = cmctr_readl(pd, sel);
-		} while (!((clock_mult >> 31) & 1));
+	rc = of_property_read_u32(node, "reg", &reg);
+	if (rc) {
+		pr_err("%s: Can not read reg property\n", clk_name);
+		return;
+	}
+
+	rc = of_property_read_u32(node, "reg-bit", &bit);
+	if (rc) {
+		pr_err("%s: Can not read reg-bit property\n", clk_name);
+		return;
+	}
+
+	clk = clk_register_gate(NULL, clk_name, parent_name,
+				CLK_SET_RATE_PARENT,
+				cmctr_base + reg,
+				bit, 0, &mcom_clk_lock);
+
+	if (IS_ERR(clk)) {
+		pr_err("%s: Can not register clk\n", clk_name);
+		return;
+	}
+
+	rc = of_clk_add_provider(node, of_clk_src_simple_get, clk);
+	if (rc) {
+		pr_err("%s: Can not add clk provider\n", clk_name);
+		return;
 	}
 }
 
-static void __init set_divider(struct cmctr_pdata *const pd, u32 const reg,
-			       u32 const max, char const *const path)
+static __init void mcom_clk_divider_init(struct device_node *node)
 {
-	u32 clock_div;
+	u32 reg, shift, width, clk_div;
+	struct clk *clk;
+	const char *clk_name = node->name;
+	const char *parent_name = of_clk_get_parent_name(node, 0);
+	int rc;
 
-	clock_div = read_property("clock-div", path);
-
-	if (clock_div == 0 || clock_div > max || !is_power_of_2(clock_div)) {
-		pr_err("Incorrect clock-div (%u) on %s\n", clock_div, path);
+	if (!cmctr_base) {
+		pr_err_once("%s: cmctr_base is not defined\n", node->name);
 		return;
 	}
 
-	cmctr_writel(pd, reg, fls(clock_div) - 1);
+	of_property_read_string(node, "clock-output-names", &clk_name);
+
+	rc = of_property_read_u32(node, "reg", &reg);
+	if (rc) {
+		pr_err("%s: Can not read reg property\n", clk_name);
+		return;
+	}
+
+	rc = of_property_read_u32(node, "reg-shift", &shift);
+	if (rc) {
+		pr_err("%s: Can not read reg-shift property\n", clk_name);
+		return;
+	}
+
+	rc = of_property_read_u32(node, "reg-width", &width);
+	if (rc) {
+		pr_err("%s: Can not read reg-width property\n", clk_name);
+		return;
+	}
+
+	rc = of_property_read_u32(node, "clk-div-initial", &clk_div);
+	if (!rc) {
+		unsigned long flags = 0;
+
+		spin_lock_irqsave(&mcom_clk_lock, flags);
+		writel(clk_div, cmctr_base + reg);
+		spin_unlock_irqrestore(&mcom_clk_lock, flags);
+	}
+
+	clk = clk_register_divider(NULL, clk_name, parent_name,
+			CLK_SET_RATE_PARENT,
+			cmctr_base + reg, shift, width,
+			CLK_DIVIDER_POWER_OF_TWO, &mcom_clk_lock);
+
+	if (IS_ERR(clk)) {
+		pr_err("%s: Can not register clk\n", clk_name);
+		return;
+	}
+
+	rc = of_clk_add_provider(node, of_clk_src_simple_get, clk);
+	if (rc) {
+		pr_err("%s: Can not add clk provider\n", clk_name);
+		return;
+	}
 }
 
-static void __init mcom_clk_init(struct device_node *np)
+static __init void mcom_cmctr_init(struct device_node *node)
 {
-	struct cmctr_pdata *pd;
-
-	pd = kmalloc(sizeof(struct cmctr_pdata), GFP_KERNEL);
-	if (!pd)
-		return;
-
-	pd->reg_base = of_iomap(np, 0);
-	if (!pd->reg_base) {
-		pr_err("%s: Can not map requested memory region\n", np->name);
-		return;
-	}
-
-	set_divider(pd, DIV_APB_CTR, 2, "/clocks/apclk");
-	set_divider(pd, DIV_ATB_CTR, 8, "/clocks/atclk");
-	set_divider(pd, DIV_MPU_CTR, 2, "/clocks/mpspclk");
-	set_divider(pd, DIV_SYS1_CTR, 2, "/clocks/l1_hclk");
-	set_divider(pd, DIV_SYS2_CTR, 2, "/clocks/l3_pclk");
-	set_divider(pd, DIV_NFC_CTR, 8, "/clocks/nfc_sclk");
-
-	set_pll(pd, SEL_APLL, "/clocks/apllclk");
-	/* Do not set CPLL, because it clocks DDR. */
-	set_pll(pd, SEL_DPLL, "/clocks/dpllclk");
-	set_pll(pd, SEL_SPLL, "/clocks/spllclk");
-	set_pll(pd, SEL_VPLL, "/clocks/vpllclk");
-	set_pll(pd, SEL_UPLL, "/clocks/upllclk");
-
-	enable_clocks(pd);
+	cmctr_base = of_iomap(node, 0);
+	if (!cmctr_base)
+		pr_err("%s: Can not map requested memory region\n", node->name);
 }
 
-CLK_OF_DECLARE(mcom_cmctr, "elvees,mcom-cmctr", mcom_clk_init);
+CLK_OF_DECLARE(mcom_cmctr, "elvees,mcom-cmctr", mcom_cmctr_init);
+CLK_OF_DECLARE(mcom_clk_pll, "elvees,mcom-clk-pll", mcom_clk_pll_init);
+CLK_OF_DECLARE(mcom_clk_gate, "elvees,mcom-clk-gate", mcom_clk_gate_init);
+CLK_OF_DECLARE(mcom_clk_divider, "elvees,mcom-clk-divider",
+	       mcom_clk_divider_init);
