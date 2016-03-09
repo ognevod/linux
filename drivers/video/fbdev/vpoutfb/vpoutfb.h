@@ -6,6 +6,7 @@
 #include <linux/fb.h>
 #include <linux/gpio.h>
 #include <linux/of.h>
+#include <linux/platform_data/vpoutfb.h>
 #include "it66121.h"
 
 #define PSEUDO_PALETTE_SIZE 16
@@ -17,6 +18,7 @@ struct vpoutfb_par {
 	dma_addr_t			mem_phys;
 	size_t				mem_size;
 	struct it66121_device_data	hdmidata;
+	struct vpoutfb_format		*color_fmt;
 
 #if defined CONFIG_OF && defined CONFIG_COMMON_CLK
 	int clk_count;

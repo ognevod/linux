@@ -32,6 +32,9 @@
 #define REG_TX_RESET 0x61
 #define REG_AVMUTE 0xC1
 #define REG_TXFIFO_SET 0x71
+#define REG_CLK1 0x62
+#define REG_CLK2 0x63
+#define REG_CLK3 0x64
 
 #define RESET_RCLK_MASK BIT(5)
 #define RESET_AUDIO_MASK BIT(4)
@@ -56,19 +59,22 @@ static int hdmi_write_masked(struct i2c_client *client, u8 address,
 
 /* fb_info will be needed to do modesetting-related operations */
 
-int it66121_init(struct it66121_device_data *devdata,
-			struct fb_info *info,
-			struct device_node *output_node)
+void it66121_probe(struct it66121_device_data *devdata,
+		   struct device_node *output_node)
 {
-	u8 ident[] = {0x54, 0x49, 0x12, 0x16};
-	int ret = 0, i;
-
 	devdata->client = of_find_i2c_device_by_node(output_node);
 	devdata->gpio_reset = gpiod_get(&devdata->client->dev,
 					"reset",
 					GPIOF_OUT_INIT_HIGH |
 					GPIOF_ACTIVE_LOW);
 	gpiod_direction_output(devdata->gpio_reset, 0);
+}
+
+int it66121_init(struct it66121_device_data *devdata, struct fb_info *info)
+{
+	u8 ident[] = {0x54, 0x49, 0x12, 0x16};
+	int ret = 0, i;
+
 	it66121_reset(devdata);
 	/* Here and later: delays are so that errors do not occur */
 	usleep_range(1000, 2000);
@@ -106,11 +112,17 @@ int it66121_init(struct it66121_device_data *devdata,
 
 	/* Disable audio */
 	ret |= hdmi_write_masked(devdata->client, 0xE0, 0x00, 0xF);
-	/* Enable video clock settings for <80 MHz */
-	/* TODO: for 1080p and higher, set up for >80 MHz */
-	ret |= hdmi_write_masked(devdata->client, 0x62, 0x18, 0xFF);
-	ret |= hdmi_write_masked(devdata->client, 0x63, 0x10, 0xFF);
-	ret |= hdmi_write_masked(devdata->client, 0x64, 0x0C, 0xFF);
+
+	/* Set up clock-related settings */
+	if (info->var.pixclock >= 12500) {
+		ret |= hdmi_write_masked(devdata->client, REG_CLK1, 0x18, 0xFF);
+		ret |= hdmi_write_masked(devdata->client, REG_CLK2, 0x10, 0xFF);
+		ret |= hdmi_write_masked(devdata->client, REG_CLK3, 0x0C, 0xFF);
+	} else {
+		ret |= hdmi_write_masked(devdata->client, REG_CLK1, 0x88, 0xFF);
+		ret |= hdmi_write_masked(devdata->client, REG_CLK2, 0x10, 0xFF);
+		ret |= hdmi_write_masked(devdata->client, REG_CLK3, 0x84, 0xFF);
+	}
 	/* Clear TX FIFO */
 	ret |= hdmi_write_masked(devdata->client, REG_TXFIFO_SET, 0x02, 0x02);
 	usleep_range(1000, 2000);
@@ -142,6 +154,8 @@ int it66121_init(struct it66121_device_data *devdata,
 void it66121_reset(struct it66121_device_data *devdata)
 {
 	gpiod_set_value(devdata->gpio_reset, 1);
+	/* Takes a pause or reset won't take effect */
+	usleep_range(100, 200);
 	gpiod_set_value(devdata->gpio_reset, 0);
 };
 

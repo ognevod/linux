@@ -45,6 +45,11 @@
 #define CSR_EN		BIT(0)
 #define CSR_RUN		BIT(1)
 #define CSR_INIT	BIT(2)
+#define CSR_CLR		BIT(3)
+
+#define UNDIVPIXCLK 2315
+#define MAX_BUFSIZE (1920 * 1080 * 4)
+#define CLEAR_MSEC 40
 
 static struct fb_fix_screeninfo vpoutfb_fix = {
 	.id		= "vpout",
@@ -59,6 +64,128 @@ static struct fb_var_screeninfo vpoutfb_var = {
 	.activate	= FB_ACTIVATE_NOW,
 	.vmode		= FB_VMODE_NONINTERLACED,
 };
+
+static struct fb_videomode vpoutfb_guaranteed_modedb[] = {
+	{"720p59.94", 0, 1280, 720, 13890, 220, 110, 20, 5, 40, 5, 0, 0, 0},
+	{"1920p59.94", 0, 1920, 1080, 6945, 148, 88, 36, 4, 44, 5, 0, 0, 0},
+	{"640x480CEA", 0, 640, 480, 39355, 48, 16, 33, 10, 96, 2, 0, 0, 0},
+	{"480p59.94", 0, 720, 480, 37040, 60, 16, 30, 9, 62, 6, 0, 0, 0},
+	{"800x600VSA", 0, 800, 600, 27780, 128, 24, 22, 01, 72, 2, 0, 0, 0},
+	{"1024x768", 0, 1024, 768, 23150, 168, 8, 29, 3, 144, 6, 0, 0, 0},
+	{"1366x768", 0, 1366, 768, 13890, 120, 10, 14, 3, 32, 5, 0, 0, 0},
+};
+
+static int vpoutfb_check_var(struct fb_var_screeninfo *var,
+			     struct fb_info *info)
+{
+	struct fb_var_screeninfo *oldvar;
+	struct fb_videomode *modecaret;
+	/*First thing first, color info STAYS SAME .*/
+	oldvar = &info->var;
+	var->bits_per_pixel = oldvar->bits_per_pixel;
+	var->grayscale = oldvar->grayscale;
+	var->red = oldvar->red;
+	var->green = oldvar->green;
+	var->blue = oldvar->blue;
+	/* While EDID reading is not implemented, just check via modedb */
+	/* When it is implemented, should check for buffer size violation */
+	for (modecaret = vpoutfb_guaranteed_modedb;
+	     modecaret->name != NULL; modecaret++) {
+		if (modecaret->xres == var->xres &&
+		    modecaret->yres == var->yres)
+			break;
+	}
+	/* Fall back on 720p */
+	if (modecaret->name == NULL)
+		modecaret = vpoutfb_guaranteed_modedb;
+	var->xres = modecaret->xres;
+	var->xres_virtual = var->xres;
+	var->yres = modecaret->yres;
+	var->yres_virtual = var->yres;
+	var->pixclock = modecaret->pixclock;
+	var->left_margin = modecaret->left_margin;
+	var->right_margin = modecaret->right_margin;
+	var->upper_margin = modecaret->upper_margin;
+	var->lower_margin = modecaret->lower_margin;
+	var->hsync_len = modecaret->hsync_len;
+	var->vsync_len = modecaret->vsync_len;
+	return 0;
+}
+
+static int vpoutfb_set_par(struct fb_info *info)
+{
+	int hsw, hgdel, hgate, hlen, vsw, vgdel, vgate, vlen, div, i;
+	struct fb_var_screeninfo *var;
+	struct vpoutfb_par *par;
+
+	var = &info->var;
+	par = info->par;
+	hsw = var->hsync_len - 1;
+	vsw = var->vsync_len - 1;
+	hgate = var->xres - 1;
+	vgate = var->yres - 1;
+	hgdel = var->left_margin - 1;
+	vgdel = var->upper_margin - 1;
+	hlen = var->xres + var->left_margin +
+		var->right_margin + var->hsync_len - 1;
+	vlen = var->yres + var->upper_margin +
+		var->lower_margin + var->vsync_len - 1;
+	div = var->pixclock / UNDIVPIXCLK - 1;
+	info->fix.line_length = var->xres *
+		par->color_fmt->bits_per_pixel / 8;
+	/* If the device is currently on, clear FIFO and power it off */
+	if (ioread32(par->mmio_base + LCDCSR) & CSR_EN) {
+		iowrite32(CSR_EN, par->mmio_base + LCDCSR);
+		iowrite32(CSR_EN|CSR_CLR, par->mmio_base + LCDCSR);
+		for (i = 0; i < CLEAR_MSEC; i++) {
+			if (!(ioread32(par->mmio_base + LCDCSR) & CSR_CLR))
+				break;
+			usleep_range(1000, 2000);
+		}
+		if (i == CLEAR_MSEC) {
+			dev_err(info->dev, "FIFO clear looped\n");
+			return -EBUSY;
+		}
+		iowrite32(0, par->mmio_base + LCDCSR);
+	}
+	/* Turn on and reset the device */
+	iowrite32(CSR_EN, par->mmio_base + LCDCSR);
+	iowrite32(CSR_EN|CSR_CLR, par->mmio_base + LCDCSR);
+	for (i = 0; i < CLEAR_MSEC; i++) {
+		if (!(ioread32(par->mmio_base + LCDCSR) & CSR_CLR))
+			break;
+		usleep_range(1000, 2000);
+	}
+	if (i == CLEAR_MSEC) {
+		dev_err(info->dev, "FIFO clear looped\n");
+		return -EBUSY;
+	}
+	/* Configure video mode */
+	iowrite32(hgdel << 16 | hsw, par->mmio_base + LCDHT0);
+	iowrite32(hlen << 16  | hgate, par->mmio_base + LCDHT1);
+	iowrite32(vgdel << 16 | vsw, par->mmio_base + LCDVT0);
+	iowrite32(vlen << 16  | vgate, par->mmio_base + LCDVT1);
+	iowrite32(div, par->mmio_base + LCDDIV);
+	iowrite32(par->mem_phys, par->mmio_base + LCDAB0);
+	iowrite32(par->mem_phys, par->mmio_base + LCDAB1);
+	iowrite32(MODE_HDMI + par->color_fmt->hw_modenum,
+		  par->mmio_base + LCDMOD);
+	/* Finally, initialize and run the device */
+	iowrite32(CSR_INIT | CSR_EN, par->mmio_base + LCDCSR);
+	for (i = 0; i < CLEAR_MSEC; i++) {
+		if (!(ioread32(par->mmio_base + LCDCSR) & CSR_INIT))
+			break;
+		usleep_range(1000, 2000);
+	}
+	if (i == CLEAR_MSEC) {
+		dev_err(info->dev, "Initialization failed\n");
+		return -EBUSY;
+	}
+	iowrite32(CSR_RUN | CSR_EN, par->mmio_base + LCDCSR);
+	if (par->hdmidata.client != NULL)
+		return it66121_init(&par->hdmidata, info);
+	return 0;
+}
 
 /*
  * Sets a fictional color palette for fbcon.
@@ -106,6 +233,8 @@ static struct fb_ops vpoutfb_ops = {
 	.fb_fillrect	= sys_fillrect,
 	.fb_copyarea	= sys_copyarea,
 	.fb_imageblit	= sys_imageblit,
+	.fb_check_var	= vpoutfb_check_var,
+	.fb_set_par	= vpoutfb_set_par
 };
 
 static struct vpoutfb_format vpoutfb_formats[] = VPOUTFB_FORMATS;
@@ -262,8 +391,6 @@ static int vpoutfb_create(struct fb_info *info, struct platform_device *pdev)
 static int vpoutfb_probe(struct platform_device *pdev)
 {
 	int ret;
-	u16 hsw, hgate, hgdel, hlen, vsw, vgate, vgdel, vlen;
-	u32 div;
 	struct vpoutfb_platform_data pdata;
 	struct fb_info *info = NULL;
 	struct resource *devres = NULL;
@@ -331,6 +458,8 @@ static int vpoutfb_probe(struct platform_device *pdev)
 	info->var.green = pdata.format->green;
 	info->var.blue = pdata.format->blue;
 	info->var.transp = pdata.format->transp;
+	par->color_fmt = pdata.format;
+
 
 	info->apertures = alloc_apertures(1);
 	if (!info->apertures) {
@@ -343,36 +472,20 @@ static int vpoutfb_probe(struct platform_device *pdev)
 	info->fbops = &vpoutfb_ops;
 	info->flags = FBINFO_DEFAULT | FBINFO_MISC_FIRMWARE;
 	info->screen_base = par->mem_virt;
+	vpoutfb_check_var(&info->var, info);
 
 	info->pseudo_palette = par->palette;
 
-	if (pdata.width == 1280 && pdata.height == 720) {
-		hsw = 39, hgdel = 219, hgate = 1279, hlen = 1649,
-		vsw = 4, vgdel = 19, vgate = 719, vlen = 749,
-		div = 5; /* 1280x720 CEA - 4 */
-	} else if (pdata.width == 1920 && pdata.height == 1080) {
-		hsw = 43, hgdel = 147, hgate = 1919, hlen = 2199,
-		vsw = 4, vgdel = 35, vgate = 1079, vlen = 1124,
-		div = 2; /* 1920x1080 CEA - 16 */
-	} else {
-		dev_err(&pdev->dev, "Unsupported resolution\n");
+	if (!strcmp(pdata.output_name, "ite,it66121"))
+		it66121_probe(&par->hdmidata, pdata.output_node);
+
+	ret = vpoutfb_set_par(info);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "Unable to set resolution: %d\n", ret);
 		ret = -EINVAL;
 		goto error_cleanup;
 	}
-	iowrite32(CSR_EN, par->mmio_base + LCDHT0);
-	iowrite32(hgdel << 16 | hsw, par->mmio_base + LCDHT0);
-	iowrite32(hlen << 16  | hgate, par->mmio_base + LCDHT1);
-	iowrite32(vgdel << 16 | vsw, par->mmio_base + LCDVT0);
-	iowrite32(vlen << 16  | vgate, par->mmio_base + LCDVT1);
-	iowrite32(div, par->mmio_base + LCDDIV);
-	iowrite32(par->mem_phys, par->mmio_base + LCDAB0);
-	iowrite32(par->mem_phys, par->mmio_base + LCDAB1);
-	iowrite32(MODE_HDMI + pdata.format->hw_modenum,
-		  par->mmio_base + LCDMOD);
-	iowrite32(CSR_INIT | CSR_EN, par->mmio_base + LCDCSR);
-	while (ioread32(par->mmio_base + LCDCSR) & CSR_INIT)
-		usleep_range(1000, 2000);
-	iowrite32(CSR_RUN | CSR_EN, par->mmio_base + LCDCSR);
+
 	dev_info(&pdev->dev, "framebuffer at 0x%lx, 0x%x bytes, mapped to 0x%p\n",
 			     info->fix.smem_start, info->fix.smem_len,
 			     info->screen_base);
@@ -387,15 +500,6 @@ static int vpoutfb_probe(struct platform_device *pdev)
 		goto error_cleanup;
 	}
 
-	if (!strcmp(pdata.output_name, "ite,it66121")) {
-		ret = it66121_init(&par->hdmidata, info, pdata.output_node);
-		if (ret < 0) {
-			dev_err(&pdev->dev,
-				"Unable to init HDMI adapter: %d\n",
-				ret);
-			goto error_cleanup;
-		}
-	}
 
 	dev_info(&pdev->dev, "fb%d: vpoutfb registered!\n", info->node);
 
