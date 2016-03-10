@@ -400,6 +400,7 @@ struct vinc_cluster_gamma {
 struct vinc_cluster_cc {
 	struct v4l2_ctrl *enable;
 	struct v4l2_ctrl *cc;
+	struct v4l2_ctrl *brightness;
 	struct v4l2_ctrl *dowb;
 };
 
@@ -461,6 +462,9 @@ struct vinc_dev {
 	struct v4l2_crop crop1;
 	struct v4l2_crop crop2;
 	u32 fdecim;
+
+	enum v4l2_ycbcr_encoding ycbcr_enc;
+	enum v4l2_quantization quantization;
 
 	int sequence;
 
@@ -1029,12 +1033,12 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 	}
 	case V4L2_CID_CC_ENABLE: {
 		struct vinc_cc *p_cc;
-
 		cc = (struct vinc_cluster_cc *)ctrl->cluster;
+
 		p_cc = cc->cc->p_cur.p;
 		/*TODO: is_new flags for other cc controls must be
 		added to std_is_new condition */
-		std_is_new = cc->dowb->is_new;
+		std_is_new = cc->dowb->is_new | cc->brightness->is_new;
 		init = cc->enable->is_new & cc->cc->is_new &
 			std_is_new;
 		cluster_activate(priv, STREAM_PROC_CFG_CC_EN, ctrl->cluster);
@@ -1047,21 +1051,29 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 				add->sum_g, add->sum_b, cc->dowb->priv);
 			kernel_neon_end();
 		}
-		if (std_is_new) {
-			void *coeffs[] = { cc->dowb->priv };
-
+		if (cc->brightness->is_new) {
 			kernel_neon_begin();
-			vinc_calculate_cc(coeffs, cc->cc->p_cur.p);
+			vinc_calculate_v_bri(cc->brightness->priv,
+					     cc->brightness->val);
 			kernel_neon_end();
-			/* TODO: function "change_write_only_flags" must be
-			 * added for cc controls with exception of
-			 * DO_WHITE_BALANCE */
+		}
+		if (std_is_new) {
+			void *coeffs[] = { cc->dowb->priv,
+					   cc->brightness->priv };
+			kernel_neon_begin();
+
+			vinc_calculate_cc(coeffs, priv->ycbcr_enc,
+					  priv->quantization, cc->cc->p_cur.p);
+			kernel_neon_end();
+
+			cc->brightness->flags &= ~V4L2_CTRL_FLAG_WRITE_ONLY &
+					~V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
 			cc->cc->flags |= V4L2_CTRL_FLAG_UPDATE;
 		} else if (cc->cc->is_new) {
 			p_cc = cc->cc->p_new.p;
-			/* TODO: function "change_write_only_flags" must be
-			 * added for cc controls with exception of
-			 * DO_WHITE_BALANCE */
+
+			cc->brightness->flags |= V4L2_CTRL_FLAG_WRITE_ONLY |
+					V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
 			cc->cc->flags &= ~V4L2_CTRL_FLAG_UPDATE;
 		}
 		set_cc_ct(priv, p_cc, 0);
@@ -1161,7 +1173,6 @@ static int vinc_try_ctrl(struct v4l2_ctrl *ctrl)
 	int i;
 
 	switch (ctrl->id) {
-	case V4L2_CID_CC_ENABLE:
 	case V4L2_CID_CT_ENABLE:
 	case V4L2_CID_DR_ENABLE:
 		return (u32)ctrl->val < 2 ? 0 : -ERANGE;
@@ -1233,6 +1244,7 @@ static int vinc_try_ctrl(struct v4l2_ctrl *ctrl)
 				return -ERANGE;
 		}
 		return 0;
+	case V4L2_CID_CC_ENABLE:
 	case V4L2_CID_TEST_PATTERN:
 		return 0;
 	default:
@@ -1261,6 +1273,17 @@ static const char * const vinc_test_pattern_menu[] = {
 };
 
 static struct v4l2_ctrl_config ctrl_cfg[] = {
+	{
+		.ops   = &ctrl_ops,
+		.id    = V4L2_CID_BRIGHTNESS,
+		.name  = "Brightness",
+		.type  = V4L2_CTRL_TYPE_INTEGER,
+		.min   = -2048,
+		.max   =  2048,
+		.step  =  1,
+		.def   =  0,
+		.flags =  V4L2_CTRL_FLAG_UPDATE
+	},
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_DO_WHITE_BALANCE,
@@ -1701,6 +1724,7 @@ static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 
 	priv->cluster.cc.enable = v4l2_ctrl_find(hdl, V4L2_CID_CC_ENABLE);
 	priv->cluster.cc.cc = v4l2_ctrl_find(hdl, V4L2_CID_CC);
+	priv->cluster.cc.brightness = v4l2_ctrl_find(hdl, V4L2_CID_BRIGHTNESS);
 	priv->cluster.cc.dowb = v4l2_ctrl_find(hdl, V4L2_CID_DO_WHITE_BALANCE);
 	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_cc),
 			  &priv->cluster.cc.enable);
@@ -1733,8 +1757,11 @@ static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 			  &priv->cluster.stat.enable);
 
 	priv->test_pattern = v4l2_ctrl_find(hdl, V4L2_CID_TEST_PATTERN);
-	priv->cluster.cc.dowb->priv = kzalloc(sizeof(struct matrix),
-					      GFP_KERNEL);
+
+	priv->cluster.cc.brightness->priv = devm_kmalloc(priv->ici.v4l2_dev.dev,
+					sizeof(struct vector), GFP_KERNEL);
+	priv->cluster.cc.dowb->priv = devm_kmalloc(priv->ici.v4l2_dev.dev,
+					sizeof(struct matrix), GFP_KERNEL);
 	kernel_neon_begin();
 	vinc_calculate_wb_matrix(1, 1, 1, priv->cluster.cc.dowb->priv);
 	kernel_neon_end();
@@ -1845,11 +1872,61 @@ static struct soc_mbus_pixelfmt *vinc_get_mbus_pixelfmt(u32 fourcc)
 	return NULL;
 }
 
+static void color_space_adjust(u32 *colorspace, u32 *ycbcr_enc,
+				u32 *quantization)
+{
+	switch (*colorspace) {
+	case V4L2_COLORSPACE_REC709:
+	case V4L2_COLORSPACE_BT2020:
+		break;
+	/* SMPTE 170M */
+	default:
+		*colorspace = V4L2_COLORSPACE_SMPTE170M;
+		break;
+	}
+
+	switch (*ycbcr_enc) {
+	case V4L2_YCBCR_ENC_601:
+	case V4L2_YCBCR_ENC_709:
+	case V4L2_YCBCR_ENC_BT2020:
+		break;
+	default:
+		switch (*colorspace) {
+		case V4L2_COLORSPACE_REC709:
+			*ycbcr_enc = V4L2_YCBCR_ENC_709;
+			break;
+		case V4L2_COLORSPACE_BT2020:
+			*ycbcr_enc = V4L2_YCBCR_ENC_BT2020;
+			break;
+		default:
+			*ycbcr_enc = V4L2_YCBCR_ENC_601;
+			break;
+		}
+		break;
+	}
+
+	switch (*quantization) {
+	case V4L2_QUANTIZATION_FULL_RANGE:
+		break;
+	/* default quantization is set to limited,
+	 * cause all current color spaces have limited range by default
+	 * if you need to add more color spaces,
+	 * check default quantization for them */
+	default:
+		*quantization = V4L2_QUANTIZATION_LIM_RANGE;
+		break;
+	}
+}
+
 static int __vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f,
 			  struct v4l2_mbus_framefmt *mbus_fmt)
 {
 	struct v4l2_pix_format *pix = &f->fmt.pix;
 	struct v4l2_subdev *sd = soc_camera_to_subdev(icd);
+
+	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
+	struct vinc_dev *priv = ici->priv;
+
 	struct soc_mbus_pixelfmt *pixelfmt;
 	const struct soc_camera_format_xlate *xlate;
 	u32 width, height;
@@ -1858,10 +1935,10 @@ static int __vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f,
 
 	pix->field = V4L2_FIELD_NONE;
 
-	/* TODO: Colorspace should be reconsidered */
-	pix->colorspace = V4L2_COLORSPACE_SRGB;
-	pix->ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
-	pix->quantization = V4L2_QUANTIZATION_DEFAULT;
+	color_space_adjust(&pix->colorspace, &pix->ycbcr_enc,
+			   &pix->quantization);
+	priv->ycbcr_enc = pix->ycbcr_enc;
+	priv->quantization = pix->quantization;
 
 	pixelfmt = vinc_get_mbus_pixelfmt(pix->pixelformat);
 	if (!pixelfmt)
@@ -2370,7 +2447,7 @@ static void vinc_stat_tasklet(unsigned long data)
 			af->rsobel = vinc_read(priv,
 					STREAM_PROC_STAT_RSOBEL(0));
 			vinc_write(priv, STREAM_PROC_CLEAR(0),
-					STREAM_PROC_CLEAR_AF_CLR);
+				   STREAM_PROC_CLEAR_AF_CLR);
 		}
 		if (stat_en & STT_EN_ADD) {
 			add = priv->cluster.stat.add[z]->p_cur.p;
