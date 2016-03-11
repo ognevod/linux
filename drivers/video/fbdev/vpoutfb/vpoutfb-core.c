@@ -20,6 +20,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/errno.h>
 #include <linux/fb.h>
+#include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
@@ -40,12 +41,20 @@
 #define LCDAB1 0x30
 #define LCDOF0 0x34
 #define LCDOF1 0x38
+#define LCDINT 0x44
+#define LCDMSK 0x48
 
 #define MODE_HDMI 0x300
 #define CSR_EN		BIT(0)
 #define CSR_RUN		BIT(1)
 #define CSR_INIT	BIT(2)
 #define CSR_CLR		BIT(3)
+
+#define INT_DMADONE	BIT(0)
+#define INT_DMAEMPTY	BIT(1)
+#define INT_OUTFIFO	BIT(2)
+#define INT_OUTEMPTY	BIT(3)
+#define INT_VSYNC	BIT(5)
 
 #define UNDIVPIXCLK 2315
 #define MAX_BUFSIZE (1920 * 1080 * 4)
@@ -74,6 +83,27 @@ static struct fb_videomode vpoutfb_guaranteed_modedb[] = {
 	{"1024x768", 0, 1024, 768, 23150, 168, 8, 29, 3, 144, 6, 0, 0, 0},
 	{"1366x768", 0, 1366, 768, 13890, 120, 10, 14, 3, 32, 5, 0, 0, 0},
 };
+
+static void vpoutfb_hwreset(unsigned long data)
+{
+	struct fb_info *info = (struct fb_info *) data;
+	int i, j;
+	struct vpoutfb_par *par;
+
+	dev_err(info->dev, "Invalid output, choose smaller resolution\n");
+	par = info->par;
+	for (j = 0; j < 2; j++) {
+		iowrite32(CSR_EN, par->mmio_base + LCDCSR);
+		iowrite32(CSR_INIT | CSR_EN, par->mmio_base + LCDCSR);
+		for (i = 0; i < 250; i++) {
+			if (!(ioread32(par->mmio_base + LCDCSR) & CSR_INIT))
+				break;
+		}
+		if (i == 250)
+			dev_err(info->dev, "Initialization failed\n");
+	}
+	iowrite32(CSR_RUN | CSR_EN, par->mmio_base + LCDCSR);
+}
 
 static int vpoutfb_check_var(struct fb_var_screeninfo *var,
 			     struct fb_info *info)
@@ -171,6 +201,8 @@ static int vpoutfb_set_par(struct fb_info *info)
 	iowrite32(MODE_HDMI + par->color_fmt->hw_modenum,
 		  par->mmio_base + LCDMOD);
 	/* Finally, initialize and run the device */
+	iowrite32(INT_OUTFIFO,
+		  par->mmio_base + LCDMSK);
 	iowrite32(CSR_INIT | CSR_EN, par->mmio_base + LCDCSR);
 	for (i = 0; i < CLEAR_MSEC; i++) {
 		if (!(ioread32(par->mmio_base + LCDCSR) & CSR_INIT))
@@ -185,6 +217,23 @@ static int vpoutfb_set_par(struct fb_info *info)
 	if (par->hdmidata.client != NULL)
 		return it66121_init(&par->hdmidata, info);
 	return 0;
+}
+
+static irqreturn_t vpoutfb_irq_handler(int irq, void *dev_id)
+{
+	struct fb_info *info;
+	struct vpoutfb_par *par;
+	u32 irqstatus;
+
+	info = dev_id;
+	par = info->par;
+	irqstatus = ioread32(par->mmio_base + LCDINT);
+
+	if (irqstatus & INT_OUTFIFO)
+		tasklet_schedule(&par->reset_tasklet);
+	iowrite32(irqstatus, par->mmio_base + LCDINT);
+
+	return IRQ_HANDLED;
 }
 
 /*
@@ -372,7 +421,7 @@ static void vpoutfb_clocks_destroy(struct vpoutfb_par *par) { }
 
 static int vpoutfb_create(struct fb_info *info, struct platform_device *pdev)
 {
-	int ret;
+	int ret, irq;
 	struct vpoutfb_par *par;
 
 	par = info->par;
@@ -383,6 +432,17 @@ static int vpoutfb_create(struct fb_info *info, struct platform_device *pdev)
 	if (!par->mem_virt) {
 		ret = -ENOMEM;
 		dev_err(&pdev->dev, "DMA alloc failed");
+		return ret;
+	}
+	irq = platform_get_irq(pdev, 0);
+	if (irq < 0) {
+		dev_err(&pdev->dev, "Cannot parse IRQ from platform\n");
+		return irq;
+	}
+	ret = devm_request_irq(&pdev->dev, irq, vpoutfb_irq_handler,
+			       0, "vpoutfb", info);
+	if (ret) {
+		dev_err(&pdev->dev, "Cannot request IRQ handler\n");
 		return ret;
 	}
 	return 0;
@@ -417,6 +477,8 @@ static int vpoutfb_probe(struct platform_device *pdev)
 	par->mem_size = pdata.width * pdata.height *
 		pdata.format->bits_per_pixel / 8;
 
+	tasklet_init(&par->reset_tasklet, vpoutfb_hwreset,
+		     (unsigned long) info);
 	ret = vpoutfb_clocks_init(par, pdev);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "Clock alloc failed");
@@ -499,7 +561,6 @@ static int vpoutfb_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Unable to register vpoutfb: %d\n", ret);
 		goto error_cleanup;
 	}
-
 
 	dev_info(&pdev->dev, "fb%d: vpoutfb registered!\n", info->node);
 
