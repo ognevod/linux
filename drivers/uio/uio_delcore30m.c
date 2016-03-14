@@ -20,6 +20,7 @@
 #include <linux/stringify.h>
 #include <linux/pm_runtime.h>
 #include <linux/slab.h>
+#include <linux/clk-provider.h>
 
 #include <linux/of.h>
 #include <linux/of_platform.h>
@@ -32,6 +33,8 @@ struct uio_delcore30m_platdata {
 	spinlock_t lock;
 	unsigned long flags;
 	struct platform_device *pdev;
+	struct clk **clks;
+	int clk_count;
 };
 
 /* Bits in uio_delcore30m_platdata.flags */
@@ -99,6 +102,72 @@ static int uio_delcore30m_irqcontrol(struct uio_info *dev_info, s32 irq_on)
 	return 0;
 }
 
+static int uio_delcore30m_clk_init(struct uio_delcore30m_platdata *priv)
+{
+	struct device_node *np = priv->pdev->dev.of_node;
+	struct clk *clock;
+	int i, ret;
+
+	priv->clk_count = of_clk_get_parent_count(np);
+	if (priv->clk_count <= 0) {
+		dev_err(&priv->pdev->dev, "clocks count is invalid (%d)\n",
+			priv->clk_count);
+		return -ENXIO;
+	}
+
+	priv->clks = kcalloc(priv->clk_count, sizeof(struct clk *), GFP_KERNEL);
+	if (!priv->clks)
+		return -ENOMEM;
+
+	for (i = 0; i < priv->clk_count; i++) {
+		clock = of_clk_get(np, i);
+		if (IS_ERR(clock)) {
+			if (PTR_ERR(clock) == -EPROBE_DEFER) {
+				while (--i >= 0) {
+					if (priv->clks[i])
+						clk_put(priv->clks[i]);
+				}
+				kfree(priv->clks);
+				return -EPROBE_DEFER;
+			}
+			dev_err(&priv->pdev->dev, "clock %d not found: %ld\n",
+				i, PTR_ERR(clock));
+			return -ENXIO;
+		}
+		priv->clks[i] = clock;
+	}
+
+	for (i = 0; i < priv->clk_count; i++) {
+		ret = clk_prepare_enable(priv->clks[i]);
+		if (ret) {
+			dev_err(&priv->pdev->dev,
+				"failed to enable clock %d\n", i);
+			clk_put(priv->clks[i]);
+			priv->clks[i] = NULL;
+			return ret;
+		}
+	}
+
+	return 0;
+}
+
+static void uio_delcore30m_clk_destroy(struct uio_delcore30m_platdata *priv)
+{
+	int i;
+
+	if (!priv->clks)
+		return;
+
+	for (i = 0; i < priv->clk_count; i++) {
+		if (priv->clks[i]) {
+			clk_disable_unprepare(priv->clks[i]);
+			clk_put(priv->clks[i]);
+		}
+	}
+
+	kfree(priv->clks);
+}
+
 static int uio_delcore30m_probe(struct platform_device *pdev)
 {
 	struct uio_info *uioinfo = dev_get_platdata(&pdev->dev);
@@ -139,6 +208,12 @@ static int uio_delcore30m_probe(struct platform_device *pdev)
 	priv->flags = 0; /* interrupt is enabled to begin with */
 	priv->pdev = pdev;
 
+	ret = uio_delcore30m_clk_init(priv);
+	if (ret) {
+		dev_err(&pdev->dev, "clk init error\n");
+		return ret;
+	}
+
 	if (!uioinfo->irq) {
 		ret = platform_get_irq(pdev, 0);
 		uioinfo->irq = ret;
@@ -146,7 +221,7 @@ static int uio_delcore30m_probe(struct platform_device *pdev)
 			uioinfo->irq = UIO_IRQ_NONE;
 		else if (ret < 0) {
 			dev_err(&pdev->dev, "failed to get IRQ\n");
-			return ret;
+			goto error_clocks;
 		}
 	}
 
@@ -203,11 +278,15 @@ static int uio_delcore30m_probe(struct platform_device *pdev)
 	if (ret) {
 		dev_err(&pdev->dev, "unable to register uio device\n");
 		pm_runtime_disable(&pdev->dev);
-		return ret;
+		goto error_clocks;
 	}
 
 	platform_set_drvdata(pdev, priv);
 	return 0;
+
+error_clocks:
+	uio_delcore30m_clk_destroy(priv);
+	return ret;
 }
 
 static int uio_delcore30m_remove(struct platform_device *pdev)
@@ -219,6 +298,8 @@ static int uio_delcore30m_remove(struct platform_device *pdev)
 
 	priv->uioinfo->handler = NULL;
 	priv->uioinfo->irqcontrol = NULL;
+
+	uio_delcore30m_clk_destroy(priv);
 
 	return 0;
 }
