@@ -43,7 +43,9 @@ void vinc_neon_calculate_m_sat(void *matrix, s32 val);
 
 void vinc_neon_calculate_m_hue(void *matrix, s32 val);
 
-void vinc_neon_calculate_m_wb(u32 sum_r, u32 sum_g, u32 sum_b, void *matrix);
+void vinc_neon_wb_stat(u32 red, u32 green, u32 blue, s32 *cptr[]);
+
+void vinc_neon_calculate_m_wb(u32 rb, u32 bb, void *matrix);
 
 void vinc_neon_calculate_m_ck(void *matrix, s32 val);
 

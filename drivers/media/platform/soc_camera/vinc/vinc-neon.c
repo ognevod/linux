@@ -315,14 +315,25 @@ void vinc_neon_calculate_m_hue(void *matrix, s32 val)
 	};
 }
 
-void vinc_neon_calculate_m_wb(u32 sum_r, u32 sum_g, u32 sum_b, void *matrix)
+void vinc_neon_wb_stat(u32 red, u32 green, u32 blue, s32 *cptr[])
+{
+	double Kr, Kb;
+
+	Kr = (double)green / red;
+	Kb = (double)green / blue;
+
+	*cptr[0] = rint((Kr / (Kr + 1)) * 256 - 128);
+	*cptr[1] = rint((Kb / (Kb + 1)) * 256 - 128);
+}
+
+void vinc_neon_calculate_m_wb(u32 rb, u32 bb, void *matrix)
 {
 	struct matrix *wb = (struct matrix *)matrix;
 
 	*wb = (struct matrix) {
-		.coeff[0] = ((double) sum_g) / sum_r,
+		.coeff[0] = ((rb + 128) / 256.0) / (1 - (rb + 128) / 256.0),
 		.coeff[4] = 1,
-		.coeff[8] = ((double) sum_g) / sum_b
+		.coeff[8] = ((bb + 128) / 256.0) / (1 - (bb + 128) / 256.0)
 	};
 }
 
