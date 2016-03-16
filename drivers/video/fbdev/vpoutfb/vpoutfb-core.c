@@ -20,15 +20,12 @@
 #include <linux/dma-mapping.h>
 #include <linux/errno.h>
 #include <linux/fb.h>
-#include <linux/gpio.h>
-#include <linux/i2c.h>
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/platform_data/vpoutfb.h>
 #include <linux/clk-provider.h>
 #include <linux/of_platform.h>
-#include <linux/of_gpio.h>
 #include "vpoutfb.h"
 #include "it66121.h"
 
