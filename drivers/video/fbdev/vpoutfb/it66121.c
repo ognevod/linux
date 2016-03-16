@@ -64,10 +64,10 @@ int it66121_init(struct it66121_device_data *devdata,
 	int ret = 0, i;
 
 	devdata->client = of_find_i2c_device_by_node(output_node);
-	devdata->gpio_reset = devm_gpiod_get(&devdata->client->dev,
-					     "reset",
-					     GPIOF_OUT_INIT_HIGH |
-					     GPIOF_ACTIVE_LOW);
+	devdata->gpio_reset = gpiod_get(&devdata->client->dev,
+					"reset",
+					GPIOF_OUT_INIT_HIGH |
+					GPIOF_ACTIVE_LOW);
 	gpiod_direction_output(devdata->gpio_reset, 0);
 	it66121_reset(devdata);
 	/* Here and later: delays are so that errors do not occur */
@@ -144,3 +144,9 @@ void it66121_reset(struct it66121_device_data *devdata)
 	gpiod_set_value(devdata->gpio_reset, 1);
 	gpiod_set_value(devdata->gpio_reset, 0);
 };
+
+void it66121_remove(struct it66121_device_data *devdata)
+{
+	gpiod_put(devdata->gpio_reset);
+	put_device(&devdata->client->dev);
+}

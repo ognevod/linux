@@ -88,13 +88,15 @@ static int vpoutfb_setcolreg(u_int regno, u_int red, u_int green, u_int blue,
 static void vpoutfb_destroy(struct fb_info *info)
 {
 	struct vpoutfb_par *par;
-
 	par = info->par;
 	if (info->screen_base)
 		dma_free_coherent(info->dev, par->mem_size,
 				  par->mem_virt, par->mem_phys);
 	/* Reset HDMI device */
-	it66121_reset(&par->hdmidata);
+	if (par->hdmidata.client != NULL) {
+		it66121_reset(&par->hdmidata);
+		it66121_remove(&par->hdmidata);
+	}
 }
 
 static struct fb_ops vpoutfb_ops = {
@@ -181,24 +183,21 @@ static int vpoutfb_clocks_init(struct vpoutfb_par *par,
 	if (par->clk_count <= 0)
 		return 0;
 
-	par->clks = kcalloc(par->clk_count, sizeof(struct clk *), GFP_KERNEL);
+	par->clks = devm_kcalloc(&pdev->dev, par->clk_count,
+				 sizeof(struct clk *), GFP_KERNEL);
 	if (!par->clks)
 		return -ENOMEM;
 
 	for (i = 0; i < par->clk_count; i++) {
 		clock = of_clk_get(np, i);
 		if (IS_ERR(clock)) {
-			if (PTR_ERR(clock) == -EPROBE_DEFER) {
-				while (--i >= 0) {
-					if (par->clks[i])
-						clk_put(par->clks[i]);
-				}
-				kfree(par->clks);
-				return -EPROBE_DEFER;
-			}
-			dev_err(&pdev->dev, "%s: clock %d not found: %ld\n",
+			while (--i >= 0) {
+				if (par->clks[i])
+					clk_put(par->clks[i]);
+			    }
+			dev_err(&pdev->dev, "%s: clock %d error: %ld\n",
 				__func__, i, PTR_ERR(clock));
-			continue;
+			return PTR_ERR(clock);
 		}
 		par->clks[i] = clock;
 	}
@@ -212,6 +211,7 @@ static int vpoutfb_clocks_init(struct vpoutfb_par *par,
 					__func__, i, ret);
 				clk_put(par->clks[i]);
 				par->clks[i] = NULL;
+				return ret;
 			}
 		}
 	}
@@ -241,15 +241,33 @@ static int vpoutfb_clocks_init(struct vpoutfb_par *par,
 static void vpoutfb_clocks_destroy(struct vpoutfb_par *par) { }
 #endif
 
+static int vpoutfb_create(struct fb_info *info, struct platform_device *pdev)
+{
+	int ret;
+	struct vpoutfb_par *par;
+
+	par = info->par;
+	par->mem_virt = dma_alloc_coherent(&pdev->dev,
+					   par->mem_size,
+					   &par->mem_phys,
+					   GFP_KERNEL);
+	if (!par->mem_virt) {
+		ret = -ENOMEM;
+		dev_err(&pdev->dev, "DMA alloc failed");
+		return ret;
+	}
+	return 0;
+}
+
 static int vpoutfb_probe(struct platform_device *pdev)
 {
 	int ret;
 	u16 hsw, hgate, hgdel, hlen, vsw, vgate, vgdel, vlen;
 	u32 div;
 	struct vpoutfb_platform_data pdata;
-	struct fb_info *info;
+	struct fb_info *info = NULL;
+	struct resource *devres = NULL;
 	struct vpoutfb_par *par;
-	struct resource *devres;
 
 	if (fb_get_options("vpoutfb", NULL))
 		return -ENODEV;
@@ -261,36 +279,41 @@ static int vpoutfb_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	devres = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!devres) {
-		dev_err(&pdev->dev, "No memory resource\n");
-		return -EINVAL;
-	}
-
 	info = framebuffer_alloc(sizeof(struct vpoutfb_par), &pdev->dev);
-	if (!info)
+	if (!info) {
+		dev_err(&pdev->dev, "FB alloc failed");
 		return -ENOMEM;
+	}
 	platform_set_drvdata(pdev, info);
-
 	par = info->par;
+
 	par->mem_size = pdata.width * pdata.height *
 		pdata.format->bits_per_pixel / 8;
+
 	ret = vpoutfb_clocks_init(par, pdev);
-	if (ret < 0)
-		goto error_fb_release;
+	if (ret < 0) {
+		dev_err(&pdev->dev, "Clock alloc failed");
+		goto error_cleanup;
+	}
+
+	devres = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+
+	if (!devres) {
+		ret = -EINVAL;
+		dev_err(&pdev->dev, "No memory resource\n");
+		goto error_cleanup;
+	}
+
 	par->mmio_base = devm_ioremap_resource(&pdev->dev, devres);
 	if (IS_ERR(par->mmio_base)) {
+		ret = PTR_ERR(par->mmio_base);
 		dev_err(&pdev->dev, "Cannot remap mem resource\n");
-		goto error_clocks;
+		goto error_cleanup;
 	}
-	par->mem_virt = dma_alloc_coherent(&pdev->dev,
-					   par->mem_size,
-					   &par->mem_phys,
-					   GFP_KERNEL);
-	if (!par->mem_virt) {
-		ret = -ENOMEM;
-		goto error_clocks;
-	}
+
+	ret = vpoutfb_create(info, pdev);
+	if (ret)
+		goto error_cleanup;
 
 	info->fix = vpoutfb_fix;
 	info->fix.smem_start = par->mem_phys;
@@ -312,7 +335,7 @@ static int vpoutfb_probe(struct platform_device *pdev)
 	info->apertures = alloc_apertures(1);
 	if (!info->apertures) {
 		ret = -ENOMEM;
-		goto error_unmap;
+		goto error_cleanup;
 	}
 	info->apertures->ranges[0].base = info->fix.smem_start;
 	info->apertures->ranges[0].size = info->fix.smem_len;
@@ -333,7 +356,8 @@ static int vpoutfb_probe(struct platform_device *pdev)
 		div = 2; /* 1920x1080 CEA - 16 */
 	} else {
 		dev_err(&pdev->dev, "Unsupported resolution\n");
-		goto error_unmap;
+		ret = -EINVAL;
+		goto error_cleanup;
 	}
 	iowrite32(CSR_EN, par->mmio_base + LCDHT0);
 	iowrite32(hgdel << 16 | hsw, par->mmio_base + LCDHT0);
@@ -360,7 +384,7 @@ static int vpoutfb_probe(struct platform_device *pdev)
 	ret = register_framebuffer(info);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "Unable to register vpoutfb: %d\n", ret);
-		goto error_unmap;
+		goto error_cleanup;
 	}
 
 	if (!strcmp(pdata.output_name, "ite,it66121")) {
@@ -369,7 +393,7 @@ static int vpoutfb_probe(struct platform_device *pdev)
 			dev_err(&pdev->dev,
 				"Unable to init HDMI adapter: %d\n",
 				ret);
-			goto error_unmap;
+			goto error_cleanup;
 		}
 	}
 
@@ -377,13 +401,13 @@ static int vpoutfb_probe(struct platform_device *pdev)
 
 	return 0;
 
-error_unmap:
-	dma_free_coherent(&pdev->dev, par->mem_size,
-			  par->mem_virt, par->mem_phys);
-error_clocks:
+error_cleanup:
+	if (par->mem_virt)
+		dma_free_coherent(&pdev->dev, par->mem_size,
+				  par->mem_virt, par->mem_phys);
 	vpoutfb_clocks_destroy(par);
-error_fb_release:
-	framebuffer_release(info);
+	if (info)
+		framebuffer_release(info);
 	return ret;
 }
 
