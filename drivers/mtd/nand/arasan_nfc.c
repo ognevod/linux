@@ -10,6 +10,7 @@
  * option) any later version.
  */
 
+#include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
@@ -206,6 +207,8 @@ struct anfc {
 	struct completion bufrdy;
 	struct completion xfercomp;
 	struct nand_ecclayout ecclayout;
+
+	struct clk *hclk;
 };
 
 static u8 anfc_dma_size(u32 bufsize)
@@ -840,9 +843,28 @@ static int anfc_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+
+	/* Try to get and enable clk */
+	nfc->hclk = devm_clk_get(&pdev->dev, NULL);
+	if (IS_ERR(nfc->hclk)) {
+		err = PTR_ERR(nfc->hclk);
+		dev_err(&pdev->dev,
+			"failed to get Arasan NFC hclk (%u)\n", err);
+		return err;
+	}
+
+	err = clk_prepare_enable(nfc->hclk);
+	if (err) {
+		dev_err(&pdev->dev,
+			"failed to enable Arasan NFC hclk (%u)\n", err);
+		return err;
+	}
+
 	nfc->base = devm_ioremap_resource(&pdev->dev, res);
-	if (IS_ERR(nfc->base))
-		return PTR_ERR(nfc->base);
+	if (IS_ERR(nfc->base)) {
+		err = PTR_ERR(nfc->base);
+		goto err_clock;
+	}
 
 	mtd = &nfc->mtd;
 	nand_chip = &nfc->chip;
@@ -872,15 +894,17 @@ static int anfc_probe(struct platform_device *pdev)
 	err = devm_request_irq(&pdev->dev, nfc->irq, anfc_irq_handler,
 			       0, "arasannfc", nfc);
 	if (err)
-		return err;
+		goto err_clock;
 
 	if (nand_scan_ident(mtd, 1, NULL)) {
 		dev_err(&pdev->dev, "nand_scan_ident for NAND failed\n");
-		return -ENXIO;
+		err = -ENXIO;
+		goto err_clock;
 	}
 	if (mtd->writesize > SZ_8K) {
 		dev_err(&pdev->dev, "Page size too big for controller\n");
-		return -EINVAL;
+		err = -EINVAL;
+		goto err_clock;
 	}
 	if (!nand_chip->onfi_params.addr_cycles) {
 		/* Good estimate in case ONFI ident doesn't work */
@@ -891,18 +915,25 @@ static int anfc_probe(struct platform_device *pdev)
 		nfc->caddr_cycles =
 			(nand_chip->onfi_params.addr_cycles >> 4) & 0xF;
 	}
-	if (anfc_ecc_init(mtd, &nand_chip->ecc))
-		return -ENXIO;
+	if (anfc_ecc_init(mtd, &nand_chip->ecc)) {
+		err = -ENXIO;
+		goto err_clock;
+	}
 
 	if (nand_scan_tail(mtd)) {
 		dev_err(&pdev->dev, "nand_scan_tail for NAND failed\n");
-		return -ENXIO;
+		err = -ENXIO;
+		goto err_clock;
 	}
 
 	ppdata.of_node = pdev->dev.of_node;
 
 	mtd_device_parse_register(&nfc->mtd, NULL, &ppdata, NULL, 0);
 	return 0;
+
+err_clock:
+	clk_disable_unprepare(nfc->hclk);
+	return err;
 }
 
 static int anfc_remove(struct platform_device *pdev)
@@ -910,6 +941,8 @@ static int anfc_remove(struct platform_device *pdev)
 	struct anfc *nfc = platform_get_drvdata(pdev);
 
 	nand_release(&nfc->mtd);
+
+	clk_disable_unprepare(nfc->hclk);
 
 	return 0;
 }
