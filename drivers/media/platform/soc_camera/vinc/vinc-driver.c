@@ -452,6 +452,7 @@ struct vinc_dev {
 	int csi2_lanes;
 	enum vinc_input_format input_format;
 	u32 bayer_mode;
+	u32 reset_active;
 
 	struct vinc_cluster cluster;
 	struct v4l2_ctrl *test_pattern;
@@ -2548,8 +2549,10 @@ static int vinc_probe(struct platform_device *pdev)
 {
 	struct vinc_dev *priv;
 	struct resource *res;
+	struct device_node *np = pdev->dev.of_node;
 	int err;
 	u32 id;
+	u32 cmos_ctr;
 
 	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
@@ -2564,6 +2567,10 @@ static int vinc_probe(struct platform_device *pdev)
 	err = vinc_clk_init(priv, pdev);
 	if (err)
 		return err;
+
+	priv->reset_active = 1;
+	if (np)
+		of_property_read_u32(np, "reset-active", &priv->reset_active);
 
 	priv->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(priv->base))
@@ -2614,8 +2621,11 @@ static int vinc_probe(struct platform_device *pdev)
 	tasklet_init(&priv->stat_tasklet, vinc_stat_tasklet,
 		     (unsigned long)priv);
 
-	vinc_write(priv, CMOS_CTR(0), CMOS_CTR_PCLK_EN | CMOS_CTR_PCLK_SRC(0) |
-			CMOS_CTR_CLK_DIV(4) | CMOS_CTR_FSYNC_EN);
+	cmos_ctr = CMOS_CTR_PCLK_EN | CMOS_CTR_PCLK_SRC(0) |
+			CMOS_CTR_CLK_DIV(4) | CMOS_CTR_FSYNC_EN;
+	if (priv->reset_active == 0)
+		cmos_ctr |= CMOS_CTR_RESET;
+	vinc_write(priv, CMOS_CTR(0), cmos_ctr);
 	vinc_write(priv, CMOS_TIMER_HIGH(0), 1);
 	vinc_write(priv, CMOS_TIMER_LOW(0), 1);
 
