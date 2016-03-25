@@ -686,8 +686,27 @@ static void vinc_configure_input(struct vinc_dev *priv)
 		vinc_write(priv, CSI2_TRIM0(0), 0x02000000);
 		vinc_write(priv, CSI2_DEVICE_READY(0), 0x1);
 		vinc_write(priv, STREAM_INP_CFG(0), 0x2);
+	} else if (priv->video_source == V4L2_MBUS_PARALLEL) {
+		vinc_write(priv, PPORT_INP_MUX_CFG, 0);
+		vinc_write(priv, PPORT_CFG(0), PORT_CFG_PIXEL_MODE(1));
+		vinc_write(priv, PPORT_CFG(1), PORT_CFG_PIXEL_MODE(0));
+		vinc_write(priv, PPORT_CFG(2), PORT_CFG_PIXEL_MODE(0));
+		if (priv->input_format == BAYER) {
+			vinc_write(priv, PINTERFACE_CFG(0),
+					PINTERFACE_CFG_CYCLE_NUM(1) |
+					PINTERFACE_CFG_PIXEL_NUM_EVEN(1) |
+					PINTERFACE_CFG_PORT_NUM_SYNC(0));
+			vinc_write(priv, PINTERFACE_CCMOV(0, 0), 0x1);
+		} else
+			dev_err(priv->ici.v4l2_dev.dev, "Unknown input format %#x",
+				priv->input_format);
+
+		vinc_write(priv, PINTERFACE_HVFSYNC(0),
+				PINTERFACE_HVFSYNC_DELAY_V(0x11) |
+				PINTERFACE_HVFSYNC_PRE_DELAY_V(1));
+		vinc_write(priv, STREAM_INP_CFG(0), 0x0);
 	} else
-		dev_err(priv->ici.v4l2_dev.dev, "Unknown input format %#x",
+		dev_err(priv->ici.v4l2_dev.dev, "Unknown input source %#x",
 			priv->video_source);
 }
 
@@ -704,29 +723,36 @@ static int vinc_start_streaming(struct vb2_queue *q, unsigned int count)
 
 	dev_dbg(icd->parent, "Start streaming (count: %u)\n", count);
 
-	/* Workaround for mcom issue rf#1361 (see errata)
-	 * Check that VINC captures video and reenable MIPI port otherwise. */
-	do {
-		vinc_write(priv, CSI2_PORT_SYS_CTR(0),
-			   csi2_port_sys_ctr & ~CSI2_PORT_SYS_CTR_ENABLE);
-		vinc_write(priv, CSI2_PORT_SYS_CTR(0),
-			   csi2_port_sys_ctr | CSI2_PORT_SYS_CTR_ENABLE);
-		vinc_configure_input(priv);
-
-		timeout = jiffies + msecs_to_jiffies(30);
+	if (priv->video_source == V4L2_MBUS_CSI2) {
+		/* Workaround for mcom issue rf#1361 (see errata)
+		 * Check that VINC captures video and reenable MIPI port
+		 * otherwise. */
 		do {
-			csi2_intr = vinc_read(priv, CSI2_INTR(0));
-			if (!(csi2_intr & BIT(9)))
-				schedule();
-			else
-				break;
-		} while (time_before(jiffies, timeout));
-	} while (!(csi2_intr & BIT(9)) && retry_count--);
+			vinc_write(priv, CSI2_PORT_SYS_CTR(0),
+				   csi2_port_sys_ctr &
+				   ~CSI2_PORT_SYS_CTR_ENABLE);
+			vinc_write(priv, CSI2_PORT_SYS_CTR(0),
+				   csi2_port_sys_ctr |
+				   CSI2_PORT_SYS_CTR_ENABLE);
+			vinc_configure_input(priv);
 
-	if (retry_count < 0) {
-		dev_err(icd->parent, "Can not receive video from sensor\n");
-		return -EIO;
-	}
+			timeout = jiffies + msecs_to_jiffies(30);
+			do {
+				csi2_intr = vinc_read(priv, CSI2_INTR(0));
+				if (!(csi2_intr & BIT(9)))
+					schedule();
+				else
+					break;
+			} while (time_before(jiffies, timeout));
+		} while (!(csi2_intr & BIT(9)) && retry_count--);
+
+		if (retry_count < 0) {
+			dev_err(icd->parent,
+				"Can not receive video from sensor\n");
+			return -EIO;
+		}
+	} else if (priv->video_source == V4L2_MBUS_PARALLEL)
+		vinc_configure_input(priv);
 
 	vinc_write(priv, STREAM_DMA_WR_CTR(0, 0), DMA_WR_CTR_FRAME_END_EN |
 			DMA_WR_CTR_DMA_EN);
@@ -1769,7 +1795,8 @@ static int vinc_get_formats(struct soc_camera_device *icd, unsigned int idx,
 		if (ret >= 0) {
 			priv->video_source = mbus_cfg.type;
 
-			if (mbus_cfg.type != V4L2_MBUS_CSI2) {
+			if (mbus_cfg.type != V4L2_MBUS_CSI2 &&
+					mbus_cfg.type != V4L2_MBUS_PARALLEL) {
 				dev_err(dev,
 					"Interface type %d is not supported\n",
 					mbus_cfg.type);
