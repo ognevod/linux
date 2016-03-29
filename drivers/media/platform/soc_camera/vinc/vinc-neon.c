@@ -21,7 +21,7 @@
      for Y     || 0  1  2
      for Cb    || 3  4  5
      for Cr    || 6  7  8 */
-const struct matrix rgb_to_ycbcr_m[3][2] = {
+const struct matrix m_ycbcr[3][2] = {
 	/* BT 601, LIMITED RANGE */
 	[0][0] = {
 		.coeff[0] =  0.504129411764706,
@@ -105,7 +105,7 @@ const struct matrix rgb_to_ycbcr_m[3][2] = {
  * 0: Y offset
  * 1: Cb offset
  * 2: Cr offset */
-const struct vector rgb_to_ycbcr_v[3][2] = {
+const struct vector v_ycbcr[3][2] = {
 	/* BT 601, LIMITED RANGE */
 	[0][0] = {
 		.offset[0] = 256,
@@ -156,7 +156,7 @@ const struct vector rgb_to_ycbcr_v[3][2] = {
      for G     || 0  1  2
      for B     || 3  4  5
      for R     || 6  7  8 */
-const struct matrix ycbcr_to_rgb_m[3][2] = {
+const struct matrix m_rgb[3][2] = {
 	/* BT 601, LIMITED RANGE */
 	[0][0] = {
 		.coeff[0] =  1.16438356164384,
@@ -240,7 +240,7 @@ const struct matrix ycbcr_to_rgb_m[3][2] = {
  * 0: G offset
  * 1: B offset
  * 2: R offset */
-const struct vector ycbcr_to_rgb_v[3][2] = {
+const struct vector v_rgb[3][2] = {
 	/* BT 601, LIMITED RANGE */
 	[0][0] = {
 		.offset[0] =  2169.20471987651,
@@ -307,7 +307,7 @@ void vinc_calculate_v_bri(void *vector, s32 val)
 		v->offset[i] = 0;
 }
 
-void vinc_calculate_wb_matrix(u32 sum_r, u32 sum_g, u32 sum_b,
+void vinc_calculate_m_wb(u32 sum_r, u32 sum_g, u32 sum_b,
 			      void *matrix)
 {
 	struct matrix *wb = (struct matrix *)matrix;
@@ -375,48 +375,48 @@ static void vxv_add(struct vector *sum, const struct vector *v1,
 }
 
 /*  Calculate CC coefficient matrix. Uses controls matrices and vectors */
-static void cc_matrix_calc(struct matrix *coeff, void *coeffs[], u8 vinc_enc,
-				u8 vinc_qnt)
+static void cc_matrix_calc(struct matrix *coeff, void *ctrl_privs[],
+				u8 vinc_enc, u8 vinc_qnt)
 {
 	struct matrix tmp1;
 	struct matrix tmp2;
 
-	struct matrix *wb = (struct matrix *)coeffs[0];
+	struct matrix *wb = (struct matrix *)ctrl_privs[0];
 
 	/* V4L2_CID_DO_WHITE_BALANCE control matrix and RGB->YCbCr matrix
 	 * multiplication */
-	mxm_mult(&tmp2, &rgb_to_ycbcr_m[vinc_enc][vinc_qnt], wb);
+	mxm_mult(&tmp2, &m_ycbcr[vinc_enc][vinc_qnt], wb);
 
 	/* YCbCr->RGB matrix multiplication */
-	mxm_mult(&tmp1, &ycbcr_to_rgb_m[vinc_enc][vinc_qnt], &tmp2);
+	mxm_mult(&tmp1, &m_rgb[vinc_enc][vinc_qnt], &tmp2);
 
 	*coeff = tmp1;
 }
 
 /* Calculate CC offset vector according to control matrices and vectors */
-static void cc_vector_calc(struct vector *offset, void *coeffs[], u8 vinc_enc,
-				u8 vinc_qnt)
+static void cc_vector_calc(struct vector *offset, void *ctrl_privs[],
+				u8 vinc_enc, u8 vinc_qnt)
 {
 	struct vector tmp1;
 	struct vector tmp2;
 
-	struct vector *v_bri = (struct vector *)coeffs[1];
+	struct vector *v_bri = (struct vector *)ctrl_privs[1];
 
 	/* RGB->YCbCr vector and V4L2_CID_BRIGHTNESS control vector addition */
-	vxv_add(&tmp2, &rgb_to_ycbcr_v[vinc_enc][vinc_qnt], v_bri);
+	vxv_add(&tmp2, &v_ycbcr[vinc_enc][vinc_qnt], v_bri);
 
 	/* YCbCr->RGB matrix multiplication */
-	mxv_mult(&tmp1, &ycbcr_to_rgb_m[vinc_enc][vinc_qnt], &tmp2);
+	mxv_mult(&tmp1, &m_rgb[vinc_enc][vinc_qnt], &tmp2);
 
 	/* YCbCr->RGB vector addition */
-	vxv_add(&tmp2, &ycbcr_to_rgb_v[vinc_enc][vinc_qnt], &tmp1);
+	vxv_add(&tmp2, &v_rgb[vinc_enc][vinc_qnt], &tmp1);
 
 	*offset = tmp2;
 }
 
 /* Color Correction coefficient matrix, offset vector and scaling register
  * calculation routine */
-void vinc_calculate_cc(void *coeffs[], enum v4l2_ycbcr_encoding ycbcr_enc,
+void vinc_calculate_cc(void *ctrl_privs[], enum v4l2_ycbcr_encoding ycbcr_enc,
 		       enum v4l2_quantization quantization, struct vinc_cc *cc)
 {
 	struct matrix coeff;
@@ -457,8 +457,8 @@ void vinc_calculate_cc(void *coeffs[], enum v4l2_ycbcr_encoding ycbcr_enc,
 		break;
 	}
 
-	cc_matrix_calc(&coeff, coeffs, vinc_enc, vinc_qnt);
-	cc_vector_calc(&offset, coeffs, vinc_enc, vinc_qnt);
+	cc_matrix_calc(&coeff, ctrl_privs, vinc_enc, vinc_qnt);
+	cc_vector_calc(&offset, ctrl_privs, vinc_enc, vinc_qnt);
 	/*  Scaling calculation */
 	for (i = 0; i < VINC_CC_COEFF_COUNT; i++)
 		if ((u16)fabs(coeff.coeff[i]) > max_coeff)

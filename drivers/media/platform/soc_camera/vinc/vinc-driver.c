@@ -1047,7 +1047,7 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 
 			add = priv->cluster.stat.add[3]->p_cur.p;
 			kernel_neon_begin();
-			vinc_calculate_wb_matrix(add->sum_r,
+			vinc_calculate_m_wb(add->sum_r,
 				add->sum_g, add->sum_b, cc->dowb->priv);
 			kernel_neon_end();
 		}
@@ -1058,11 +1058,11 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 			kernel_neon_end();
 		}
 		if (std_is_new) {
-			void *coeffs[] = { cc->dowb->priv,
+			void *ctrl_privs[] = { cc->dowb->priv,
 					   cc->brightness->priv };
 			kernel_neon_begin();
 
-			vinc_calculate_cc(coeffs, priv->ycbcr_enc,
+			vinc_calculate_cc(ctrl_privs, priv->ycbcr_enc,
 					  priv->quantization, cc->cc->p_cur.p);
 			kernel_neon_end();
 
@@ -1763,7 +1763,7 @@ static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 	priv->cluster.cc.dowb->priv = devm_kmalloc(priv->ici.v4l2_dev.dev,
 					sizeof(struct matrix), GFP_KERNEL);
 	kernel_neon_begin();
-	vinc_calculate_wb_matrix(1, 1, 1, priv->cluster.cc.dowb->priv);
+	vinc_calculate_m_wb(1, 1, 1, priv->cluster.cc.dowb->priv);
 	kernel_neon_end();
 	return hdl->error;
 }
