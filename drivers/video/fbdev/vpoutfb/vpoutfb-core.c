@@ -474,8 +474,10 @@ static int vpoutfb_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, info);
 	par = info->par;
 
-	par->mem_size = pdata.width * pdata.height *
-		pdata.format->bits_per_pixel / 8;
+	par->mem_size = MAX_BUFSIZE;
+	/* We don't allocate for modes > 1080p since bigger resolutions
+	 * put more of a stress on RAM and stall out other tasks.
+	 */
 
 	tasklet_init(&par->reset_tasklet, vpoutfb_hwreset,
 		     (unsigned long) info);
