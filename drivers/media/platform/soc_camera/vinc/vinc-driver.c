@@ -1173,14 +1173,8 @@ static int vinc_try_ctrl(struct v4l2_ctrl *ctrl)
 	int i;
 
 	switch (ctrl->id) {
-	case V4L2_CID_CT_ENABLE:
-	case V4L2_CID_DR_ENABLE:
-		return (u32)ctrl->val < 2 ? 0 : -ERANGE;
 	case V4L2_CID_BAD_CORRECTION_ENABLE:
 		bp = (struct vinc_cluster_bp *)ctrl->cluster;
-		if ((u32)bp->enable->val > 1)
-			return -ERANGE;
-
 		if (bp->pix->is_new) {
 			struct vinc_bad_pixel *pixel = bp->pix->p_new.p;
 
@@ -1213,9 +1207,6 @@ static int vinc_try_ctrl(struct v4l2_ctrl *ctrl)
 		return 0;
 	case V4L2_CID_GAMMA_CURVE_ENABLE:
 		gamma = (struct vinc_cluster_gamma *)ctrl->cluster;
-		if ((u32)gamma->enable->val > 1)
-			return -ERANGE;
-
 		if (gamma->curve->is_new) {
 			gc = gamma->curve->p_new.p;
 			for (i = 0; i < CTRL_GC_ELEMENTS_COUNT; i++) {
@@ -1244,6 +1235,8 @@ static int vinc_try_ctrl(struct v4l2_ctrl *ctrl)
 				return -ERANGE;
 		}
 		return 0;
+	case V4L2_CID_CT_ENABLE:
+	case V4L2_CID_DR_ENABLE:
 	case V4L2_CID_CC_ENABLE:
 	case V4L2_CID_TEST_PATTERN:
 		return 0;
