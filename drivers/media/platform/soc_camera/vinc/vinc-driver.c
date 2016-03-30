@@ -370,6 +370,7 @@
 /* Bits for STREAM_CTR register */
 #define STREAM_CTR_STREAM0_ENABLE	BIT(0)
 #define STREAM_CTR_STREAM1_ENABLE	BIT(1)
+#define STREAM_CTR_STREAM_ENABLE(n)	BIT(n)
 #define STREAM_CTR_DMA_CHANNELS_ENABLE	BIT(8)
 
 #define CTRL_BAD_PIXELS_COUNT		4096
@@ -433,13 +434,7 @@ struct vinc_cluster {
 	struct vinc_cluster_stat stat;
 };
 
-struct vinc_dev {
-	struct soc_camera_host ici;
-
-	int irq_vio;
-	int irq_s0;
-	int irq_s1;
-	void __iomem *base;
+struct vinc_stream {
 	struct tasklet_struct stat_tasklet;
 
 	spinlock_t lock;		/* Protects video buffer lists */
@@ -453,7 +448,6 @@ struct vinc_dev {
 	int csi2_lanes;
 	enum vinc_input_format input_format;
 	u32 bayer_mode;
-	u32 reset_active;
 
 	struct vinc_cluster cluster;
 	struct v4l2_ctrl *test_pattern;
@@ -467,6 +461,20 @@ struct vinc_dev {
 	enum v4l2_quantization quantization;
 
 	int sequence;
+
+	u8 devnum;
+};
+
+struct vinc_dev {
+	struct soc_camera_host ici;
+
+	int irq_vio;
+	int irq_stream[2];
+	void __iomem *base;
+
+	struct vinc_stream stream[2];
+
+	u32 reset_active;
 
 	struct clk *pclk;
 	struct clk *aclk;
@@ -546,7 +554,7 @@ static int vinc_queue_setup(struct vb2_queue *vq,
 	dev_dbg(icd->parent, "%s: image_size=%d\n", __func__,
 		icd->sizeimage);
 
-	alloc_ctxs[0] = priv->alloc_ctx;
+	alloc_ctxs[0] = priv->stream[icd->devnum].alloc_ctx;
 
 	if (memory_per_stream) {
 		max_count = memory_per_stream / icd->sizeimage;
@@ -568,32 +576,37 @@ static int vinc_buf_prepare(struct vb2_buffer *vb)
 	return 0;
 }
 
-static void vinc_start_capture(struct vinc_dev *priv)
+static void vinc_start_capture(struct vinc_dev *priv,
+			       struct soc_camera_device *icd)
 {
 	dma_addr_t phys_addr_top;
-	u32 stream_ctr = vinc_read(priv, STREAM_CTR);
+	const u8 devnum = icd->devnum;
+	struct vinc_stream * const stream = &priv->stream[devnum];
+	u32 wr_ctr = vinc_read(priv, STREAM_DMA_WR_CTR(devnum, 0));
 
-	stream_ctr &= ~STREAM_CTR_DMA_CHANNELS_ENABLE;
-	vinc_write(priv, STREAM_CTR, stream_ctr);
-	if (!priv->active)
+	wr_ctr &= ~DMA_WR_CTR_DMA_EN;
+	vinc_write(priv, STREAM_DMA_WR_CTR(devnum, 0), wr_ctr);
+	if (!stream->active)
 		return;
-	phys_addr_top = vb2_dma_contig_plane_dma_addr(priv->active, 0);
-	switch (priv->ici.icd->current_fmt->host_fmt->fourcc) {
+	phys_addr_top = vb2_dma_contig_plane_dma_addr(stream->active, 0);
+	switch (icd->current_fmt->host_fmt->fourcc) {
 	case V4L2_PIX_FMT_BGR32:
-		vinc_write(priv, STREAM_DMA_FBUF_BASE(0, 0, 0), phys_addr_top);
+		vinc_write(priv, STREAM_DMA_FBUF_BASE(devnum, 0, 0),
+			   phys_addr_top);
 		break;
 	case V4L2_PIX_FMT_M420:
-		vinc_write(priv, STREAM_DMA_FBUF_BASE(0, 0, 0),
-			   phys_addr_top + (priv->crop2.c.width << 1));
-		vinc_write(priv, STREAM_DMA_FBUF_BASE(0, 0, 1), phys_addr_top);
+		vinc_write(priv, STREAM_DMA_FBUF_BASE(devnum, 0, 0),
+			   phys_addr_top + (stream->crop2.c.width << 1));
+		vinc_write(priv, STREAM_DMA_FBUF_BASE(devnum, 0, 1),
+			   phys_addr_top);
 		break;
 	default:
 		dev_err(priv->ici.v4l2_dev.dev, "Unknown output fourcc %#x",
-			priv->ici.icd->current_fmt->host_fmt->fourcc);
+			icd->current_fmt->host_fmt->fourcc);
 		return;
 	}
-	stream_ctr |= STREAM_CTR_DMA_CHANNELS_ENABLE;
-	vinc_write(priv, STREAM_CTR, stream_ctr);
+	wr_ctr |= DMA_WR_CTR_DMA_EN;
+	vinc_write(priv, STREAM_DMA_WR_CTR(devnum, 0), wr_ctr);
 }
 
 static void vinc_buf_queue(struct vb2_buffer *vb)
@@ -604,6 +617,8 @@ static void vinc_buf_queue(struct vb2_buffer *vb)
 	struct vinc_dev *priv = ici->priv;
 	struct vinc_buffer *buf = to_vinc_vb(vb);
 	unsigned long size = icd->sizeimage;
+	const u8 devnum = icd->devnum;
+	struct vinc_stream * const stream = &priv->stream[devnum];
 
 	dev_dbg(icd->parent, "Add buffer #%u to queue\n",
 		buf->vb.v4l2_buf.index);
@@ -615,24 +630,29 @@ static void vinc_buf_queue(struct vb2_buffer *vb)
 	}
 	vb2_set_plane_payload(vb, 0, size);
 
-	spin_lock_irq(&priv->lock);
-	list_add_tail(&buf->queue, &priv->capture);
-	if (!priv->active) {
-		priv->active = vb;
-		vinc_start_capture(priv);
+	spin_lock_irq(&stream->lock);
+	list_add_tail(&buf->queue, &stream->capture);
+	if (!stream->active) {
+		stream->active = vb;
+		vinc_start_capture(priv, icd);
 	}
-	spin_unlock_irq(&priv->lock);
+	spin_unlock_irq(&stream->lock);
 }
 
-static void vinc_configure_input(struct vinc_dev *priv)
+static void vinc_configure_input(struct vinc_stream *stream)
 {
-	if (priv->test_pattern->val) {
+	const u8 devnum = stream->devnum;
+	struct vinc_dev *priv = container_of(stream, struct vinc_dev,
+					     stream[devnum]);
+
+	if (stream->test_pattern->val) {
 		u32 test_src = 0;
 
-		test_src |= priv->crop1.c.width + priv->crop1.c.left;
-		test_src |= (priv->crop1.c.height + priv->crop1.c.top) << 12;
+		test_src |= stream->crop1.c.width + stream->crop1.c.left;
+		test_src |= (stream->crop1.c.height +
+				stream->crop1.c.top) << 12;
 		test_src |= 5 << 24;
-		test_src |= (priv->test_pattern->val - 1) << 29;
+		test_src |= (stream->test_pattern->val - 1) << 29;
 
 		vinc_write(priv, PPORT_INP_MUX_CFG, 0x101);
 		vinc_write(priv, PPORT_CFG(0),
@@ -651,68 +671,68 @@ static void vinc_configure_input(struct vinc_dev *priv)
 				PINTERFACE_HVFSYNC_DELAY_V(0x11) |
 				PINTERFACE_HVFSYNC_PRE_DELAY_V(1));
 		vinc_write(priv, STREAM_INP_CFG(0), 0x0);
-	} else if (priv->video_source == V4L2_MBUS_CSI2) {
+	} else if (stream->video_source == V4L2_MBUS_CSI2) {
 		vinc_write(priv, PPORT_INP_MUX_CFG, 0x0);
 		vinc_write(priv, PPORT_CFG(0), 0x0);
 		vinc_write(priv, PPORT_CFG(1), 0x0);
 		vinc_write(priv, PPORT_CFG(2), 0x0);
 
-		vinc_write(priv, CSI2_DEVICE_READY(0), 0x0);
-		vinc_write(priv, CSI2_INTR(0), 0x0007FFFF);
-		vinc_write(priv, CSI2_PORT_GENFIFO_CTR(0), 0x0);
+		vinc_write(priv, CSI2_DEVICE_READY(devnum), 0x0);
+		vinc_write(priv, CSI2_INTR(devnum), 0x0007FFFF);
+		vinc_write(priv, CSI2_PORT_GENFIFO_CTR(devnum), 0x0);
 
 		/* 1lane, timeout=max */
-		vinc_write(priv, CSI2_FUNC_PROG(0), 0x1ffffc |
-				((priv->csi2_lanes - 1) & 0x3));
-		vinc_write(priv, CSI2_DPHY_TIM3(0),
+		vinc_write(priv, CSI2_FUNC_PROG(devnum), 0x1ffffc |
+				((stream->csi2_lanes - 1) & 0x3));
+		vinc_write(priv, CSI2_DPHY_TIM3(devnum),
 			   CSI2_TIM3_CLN_CNT_LPX(0xBF) |
 			   CSI2_TIM3_DLN_CNT_LPX(0x12));
-		vinc_write(priv, CSI2_SYNC_COUNT(0), 0x14141414);
-		vinc_write(priv, CSI2_RCV_COUNT(0), 0x04040404);
+		vinc_write(priv, CSI2_SYNC_COUNT(devnum), 0x14141414);
+		vinc_write(priv, CSI2_RCV_COUNT(devnum), 0x04040404);
 
-		vinc_write(priv, CSI2_FSLS(0), 0x2);
-		vinc_write(priv, CSI2_LSDV(0), 0x2);
-		vinc_write(priv, CSI2_DVLE(0), 0x2);
-		vinc_write(priv, CSI2_LEFE(0), 0x2);
-		vinc_write(priv, CSI2_FEFS(0), 0x2);
-		vinc_write(priv, CSI2_LELS(0), 0x4);
-		vinc_write(priv, CSI2_LOOP_BACK(0), 0x0);
-		vinc_write(priv, CSI2_RAW8(0), 0x0);
-		vinc_write(priv, CSI2_DPHY_TIM1(0),
+		vinc_write(priv, CSI2_FSLS(devnum), 0x2);
+		vinc_write(priv, CSI2_LSDV(devnum), 0x2);
+		vinc_write(priv, CSI2_DVLE(devnum), 0x2);
+		vinc_write(priv, CSI2_LEFE(devnum), 0x2);
+		vinc_write(priv, CSI2_FEFS(devnum), 0x2);
+		vinc_write(priv, CSI2_LELS(devnum), 0x4);
+		vinc_write(priv, CSI2_LOOP_BACK(devnum), 0x0);
+		vinc_write(priv, CSI2_RAW8(devnum), 0x0);
+		vinc_write(priv, CSI2_DPHY_TIM1(devnum),
 			   CSI2_TIM1_DLN_CNT_HS_PREP(0x06) |
 			   CSI2_TIM1_DLN_CNT_HS_ZERO(0x04) |
 			   CSI2_TIM1_DLN_CNT_HS_TRAIL(0x07) |
 			   CSI2_TIM1_DLN_CNT_HS_EXIT(0x02));
-		vinc_write(priv, CSI2_DPHY_TIM2(0),
+		vinc_write(priv, CSI2_DPHY_TIM2(devnum),
 			   CSI2_TIM2_CLN_CNT_HS_PREP(0x06) |
 			   CSI2_TIM2_CLN_CNT_HS_ZERO(0x04) |
 			   CSI2_TIM2_CLN_CNT_HS_TRAIL(0x11) |
 			   CSI2_TIM2_CLN_CNT_HS_EXIT(0x03));
-		vinc_write(priv, CSI2_TRIM0(0), 0x02000000);
-		vinc_write(priv, CSI2_DEVICE_READY(0), 0x1);
-		vinc_write(priv, STREAM_INP_CFG(0), 0x2);
-	} else if (priv->video_source == V4L2_MBUS_PARALLEL) {
+		vinc_write(priv, CSI2_TRIM0(devnum), 0x02000000);
+		vinc_write(priv, CSI2_DEVICE_READY(devnum), 0x1);
+		vinc_write(priv, STREAM_INP_CFG(devnum), 0x2 + devnum);
+	} else if (stream->video_source == V4L2_MBUS_PARALLEL) {
 		vinc_write(priv, PPORT_INP_MUX_CFG, 0);
-		vinc_write(priv, PPORT_CFG(0), PORT_CFG_PIXEL_MODE(1));
-		vinc_write(priv, PPORT_CFG(1), PORT_CFG_PIXEL_MODE(0));
+		vinc_write(priv, PPORT_CFG(devnum), PORT_CFG_PIXEL_MODE(1));
 		vinc_write(priv, PPORT_CFG(2), PORT_CFG_PIXEL_MODE(0));
-		if (priv->input_format == BAYER) {
-			vinc_write(priv, PINTERFACE_CFG(0),
+		if (stream->input_format == BAYER) {
+			vinc_write(priv, PINTERFACE_CFG(devnum),
 					PINTERFACE_CFG_CYCLE_NUM(1) |
 					PINTERFACE_CFG_PIXEL_NUM_EVEN(1) |
-					PINTERFACE_CFG_PORT_NUM_SYNC(0));
-			vinc_write(priv, PINTERFACE_CCMOV(0, 0), 0x1);
+					PINTERFACE_CFG_PORT_NUM_SYNC(devnum));
+			vinc_write(priv, PINTERFACE_CCMOV(devnum, 0),
+				   0x1 + devnum);
 		} else
 			dev_err(priv->ici.v4l2_dev.dev, "Unknown input format %#x",
-				priv->input_format);
+				stream->input_format);
 
-		vinc_write(priv, PINTERFACE_HVFSYNC(0),
+		vinc_write(priv, PINTERFACE_HVFSYNC(devnum),
 				PINTERFACE_HVFSYNC_DELAY_V(0x11) |
 				PINTERFACE_HVFSYNC_PRE_DELAY_V(1));
-		vinc_write(priv, STREAM_INP_CFG(0), 0x0);
+		vinc_write(priv, STREAM_INP_CFG(devnum), devnum);
 	} else
 		dev_err(priv->ici.v4l2_dev.dev, "Unknown input source %#x",
-			priv->video_source);
+			stream->video_source);
 }
 
 static int vinc_start_streaming(struct vb2_queue *q, unsigned int count)
@@ -723,27 +743,30 @@ static int vinc_start_streaming(struct vb2_queue *q, unsigned int count)
 	struct vinc_dev *priv = ici->priv;
 	int retry_count = 10;
 	unsigned long timeout;
+	const u8 devnum = icd->devnum;
+	struct vinc_stream * const stream = &priv->stream[devnum];
 	u32 csi2_port_sys_ctr = vinc_read(priv, CSI2_PORT_SYS_CTR(0));
 	u32 csi2_intr;
+	u32 stream_ctr;
 
 	dev_dbg(icd->parent, "Start streaming (count: %u)\n", count);
 
-	if (priv->video_source == V4L2_MBUS_CSI2) {
+	if (stream->video_source == V4L2_MBUS_CSI2) {
 		/* Workaround for mcom issue rf#1361 (see errata)
 		 * Check that VINC captures video and reenable MIPI port
 		 * otherwise. */
 		do {
-			vinc_write(priv, CSI2_PORT_SYS_CTR(0),
+			vinc_write(priv, CSI2_PORT_SYS_CTR(devnum),
 				   csi2_port_sys_ctr &
 				   ~CSI2_PORT_SYS_CTR_ENABLE);
-			vinc_write(priv, CSI2_PORT_SYS_CTR(0),
+			vinc_write(priv, CSI2_PORT_SYS_CTR(devnum),
 				   csi2_port_sys_ctr |
 				   CSI2_PORT_SYS_CTR_ENABLE);
-			vinc_configure_input(priv);
+			vinc_configure_input(stream);
 
 			timeout = jiffies + msecs_to_jiffies(30);
 			do {
-				csi2_intr = vinc_read(priv, CSI2_INTR(0));
+				csi2_intr = vinc_read(priv, CSI2_INTR(devnum));
 				if (!(csi2_intr & BIT(9)))
 					schedule();
 				else
@@ -756,18 +779,20 @@ static int vinc_start_streaming(struct vb2_queue *q, unsigned int count)
 				"Can not receive video from sensor\n");
 			return -EIO;
 		}
-	} else if (priv->video_source == V4L2_MBUS_PARALLEL)
-		vinc_configure_input(priv);
+	} else if (stream->video_source == V4L2_MBUS_PARALLEL)
+		vinc_configure_input(stream);
 
-	vinc_write(priv, STREAM_DMA_WR_CTR(0, 0), DMA_WR_CTR_FRAME_END_EN |
-			DMA_WR_CTR_DMA_EN);
-	vinc_write(priv, STREAM_CTR, STREAM_CTR_STREAM0_ENABLE);
+	vinc_write(priv, STREAM_DMA_WR_CTR(devnum, 0), DMA_WR_CTR_FRAME_END_EN);
+	stream_ctr = vinc_read(priv, STREAM_CTR);
+	stream_ctr |= STREAM_CTR_DMA_CHANNELS_ENABLE;
+	stream_ctr |= STREAM_CTR_STREAM_ENABLE(devnum);
+	vinc_write(priv, STREAM_CTR, stream_ctr);
 
-	priv->sequence = 0;
-	spin_lock_irq(&priv->lock);
-	if (priv->active)
-		vinc_start_capture(priv);
-	spin_unlock_irq(&priv->lock);
+	stream->sequence = 0;
+	spin_lock_irq(&stream->lock);
+	if (stream->active)
+		vinc_start_capture(priv, icd);
+	spin_unlock_irq(&stream->lock);
 
 	return 0;
 }
@@ -779,28 +804,34 @@ static void vinc_stop_streaming(struct vb2_queue *q)
 	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
 	struct vinc_dev *priv = ici->priv;
 	struct vinc_buffer *buf, *tmp;
+	const u8 devnum = icd->devnum;
+	struct vinc_stream * const stream = &priv->stream[devnum];
 	u32 csi2_port_sys_ctr;
+	u32 stream_ctr = vinc_read(priv, STREAM_CTR);
 
 	dev_dbg(icd->parent, "Stop streaming\n");
 
-	vinc_write(priv, STREAM_CTR, 0);
-	vinc_write(priv, STREAM_DMA_WR_CTR(0, 0), 0x0);
-	csi2_port_sys_ctr = vinc_read(priv, CSI2_PORT_SYS_CTR(0));
-	vinc_write(priv, CSI2_PORT_SYS_CTR(0),
+	stream_ctr &= ~STREAM_CTR_STREAM_ENABLE(devnum);
+	vinc_write(priv, STREAM_CTR, stream_ctr);
+
+	vinc_write(priv, STREAM_DMA_WR_CTR(devnum, 0), 0x0);
+	csi2_port_sys_ctr = vinc_read(priv, CSI2_PORT_SYS_CTR(devnum));
+	vinc_write(priv, CSI2_PORT_SYS_CTR(devnum),
 		   csi2_port_sys_ctr & ~CSI2_PORT_SYS_CTR_ENABLE);
 	/* GLOBAL_ENABLE still enable for sensor clocks */
 
-	spin_lock_irq(&priv->lock);
+	spin_lock_irq(&stream->lock);
 
-	priv->active = NULL;
+	stream->active = NULL;
 
-	list_for_each_entry_safe(buf, tmp, &priv->capture, queue) {
+	list_for_each_entry_safe(buf, tmp,
+				 &stream->capture, queue) {
 		list_del_init(&buf->queue);
 		if (buf->vb.state == VB2_BUF_STATE_ACTIVE)
 			vb2_buffer_done(&buf->vb, VB2_BUF_STATE_ERROR);
 	}
 
-	spin_unlock_irq(&priv->lock);
+	spin_unlock_irq(&stream->lock);
 }
 
 static struct vb2_ops vinc_videobuf_ops = {
@@ -813,36 +844,39 @@ static struct vb2_ops vinc_videobuf_ops = {
 	.stop_streaming		= vinc_stop_streaming,
 };
 
-static u32 vinc_get_dma_src(struct vinc_dev *priv)
+static u32 vinc_get_dma_src(struct vinc_dev *priv,
+			    struct soc_camera_device *icd)
 {
-	switch (priv->ici.icd->current_fmt->host_fmt->fourcc) {
+	switch (icd->current_fmt->host_fmt->fourcc) {
 	case V4L2_PIX_FMT_BGR32:
-		return (priv->cluster.ct.enable->val ? DMA_SRC_CT :
-				DMA_SRC_444);
+		return (priv->stream[icd->devnum].cluster.ct.enable->val ?
+				DMA_SRC_CT : DMA_SRC_444);
 	case V4L2_PIX_FMT_M420:
 		return DMA_SRC_420;
 	default:
 		dev_warn(priv->ici.v4l2_dev.dev, "Unknown output format %#x\n",
-			 priv->ici.icd->current_fmt->host_fmt->fourcc);
+			 icd->current_fmt->host_fmt->fourcc);
 		return DMA_SRC_CROP;
 	}
 }
 
-static void set_bad_pixels(struct vinc_dev *priv, struct vinc_bad_pixel *bp)
+static void set_bad_pixels(struct vinc_dev *priv, u8 devnum,
+			   struct vinc_bad_pixel *bp)
 {
 	int i;
 
-	vinc_write(priv, STREAM_PROC_BP_MAP_CTR(0), 0);
+	vinc_write(priv, STREAM_PROC_BP_MAP_CTR(devnum), 0);
 	for (i = 0; i < CTRL_BAD_PIXELS_COUNT; i++)
-		vinc_write(priv, STREAM_PROC_BP_MAP_DATA(0),
+		vinc_write(priv, STREAM_PROC_BP_MAP_DATA(devnum),
 			   (bp[i].y << 12) | bp[i].x);
 }
 
-static void set_bad_rows_cols(struct vinc_dev *priv, u16 *data, int is_cols)
+static void set_bad_rows_cols(struct vinc_dev *priv, u8 devnum, u16 *data,
+			      int is_cols)
 {
 	int i;
-	u32 reg_start = is_cols ? STREAM_PROC_BP_BAD_COLUMN(0, 0) :
-			STREAM_PROC_BP_BAD_LINE(0, 0);
+	u32 reg_start = is_cols ? STREAM_PROC_BP_BAD_COLUMN(devnum, 0) :
+			STREAM_PROC_BP_BAD_LINE(devnum, 0);
 
 	for (i = 0; i < (CTRL_BAD_ROWSCOLS_COUNT / 2); i++)
 		vinc_write(priv, reg_start + i * sizeof(u32),
@@ -850,25 +884,27 @@ static void set_bad_rows_cols(struct vinc_dev *priv, u16 *data, int is_cols)
 			   ((data[i * 2 + 1] & 0xFFF) << 16));
 }
 
-static void set_gc_curve(struct vinc_dev *priv, struct vinc_gamma_curve *gc)
+static void set_gc_curve(struct vinc_dev *priv, u8 devnum,
+			 struct vinc_gamma_curve *gc)
 {
 	int i;
 
-	vinc_write(priv, STREAM_PROC_GC_CTR(0), 0);
+	vinc_write(priv, STREAM_PROC_GC_CTR(devnum), 0);
 	for (i = 0; i < CTRL_GC_ELEMENTS_COUNT; i++)
-		vinc_write(priv, STREAM_PROC_GC_DATA(0),
+		vinc_write(priv, STREAM_PROC_GC_DATA(devnum),
 			   (gc->green[i] << 16) | gc->red[i]);
-	vinc_write(priv, STREAM_PROC_GC_CTR(0), 0x1000);
+	vinc_write(priv, STREAM_PROC_GC_CTR(devnum), 0x1000);
 	for (i = 0; i < CTRL_GC_ELEMENTS_COUNT; i++)
-		vinc_write(priv, STREAM_PROC_GC_DATA(0),
+		vinc_write(priv, STREAM_PROC_GC_DATA(devnum),
 			   gc->blue[i]);
 }
 
-static void set_cc_ct(struct vinc_dev *priv, struct vinc_cc *cc, int is_ct)
+static void set_cc_ct(struct vinc_dev *priv, u8 devnum, struct vinc_cc *cc,
+		      int is_ct)
 {
 	int i;
-	u32 start_reg = is_ct ? STREAM_PROC_CT_COEFF(0, 0) :
-			STREAM_PROC_CC_COEFF(0, 0);
+	u32 start_reg = is_ct ? STREAM_PROC_CT_COEFF(devnum, 0) :
+			STREAM_PROC_CC_COEFF(devnum, 0);
 	u32 val;
 
 	for (i = 0; i < 4; i++) {
@@ -882,53 +918,61 @@ static void set_cc_ct(struct vinc_dev *priv, struct vinc_cc *cc, int is_ct)
 	vinc_write(priv, start_reg + CC_CT_OFFSET_OFFSET2, val);
 }
 
-static void set_dr(struct vinc_dev *priv, u16 *dr)
+static void set_dr(struct vinc_dev *priv, u8 devnum, u16 *dr)
 {
 	int i;
 
-	vinc_write(priv, STREAM_PROC_DR_CTR(0), 0);
+	vinc_write(priv, STREAM_PROC_DR_CTR(devnum), 0);
 	for (i = 0; i < CTRL_DR_ELEMENTS_COUNT; i++)
-		vinc_write(priv, STREAM_PROC_DR_DATA(0), dr[i]);
+		vinc_write(priv, STREAM_PROC_DR_DATA(devnum), dr[i]);
 }
 
-static void set_stat_af_color(struct vinc_dev *priv, u32 color)
+static void set_stat_af_color(struct vinc_dev *priv, u8 devnum, u32 color)
 {
-	u32 proc_ctr = vinc_read(priv, STREAM_PROC_CTR(0));
+	u32 proc_ctr = vinc_read(priv, STREAM_PROC_CTR(devnum));
 
 	proc_ctr &= ~STREAM_PROC_CTR_AF_COLOR(0x3);
 	proc_ctr |= STREAM_PROC_CTR_AF_COLOR(color);
-	vinc_write(priv, STREAM_PROC_CTR(0), proc_ctr);
+	vinc_write(priv, STREAM_PROC_CTR(devnum), proc_ctr);
 }
 
-static void vinc_stat_start(struct vinc_dev *priv)
+static void vinc_stat_start(struct vinc_stream *stream)
 {
-	priv->stat_odd = 0;
+	struct vinc_dev *priv = container_of(stream, struct vinc_dev,
+					     stream[stream->devnum]);
+
+	stream->stat_odd = 0;
 	vinc_write(priv, STREAM_PROC_CLEAR(0),
 		   STREAM_PROC_CLEAR_THR_CLR);
 }
 
-static void set_stat_zone(struct vinc_dev *priv, u32 zone_id,
-		     struct vinc_stat_zone *zone)
+static void set_stat_zone(struct vinc_stream *stream, u32 zone_id,
+			  struct vinc_stat_zone *zone)
 {
-	u32 proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+	const u8 devnum = stream->devnum;
+	struct vinc_dev *priv = container_of(stream, struct vinc_dev,
+					     stream[devnum]);
+	u32 proc_cfg = vinc_read(priv, STREAM_PROC_CFG(devnum));
 
 	if (zone->enable) {
-		u32 lt = (zone->x_lt + priv->crop2.c.left) |
-				((zone->y_lt + priv->crop2.c.top) << 16);
-		u32 rb = (zone->x_rb + priv->crop2.c.left) |
-				((zone->y_rb + priv->crop2.c.top) << 16);
+		u32 lt = (zone->x_lt + stream->crop2.c.left) |
+				((zone->y_lt +
+				stream->crop2.c.top) << 16);
+		u32 rb = (zone->x_rb + stream->crop2.c.left) |
+				((zone->y_rb +
+				stream->crop2.c.top) << 16);
 
-		vinc_write(priv, STREAM_PROC_STAT_ZONE_LT(0, zone_id), lt);
-		vinc_write(priv, STREAM_PROC_STAT_ZONE_RB(0, zone_id), rb);
+		vinc_write(priv, STREAM_PROC_STAT_ZONE_LT(devnum, zone_id), lt);
+		vinc_write(priv, STREAM_PROC_STAT_ZONE_RB(devnum, zone_id), rb);
 		proc_cfg |= BIT(STREAM_PROC_CFG_STT_ZONE_OFFSET + zone_id);
 	} else
 		proc_cfg &= ~(BIT(STREAM_PROC_CFG_STT_ZONE_OFFSET + zone_id));
-	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+	vinc_write(priv, STREAM_PROC_CFG(devnum), proc_cfg);
 }
 
 /* TODO: Split this function into two: the one that activates cluster and
  * the other that enables/disables HW block. */
-static void cluster_activate(struct vinc_dev *priv, u32 block_mask,
+static void cluster_activate(struct vinc_dev *priv, u8 devnum, u32 block_mask,
 			     struct v4l2_ctrl **cluster)
 {
 	u32 proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
@@ -939,7 +983,7 @@ static void cluster_activate(struct vinc_dev *priv, u32 block_mask,
 		proc_cfg |= block_mask;
 	else
 		proc_cfg &= ~block_mask;
-	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+	vinc_write(priv, STREAM_PROC_CFG(devnum), proc_cfg);
 	for (i = 1; i < master->ncontrols; i++)
 		v4l2_ctrl_activate(cluster[i], master->val);
 }
@@ -954,17 +998,17 @@ static void cluster_activate_only(struct vinc_dev *priv,
 		v4l2_ctrl_activate(cluster[i], master->val);
 }
 
-static void enable_block(struct vinc_dev *priv, u32 block_mask,
+static void enable_block(struct vinc_dev *priv, u8 devnum, u32 block_mask,
 			 bool const enable)
 {
-	u32 proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+	u32 proc_cfg = vinc_read(priv, STREAM_PROC_CFG(devnum));
 
 	if (enable)
 		proc_cfg |= block_mask;
 	else
 		proc_cfg &= ~block_mask;
 
-	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+	vinc_write(priv, STREAM_PROC_CFG(devnum), proc_cfg);
 }
 
 static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
@@ -979,6 +1023,8 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 	struct vinc_cluster_ct *ct;
 	struct vinc_cluster_dr *dr;
 	struct vinc_cluster_stat *stat;
+	const u8 devnum = icd->devnum;
+	struct vinc_stream * const stream = &priv->stream[devnum];
 	u32 proc_cfg, stream_ctr;
 	int i, init, std_is_new;
 
@@ -987,17 +1033,19 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		bp = (struct vinc_cluster_bp *)ctrl->cluster;
 		/* For programming BP block we need to stop video */
 		stream_ctr = vinc_read(priv, STREAM_CTR);
-		vinc_write(priv, STREAM_CTR, 0);
-		cluster_activate(priv, STREAM_PROC_CFG_BPC_EN, ctrl->cluster);
+		vinc_write(priv, STREAM_CTR,
+			   stream_ctr & ~STREAM_CTR_STREAM_ENABLE(devnum));
+		cluster_activate(priv, devnum, STREAM_PROC_CFG_BPC_EN,
+				 ctrl->cluster);
 		if (bp->enable->val) {
 			if (bp->enable->is_new || bp->pix->is_new)
-				set_bad_pixels(priv, bp->pix->p_new.p);
+				set_bad_pixels(priv, devnum, bp->pix->p_new.p);
 			if (bp->enable->is_new || bp->row->is_new)
-				set_bad_rows_cols(priv, bp->row->p_new.p_u16,
-						  0);
+				set_bad_rows_cols(priv, devnum,
+						  bp->row->p_new.p_u16, 0);
 			if (bp->enable->is_new || bp->col->is_new)
-				set_bad_rows_cols(priv, bp->col->p_new.p_u16,
-						  1);
+				set_bad_rows_cols(priv, devnum,
+						  bp->col->p_new.p_u16, 1);
 		}
 		vinc_write(priv, STREAM_CTR, stream_ctr);
 		break;
@@ -1024,10 +1072,11 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 
 		if (gamma->enable->val && (gamma->gamma->val != 16 ||
 			gamma->gamma->flags & V4L2_CTRL_FLAG_WRITE_ONLY)) {
-			enable_block(priv, STREAM_PROC_CFG_GC_EN, true);
-			set_gc_curve(priv, p_gamma);
+			enable_block(priv, devnum, STREAM_PROC_CFG_GC_EN, true);
+			set_gc_curve(priv, devnum, p_gamma);
 		} else {
-			enable_block(priv, STREAM_PROC_CFG_GC_EN, false);
+			enable_block(priv, devnum, STREAM_PROC_CFG_GC_EN,
+				     false);
 		}
 		break;
 	}
@@ -1041,11 +1090,12 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		std_is_new = cc->dowb->is_new | cc->brightness->is_new;
 		init = cc->enable->is_new & cc->cc->is_new &
 			std_is_new;
-		cluster_activate(priv, STREAM_PROC_CFG_CC_EN, ctrl->cluster);
+		cluster_activate(priv, devnum, STREAM_PROC_CFG_CC_EN,
+				 ctrl->cluster);
 		if (cc->dowb->is_new && !init) {
 			struct vinc_stat_add *add;
 
-			add = priv->cluster.stat.add[3]->p_cur.p;
+			add = stream->cluster.stat.add[3]->p_cur.p;
 			kernel_neon_begin();
 			vinc_neon_calculate_m_wb(add->sum_r,
 				add->sum_g, add->sum_b, cc->dowb->priv);
@@ -1061,8 +1111,9 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 			void *ctrl_privs[] = { cc->dowb->priv,
 					   cc->brightness->priv };
 			kernel_neon_begin();
-			vinc_neon_calculate_cc(ctrl_privs, priv->ycbcr_enc,
-					  priv->quantization, cc->cc->p_cur.p);
+			vinc_neon_calculate_cc(ctrl_privs, stream->ycbcr_enc,
+					       stream->quantization,
+					       cc->cc->p_cur.p);
 			kernel_neon_end();
 
 			cc->brightness->flags &= ~V4L2_CTRL_FLAG_WRITE_ONLY &
@@ -1075,55 +1126,63 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 					V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
 			cc->cc->flags &= ~V4L2_CTRL_FLAG_UPDATE;
 		}
-		set_cc_ct(priv, p_cc, 0);
+		set_cc_ct(priv, devnum, p_cc, 0);
 		break;
 	}
 	case V4L2_CID_CT_ENABLE:
 		ct = (struct vinc_cluster_ct *)ctrl->cluster;
-		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(devnum));
 		if (ctrl->val)
 			proc_cfg |= STREAM_PROC_CFG_CT_EN;
 		else
 			proc_cfg &= ~STREAM_PROC_CFG_CT_EN;
 		proc_cfg &= ~STREAM_PROC_CFG_DMA0_SRC(DMA_SRC_MASK);
-		proc_cfg |= STREAM_PROC_CFG_DMA0_SRC(vinc_get_dma_src(priv));
-		vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+		proc_cfg |= STREAM_PROC_CFG_DMA0_SRC(
+				vinc_get_dma_src(priv, icd));
+		vinc_write(priv, STREAM_PROC_CFG(devnum), proc_cfg);
 
 		v4l2_ctrl_activate(ct->ct, ct->enable->val);
 		if (ct->ct->is_new)
-			set_cc_ct(priv, ct->ct->p_new.p, 1);
+			set_cc_ct(priv, devnum, ct->ct->p_new.p, 1);
 		break;
 	case V4L2_CID_DR_ENABLE:
 		dr = (struct vinc_cluster_dr *)ctrl->cluster;
 		/* To enable/disable DR block we need to stop video */
 		stream_ctr = vinc_read(priv, STREAM_CTR);
-		vinc_write(priv, STREAM_CTR, 0);
-		cluster_activate(priv, STREAM_PROC_CFG_ADR_EN, ctrl->cluster);
+		vinc_write(priv, STREAM_CTR,
+			   stream_ctr & ~STREAM_CTR_STREAM_ENABLE(devnum));
+		cluster_activate(priv, devnum, STREAM_PROC_CFG_ADR_EN,
+				 ctrl->cluster);
 		vinc_write(priv, STREAM_CTR, stream_ctr);
 		if (dr->enable->val && (dr->enable->is_new || dr->dr->is_new))
-			set_dr(priv, dr->dr->p_new.p_u16);
+			set_dr(priv, devnum, dr->dr->p_new.p_u16);
 		break;
 	case V4L2_CID_STAT_ENABLE:
 		stat = (struct vinc_cluster_stat *)ctrl->cluster;
 		if (stat->enable->is_new) {
 			stream_ctr = vinc_read(priv, STREAM_CTR);
-			vinc_write(priv, STREAM_CTR, 0);
-			proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+			vinc_write(priv, STREAM_CTR,
+				   stream_ctr & ~STREAM_CTR_STREAM_ENABLE(
+						   devnum));
+			proc_cfg = vinc_read(priv, STREAM_PROC_CFG(devnum));
 			proc_cfg &= ~STREAM_PROC_CFG_STT_EN(0x7);
 			proc_cfg |= STREAM_PROC_CFG_STT_EN(stat->enable->val);
 			if (stat->enable->val)
-				vinc_stat_start(priv);
-			vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+				vinc_stat_start(stream);
+			vinc_write(priv, STREAM_PROC_CFG(devnum), proc_cfg);
 			vinc_write(priv, STREAM_CTR, stream_ctr);
 		}
-		set_stat_af_color(priv, stat->af_color->val);
-		vinc_write(priv, STREAM_PROC_STAT_TH(0), stat->af_th->val);
+		set_stat_af_color(priv, devnum, stat->af_color->val);
+		vinc_write(priv, STREAM_PROC_STAT_TH(devnum),
+			   stat->af_th->val);
 		for (i = 0; i < 4; i++) {
 			if (!stat->zone[i]->is_new)
 				continue;
 			stream_ctr = vinc_read(priv, STREAM_CTR);
-			vinc_write(priv, STREAM_CTR, 0);
-			set_stat_zone(priv,
+			vinc_write(priv, STREAM_CTR,
+				   stream_ctr & ~STREAM_CTR_STREAM_ENABLE(
+						   devnum));
+			set_stat_zone(stream,
 				      stat->zone[i]->id - V4L2_CID_STAT_ZONE0,
 				      stat->zone[i]->p_new.p);
 			vinc_write(priv, STREAM_CTR, stream_ctr);
@@ -1131,13 +1190,14 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		break;
 	case V4L2_CID_TEST_PATTERN:
 		stream_ctr = vinc_read(priv, STREAM_CTR);
-		vinc_write(priv, STREAM_CTR, 0);
+		vinc_write(priv, STREAM_CTR,
+			   stream_ctr & ~STREAM_CTR_STREAM_ENABLE(devnum));
 		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
-		if (priv->input_format == BAYER && !ctrl->val)
+		if (stream->input_format == BAYER && !ctrl->val)
 			proc_cfg |= STREAM_PROC_CFG_CFA_EN;
 		else
 			proc_cfg &= ~STREAM_PROC_CFG_CFA_EN;
-		vinc_configure_input(priv);
+		vinc_configure_input(stream);
 		vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
 		vinc_write(priv, STREAM_CTR, stream_ctr);
 		break;
@@ -1684,78 +1744,82 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 };
 
 static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
-				struct vinc_dev *priv)
+				struct vinc_stream *stream)
 {
 	int i;
 	struct v4l2_ctrl *tmp_ctrl;
+	const u8 devnum = stream->devnum;
+	struct vinc_dev *priv = container_of(stream, struct vinc_dev,
+					     stream[devnum]);
 
 	for (i = 0; i < ARRAY_SIZE(ctrl_cfg); i++) {
 		tmp_ctrl = v4l2_ctrl_new_custom(hdl, &ctrl_cfg[i], NULL);
 		if (!tmp_ctrl) {
 			dev_err(priv->ici.v4l2_dev.dev,
-				"Can not create control %#x\n",
-				ctrl_cfg[i].id);
+				"Can not create control %#x\n", ctrl_cfg[i].id);
 			return hdl->error;
 		}
 	}
 
-	priv->cluster.bp.enable = v4l2_ctrl_find(hdl,
+	stream->cluster.bp.enable = v4l2_ctrl_find(hdl,
 			V4L2_CID_BAD_CORRECTION_ENABLE);
-	priv->cluster.bp.pix = v4l2_ctrl_find(hdl, V4L2_CID_BAD_PIXELS);
-	priv->cluster.bp.row = v4l2_ctrl_find(hdl, V4L2_CID_BAD_ROWS);
-	priv->cluster.bp.col = v4l2_ctrl_find(hdl, V4L2_CID_BAD_COLS);
+	stream->cluster.bp.pix = v4l2_ctrl_find(hdl, V4L2_CID_BAD_PIXELS);
+	stream->cluster.bp.row = v4l2_ctrl_find(hdl, V4L2_CID_BAD_ROWS);
+	stream->cluster.bp.col = v4l2_ctrl_find(hdl, V4L2_CID_BAD_COLS);
 	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_bp),
-			  &priv->cluster.bp.enable);
+			  &stream->cluster.bp.enable);
 
-	priv->cluster.gamma.enable = v4l2_ctrl_find(hdl,
+	stream->cluster.gamma.enable = v4l2_ctrl_find(hdl,
 			V4L2_CID_GAMMA_CURVE_ENABLE);
-	priv->cluster.gamma.curve = v4l2_ctrl_find(hdl, V4L2_CID_GAMMA_CURVE);
-	priv->cluster.gamma.gamma = v4l2_ctrl_find(hdl, V4L2_CID_GAMMA);
+	stream->cluster.gamma.curve = v4l2_ctrl_find(hdl, V4L2_CID_GAMMA_CURVE);
+	stream->cluster.gamma.gamma = v4l2_ctrl_find(hdl, V4L2_CID_GAMMA);
 	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_gamma),
-			  &priv->cluster.gamma.enable);
+			  &stream->cluster.gamma.enable);
 
-	priv->cluster.cc.enable = v4l2_ctrl_find(hdl, V4L2_CID_CC_ENABLE);
-	priv->cluster.cc.cc = v4l2_ctrl_find(hdl, V4L2_CID_CC);
-	priv->cluster.cc.brightness = v4l2_ctrl_find(hdl, V4L2_CID_BRIGHTNESS);
-	priv->cluster.cc.dowb = v4l2_ctrl_find(hdl, V4L2_CID_DO_WHITE_BALANCE);
+	stream->cluster.cc.enable = v4l2_ctrl_find(hdl, V4L2_CID_CC_ENABLE);
+	stream->cluster.cc.cc = v4l2_ctrl_find(hdl, V4L2_CID_CC);
+	stream->cluster.cc.brightness = v4l2_ctrl_find(hdl,
+			V4L2_CID_BRIGHTNESS);
+	stream->cluster.cc.dowb = v4l2_ctrl_find(hdl,
+			V4L2_CID_DO_WHITE_BALANCE);
 	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_cc),
-			  &priv->cluster.cc.enable);
+			  &stream->cluster.cc.enable);
 
-	priv->cluster.ct.enable = v4l2_ctrl_find(hdl, V4L2_CID_CT_ENABLE);
-	priv->cluster.ct.ct = v4l2_ctrl_find(hdl, V4L2_CID_CT);
+	stream->cluster.ct.enable = v4l2_ctrl_find(hdl, V4L2_CID_CT_ENABLE);
+	stream->cluster.ct.ct = v4l2_ctrl_find(hdl, V4L2_CID_CT);
 	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_ct),
-			  &priv->cluster.ct.enable);
+			  &stream->cluster.ct.enable);
 
-	priv->cluster.dr.enable = v4l2_ctrl_find(hdl, V4L2_CID_DR_ENABLE);
-	priv->cluster.dr.dr = v4l2_ctrl_find(hdl, V4L2_CID_DR);
+	stream->cluster.dr.enable = v4l2_ctrl_find(hdl, V4L2_CID_DR_ENABLE);
+	stream->cluster.dr.dr = v4l2_ctrl_find(hdl, V4L2_CID_DR);
 	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_dr),
-			  &priv->cluster.dr.enable);
+			  &stream->cluster.dr.enable);
 
-	priv->cluster.stat.enable = v4l2_ctrl_find(hdl, V4L2_CID_STAT_ENABLE);
-	priv->cluster.stat.af_color = v4l2_ctrl_find(hdl,
+	stream->cluster.stat.enable = v4l2_ctrl_find(hdl, V4L2_CID_STAT_ENABLE);
+	stream->cluster.stat.af_color = v4l2_ctrl_find(hdl,
 			V4L2_CID_STAT_AF_COLOR);
-	priv->cluster.stat.af_th = v4l2_ctrl_find(hdl, V4L2_CID_STAT_AF_TH);
+	stream->cluster.stat.af_th = v4l2_ctrl_find(hdl, V4L2_CID_STAT_AF_TH);
 	for (i = 0; i < 4; i++) {
-		priv->cluster.stat.zone[i] = v4l2_ctrl_find(hdl,
+		stream->cluster.stat.zone[i] = v4l2_ctrl_find(hdl,
 				V4L2_CID_STAT_ZONE0 + i);
-		priv->cluster.stat.hist[i] = v4l2_ctrl_find(hdl,
+		stream->cluster.stat.hist[i] = v4l2_ctrl_find(hdl,
 				V4L2_CID_STAT_HIST0 + i);
-		priv->cluster.stat.af[i] = v4l2_ctrl_find(hdl,
+		stream->cluster.stat.af[i] = v4l2_ctrl_find(hdl,
 				V4L2_CID_STAT_AF0 + i);
-		priv->cluster.stat.add[i] = v4l2_ctrl_find(hdl,
+		stream->cluster.stat.add[i] = v4l2_ctrl_find(hdl,
 				V4L2_CID_STAT_ADD0 + i);
 	}
 	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_stat),
-			  &priv->cluster.stat.enable);
+			  &stream->cluster.stat.enable);
 
-	priv->test_pattern = v4l2_ctrl_find(hdl, V4L2_CID_TEST_PATTERN);
-
-	priv->cluster.cc.brightness->priv = devm_kmalloc(priv->ici.v4l2_dev.dev,
-					sizeof(struct vector), GFP_KERNEL);
-	priv->cluster.cc.dowb->priv = devm_kmalloc(priv->ici.v4l2_dev.dev,
-					sizeof(struct matrix), GFP_KERNEL);
+	stream->test_pattern = v4l2_ctrl_find(hdl, V4L2_CID_TEST_PATTERN);
+	stream->cluster.cc.brightness->priv = devm_kmalloc(
+			priv->ici.v4l2_dev.dev,
+			sizeof(struct vector), GFP_KERNEL);
+	stream->cluster.cc.dowb->priv = kzalloc(sizeof(struct matrix),
+						GFP_KERNEL);
 	kernel_neon_begin();
-	vinc_neon_calculate_m_wb(1, 1, 1, priv->cluster.cc.dowb->priv);
+	vinc_neon_calculate_m_wb(1, 1, 1, stream->cluster.cc.dowb->priv);
 	kernel_neon_end();
 	return hdl->error;
 }
@@ -1768,6 +1832,8 @@ static int vinc_get_formats(struct soc_camera_device *icd, unsigned int idx,
 	struct soc_camera_host *ici = to_soc_camera_host(dev);
 	struct vinc_dev *priv = ici->priv;
 	struct vinc_cam *cam;
+	const u8 devnum = icd->devnum;
+	struct vinc_stream * const stream = &priv->stream[devnum];
 	u32 code;
 	int ret, i;
 	int formats_count;
@@ -1807,13 +1873,13 @@ static int vinc_get_formats(struct soc_camera_device *icd, unsigned int idx,
 		struct v4l2_mbus_config mbus_cfg;
 		struct v4l2_mbus_framefmt mbus_fmt;
 
-		ret = vinc_create_controls(&icd->ctrl_handler, priv);
+		ret = vinc_create_controls(&icd->ctrl_handler, stream);
 		if (ret)
 			return ret;
 
 		ret = v4l2_subdev_call(sd, video, g_mbus_config, &mbus_cfg);
 		if (ret >= 0) {
-			priv->video_source = mbus_cfg.type;
+			stream->video_source = mbus_cfg.type;
 
 			if (mbus_cfg.type != V4L2_MBUS_CSI2 &&
 					mbus_cfg.type != V4L2_MBUS_PARALLEL) {
@@ -1824,13 +1890,13 @@ static int vinc_get_formats(struct soc_camera_device *icd, unsigned int idx,
 			}
 
 			if (mbus_cfg.flags & V4L2_MBUS_CSI2_4_LANE)
-				priv->csi2_lanes = 4;
+				stream->csi2_lanes = 4;
 			else if (mbus_cfg.flags & V4L2_MBUS_CSI2_3_LANE)
-				priv->csi2_lanes = 3;
+				stream->csi2_lanes = 3;
 			else if (mbus_cfg.flags & V4L2_MBUS_CSI2_2_LANE)
-				priv->csi2_lanes = 2;
+				stream->csi2_lanes = 2;
 			else if (mbus_cfg.flags & V4L2_MBUS_CSI2_1_LANE)
-				priv->csi2_lanes = 1;
+				stream->csi2_lanes = 1;
 		} else {
 			dev_err(dev, "Failed to get mbus config from sensor\n");
 			return ret;
@@ -1930,6 +1996,7 @@ static int __vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f,
 
 	struct soc_mbus_pixelfmt *pixelfmt;
 	const struct soc_camera_format_xlate *xlate;
+	const u8 devnum = icd->devnum;
 	u32 width, height;
 	u32 min_bytesperline;
 	int ret;
@@ -1938,8 +2005,8 @@ static int __vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f,
 
 	color_space_adjust(&pix->colorspace, &pix->ycbcr_enc,
 			   &pix->quantization);
-	priv->ycbcr_enc = pix->ycbcr_enc;
-	priv->quantization = pix->quantization;
+	priv->stream[devnum].ycbcr_enc = pix->ycbcr_enc;
+	priv->stream[devnum].quantization = pix->quantization;
 
 	pixelfmt = vinc_get_mbus_pixelfmt(pix->pixelformat);
 	if (!pixelfmt)
@@ -2019,9 +2086,11 @@ static int vinc_set_fmt(struct soc_camera_device *icd, struct v4l2_format *f)
 	struct v4l2_pix_format *pix = &f->fmt.pix;
 	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
 	struct vinc_dev *priv = ici->priv;
-	struct v4l2_subdev *sd = soc_camera_to_subdev(priv->ici.icd);
+	struct v4l2_subdev *sd = soc_camera_to_subdev(icd);
 	struct v4l2_mbus_framefmt mbus_fmt;
 	const struct soc_camera_format_xlate *xlate;
+	const u8 devnum = icd->devnum;
+	struct vinc_stream * const stream = &priv->stream[devnum];
 	int ret;
 	int offset_x, offset_y;
 
@@ -2033,29 +2102,29 @@ static int vinc_set_fmt(struct soc_camera_device *icd, struct v4l2_format *f)
 	case MEDIA_BUS_FMT_SRGGB8_1X8:
 	case MEDIA_BUS_FMT_SRGGB10_1X10:
 	case MEDIA_BUS_FMT_SRGGB12_1X12:
-		priv->input_format = BAYER;
-		priv->bayer_mode = 0;
+		stream->input_format = BAYER;
+		stream->bayer_mode = 0;
 		break;
 	case MEDIA_BUS_FMT_SGRBG8_1X8:
 	case MEDIA_BUS_FMT_SGRBG10_1X10:
 	case MEDIA_BUS_FMT_SGRBG12_1X12:
-		priv->input_format = BAYER;
-		priv->bayer_mode = 1;
+		stream->input_format = BAYER;
+		stream->bayer_mode = 1;
 		break;
 	case MEDIA_BUS_FMT_SGBRG8_1X8:
 	case MEDIA_BUS_FMT_SGBRG10_1X10:
 	case MEDIA_BUS_FMT_SGBRG12_1X12:
-		priv->input_format = BAYER;
-		priv->bayer_mode = 2;
+		stream->input_format = BAYER;
+		stream->bayer_mode = 2;
 		break;
 	case MEDIA_BUS_FMT_SBGGR8_1X8:
 	case MEDIA_BUS_FMT_SBGGR10_1X10:
 	case MEDIA_BUS_FMT_SBGGR12_1X12:
-		priv->input_format = BAYER;
-		priv->bayer_mode = 3;
+		stream->input_format = BAYER;
+		stream->bayer_mode = 3;
 		break;
 	default:
-		priv->input_format = UNKNOWN;
+		stream->input_format = UNKNOWN;
 		dev_warn(icd->parent,
 			 "Sensor reported invalid media bus format %#x\n",
 			 mbus_fmt.code);
@@ -2080,22 +2149,22 @@ static int vinc_set_fmt(struct soc_camera_device *icd, struct v4l2_format *f)
 	}
 	icd->current_fmt = xlate;
 
-	priv->crop1.c.width = pix->width + offset_x;
-	priv->crop1.c.height = pix->height + offset_y;
-	priv->crop1.c.left = 0;
-	priv->crop1.c.top = 0;
+	stream->crop1.c.width = pix->width + offset_x;
+	stream->crop1.c.height = pix->height + offset_y;
+	stream->crop1.c.left = 0;
+	stream->crop1.c.top = 0;
 
-	priv->crop2.c.width = pix->width;
-	priv->crop2.c.height = pix->height;
-	priv->crop2.c.left = offset_x;
-	priv->crop2.c.top = offset_y;
+	stream->crop2.c.width = pix->width;
+	stream->crop2.c.height = pix->height;
+	stream->crop2.c.left = offset_x;
+	stream->crop2.c.top = offset_y;
 
 	dev_dbg(icd->parent, "crop1: %dx%d (%d,%d)\n",
-		priv->crop1.c.width, priv->crop1.c.height,
-		priv->crop1.c.left, priv->crop1.c.top);
+		stream->crop1.c.width, stream->crop1.c.height,
+		stream->crop1.c.left, stream->crop1.c.top);
 	dev_dbg(icd->parent, "crop2: %dx%d (%d,%d)\n",
-		priv->crop2.c.width, priv->crop2.c.height,
-		priv->crop2.c.left, priv->crop2.c.top);
+		stream->crop2.c.width, stream->crop2.c.height,
+		stream->crop2.c.left, stream->crop2.c.top);
 
 	return 0;
 }
@@ -2119,25 +2188,29 @@ static int vinc_querycap(struct soc_camera_host *ici,
 	return 0;
 }
 
-static void vinc_configure_bgr(struct vinc_dev *priv)
+static void vinc_configure_bgr(struct vinc_dev *priv,
+			       struct soc_camera_device *icd)
 {
-	struct soc_camera_device *icd = priv->ici.icd;
+	const u8 devnum = icd->devnum;
 
-	v4l2_ctrl_s_ctrl(priv->cluster.ct.enable, 0);
+	v4l2_ctrl_s_ctrl(priv->stream[devnum].cluster.ct.enable, 0);
 
-	vinc_write(priv, STREAM_DMA_FBUF_CFG(0, 0), 0x00001);
-	vinc_write(priv, STREAM_DMA_FBUF_LSTEP(0, 0, 0), icd->bytesperline);
-	vinc_write(priv, STREAM_DMA_FBUF_FSTEP(0, 0, 0), icd->sizeimage);
-	vinc_write(priv, STREAM_DMA_PIXEL_FMT(0, 0),
+	vinc_write(priv, STREAM_DMA_FBUF_CFG(devnum, 0), 0x00001);
+	vinc_write(priv, STREAM_DMA_FBUF_LSTEP(devnum, 0, 0),
+		   icd->bytesperline);
+	vinc_write(priv, STREAM_DMA_FBUF_FSTEP(devnum, 0, 0), icd->sizeimage);
+	vinc_write(priv, STREAM_DMA_PIXEL_FMT(devnum, 0),
 		   STREAM_DMA_PIXEL_FMT_PLANES(PLANES_SINGLE) |
 		   STREAM_DMA_PIXEL_FMT_FORMAT(FORMAT_BGR));
 }
 
-static void vinc_configure_m420(struct vinc_dev *priv)
+static void vinc_configure_m420(struct vinc_dev *priv,
+				struct soc_camera_device *icd)
 {
 	u32 proc_cfg;
-	struct vinc_cc *ct = priv->cluster.ct.ct->p_cur.p;
-	struct soc_camera_device *icd = priv->ici.icd;
+	const u8 devnum = icd->devnum;
+	struct vinc_stream * const stream = &priv->stream[devnum];
+	struct vinc_cc *ct = stream->cluster.ct.ct->p_cur.p;
 	int i;
 
 	ct->scaling = 0;
@@ -2153,83 +2226,83 @@ static void vinc_configure_m420(struct vinc_dev *priv)
 	ct->offset[0] = 0x0;
 	ct->offset[1] = 0x2000;
 	ct->offset[2] = 0x2000;
-	set_cc_ct(priv, ct, 1);
-	v4l2_ctrl_s_ctrl(priv->cluster.ct.enable, 1);
+	set_cc_ct(priv, devnum, ct, 1);
+	v4l2_ctrl_s_ctrl(stream->cluster.ct.enable, 1);
 
-	proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+	proc_cfg = vinc_read(priv, STREAM_PROC_CFG(devnum));
 	proc_cfg |= STREAM_PROC_CFG_CT_EN |
 			STREAM_PROC_CFG_444TO422_EN |
 			STREAM_PROC_CFG_422TO420_EN |
 			STREAM_PROC_CFG_444TO422_SRC(1) |
 			STREAM_PROC_CFG_422TO420_SRC(1);
-	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+	vinc_write(priv, STREAM_PROC_CFG(devnum), proc_cfg);
 
-	vinc_write(priv, STREAM_DMA_FBUF_CFG(0, 0), 0x00001);
+	vinc_write(priv, STREAM_DMA_FBUF_CFG(devnum, 0), 0x00001);
 	for (i = 0; i < 2; i++) {
-		vinc_write(priv, STREAM_DMA_FBUF_LSTEP(0, 0, i),
+		vinc_write(priv, STREAM_DMA_FBUF_LSTEP(devnum, 0, i),
 			   icd->bytesperline | BIT(31));
-		vinc_write(priv, STREAM_DMA_FBUF_FSTEP(0, 0, i),
+		vinc_write(priv, STREAM_DMA_FBUF_FSTEP(devnum, 0, i),
 			   icd->sizeimage);
 	}
-	vinc_write(priv, STREAM_DMA_PIXEL_FMT(0, 0),
+	vinc_write(priv, STREAM_DMA_PIXEL_FMT(devnum, 0),
 		   STREAM_DMA_PIXEL_FMT_PLANES(PLANES_DUAL) |
 		   STREAM_DMA_PIXEL_FMT_FORMAT(FORMAT_420));
 }
 
-static void vinc_configure(struct vinc_dev *priv)
+static void vinc_configure(struct vinc_dev *priv, struct soc_camera_device *icd)
 {
 	u32 axi_master_cfg, proc_ctr, proc_cfg;
 	struct vinc_stat_zone *zone;
+	const u8 devnum = icd->devnum;
+	struct vinc_stream * const stream = &priv->stream[devnum];
 
-	vinc_write(priv, STREAM_CTR, 0);
+	vinc_write(priv, STREAM_INP_HCROP_CTR(devnum),
+		   (stream->crop1.c.width << 16) | stream->crop1.c.left);
+	vinc_write(priv, STREAM_INP_VCROP_CTR(devnum),
+		   (stream->crop1.c.height << 16) | stream->crop1.c.top);
+	vinc_write(priv, STREAM_INP_VCROP_ODD_CTR(devnum), 0);
+	vinc_write(priv, STREAM_INP_DECIM_CTR(devnum),
+		   STREAM_INP_DECIM_FDECIM(stream->fdecim - 1));
 
-	vinc_write(priv, STREAM_INP_HCROP_CTR(0),
-		   (priv->crop1.c.width << 16) | priv->crop1.c.left);
-	vinc_write(priv, STREAM_INP_VCROP_CTR(0),
-		   (priv->crop1.c.height << 16) | priv->crop1.c.top);
-	vinc_write(priv, STREAM_INP_VCROP_ODD_CTR(0), 0);
-	vinc_write(priv, STREAM_INP_DECIM_CTR(0),
-		   STREAM_INP_DECIM_FDECIM(priv->fdecim - 1));
-
-	zone = priv->cluster.stat.zone[3]->p_cur.p;
+	zone = stream->cluster.stat.zone[3]->p_cur.p;
 	zone->enable = 1;
-	zone->x_lt = priv->crop1.c.left;
-	zone->y_lt = priv->crop1.c.top;
-	zone->x_rb = priv->crop1.c.left + priv->crop1.c.width - 1;
-	zone->y_rb = priv->crop1.c.top + priv->crop1.c.height - 1;
-	priv->cluster.stat.enable->val = 0x4;
+	zone->x_lt = stream->crop1.c.left;
+	zone->y_lt = stream->crop1.c.top;
+	zone->x_rb = stream->crop1.c.left + stream->crop1.c.width - 1;
+	zone->y_rb = stream->crop1.c.top + stream->crop1.c.height - 1;
+	stream->cluster.stat.enable->val = 0x4;
 
-	proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
-	proc_cfg |= STREAM_PROC_CFG_STT_EN(priv->cluster.stat.enable->val);
-	vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
-	set_stat_zone(priv, 3, priv->cluster.stat.zone[3]->p_cur.p);
+	proc_cfg = vinc_read(priv, STREAM_PROC_CFG(devnum));
+	proc_cfg |= STREAM_PROC_CFG_STT_EN(stream->cluster.stat.enable->val);
+	vinc_write(priv, STREAM_PROC_CFG(devnum), proc_cfg);
+	set_stat_zone(stream, 3, stream->cluster.stat.zone[3]->p_cur.p);
 
-	proc_ctr = STREAM_PROC_CTR_BAYER_MODE(priv->bayer_mode);
+	proc_ctr = STREAM_PROC_CTR_BAYER_MODE(stream->bayer_mode);
 	proc_ctr |= STREAM_PROC_CTR_AF_COLOR(
-			priv->cluster.stat.af_color->val);
+			stream->cluster.stat.af_color->val);
 	proc_ctr |= STREAM_PROC_CTR_HIST_THR |
 			STREAM_PROC_CTR_AF_THR |
 			STREAM_PROC_CTR_ADD_THR;
-	vinc_write(priv, STREAM_PROC_CTR(0), proc_ctr);
-	if (priv->cluster.stat.enable->val)
-		vinc_stat_start(priv);
+	vinc_write(priv, STREAM_PROC_CTR(devnum), proc_ctr);
+	if (stream->cluster.stat.enable->val)
+		vinc_stat_start(stream);
 
-	vinc_write(priv, STREAM_DMA_FBUF_HORIZ(0, 0),
-		   (priv->crop2.c.width << 16) | priv->crop2.c.left);
-	vinc_write(priv, STREAM_DMA_FBUF_VERT(0, 0),
-		   (priv->crop2.c.height << 16) | priv->crop2.c.top);
-	vinc_write(priv, STREAM_DMA_FBUF_DECIM(0, 0), 0x10000);
+	vinc_write(priv, STREAM_DMA_FBUF_HORIZ(devnum, 0),
+		   (stream->crop2.c.width << 16) | stream->crop2.c.left);
+	vinc_write(priv, STREAM_DMA_FBUF_VERT(devnum, 0),
+		   (stream->crop2.c.height << 16) | stream->crop2.c.top);
+	vinc_write(priv, STREAM_DMA_FBUF_DECIM(devnum, 0), 0x10000);
 
-	switch (priv->ici.icd->current_fmt->host_fmt->fourcc) {
+	switch (icd->current_fmt->host_fmt->fourcc) {
 	case V4L2_PIX_FMT_BGR32:
-		vinc_configure_bgr(priv);
+		vinc_configure_bgr(priv, icd);
 		break;
 	case V4L2_PIX_FMT_M420:
-		vinc_configure_m420(priv);
+		vinc_configure_m420(priv, icd);
 		break;
 	default:
 		dev_warn(priv->ici.v4l2_dev.dev, "Unknown output format %#x\n",
-			 priv->ici.icd->current_fmt->host_fmt->fourcc);
+			 icd->current_fmt->host_fmt->fourcc);
 		break;
 	}
 
@@ -2243,7 +2316,7 @@ static int vinc_set_bus_param(struct soc_camera_device *icd)
 	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
 	struct vinc_dev *priv = ici->priv;
 
-	vinc_configure(priv);
+	vinc_configure(priv, icd);
 
 	return 0;
 }
@@ -2304,7 +2377,7 @@ static int vinc_get_parm(struct soc_camera_device *icd,
 		tpf->denominator = 30;
 		tpf->numerator = 1;
 	}
-	tpf->numerator *= priv->fdecim;
+	tpf->numerator *= priv->stream[icd->devnum].fdecim;
 	/* TODO: Add fraction reduction */
 
 	return 0;
@@ -2317,11 +2390,13 @@ static int vinc_set_parm(struct soc_camera_device *icd,
 	struct vinc_dev *priv = ici->priv;
 	struct v4l2_fract tpf, *current_tpf = &parm->parm.capture.timeperframe;
 	u32 decim_ctr = vinc_read(priv, STREAM_INP_DECIM_CTR(0));
+	const u8 devnum = icd->devnum;
+	struct vinc_stream * const stream = &priv->stream[devnum];
 
 	if (parm->parm.capture.extendedmode)
 		return -EINVAL;
 
-	priv->fdecim = 1;
+	stream->fdecim = 1;
 	tpf = parm->parm.capture.timeperframe;
 	vinc_get_parm(icd, parm);
 
@@ -2331,16 +2406,16 @@ static int vinc_set_parm(struct soc_camera_device *icd,
 	 * current_tpf - timeperframe returned by sensor (can not contain zeros)
 	 */
 	if (tpf.denominator)
-		priv->fdecim = (tpf.numerator * current_tpf->denominator) /
+		stream->fdecim = (tpf.numerator * current_tpf->denominator) /
 				(tpf.denominator * current_tpf->numerator);
 
-	priv->fdecim = clamp_val(priv->fdecim, 1, 64);
+	stream->fdecim = clamp_val(stream->fdecim, 1, 64);
 
-	current_tpf->numerator *= priv->fdecim;
+	current_tpf->numerator *= stream->fdecim;
 	/* TODO: Add fraction reduction */
 
 	decim_ctr &= ~STREAM_INP_DECIM_FDECIM(0x3F);
-	decim_ctr |= STREAM_INP_DECIM_FDECIM(priv->fdecim - 1);
+	decim_ctr |= STREAM_INP_DECIM_FDECIM(stream->fdecim - 1);
 	vinc_write(priv, STREAM_INP_DECIM_CTR(0), decim_ctr);
 	return 0;
 }
@@ -2376,33 +2451,39 @@ static irqreturn_t vinc_irq_vio(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static void vinc_next_buffer(struct vinc_dev *priv, enum vb2_buffer_state state)
+static void vinc_next_buffer(struct vinc_stream *stream,
+			     enum vb2_buffer_state state)
 {
-	struct vb2_buffer *vb = priv->active;
+	struct vb2_buffer *vb = stream->active;
+	struct vinc_dev *priv = container_of(stream, struct vinc_dev,
+					     stream[stream->devnum]);
 
 	if (!vb)
 		return;
-	spin_lock(&priv->lock);
+	spin_lock(&stream->lock);
 	list_del_init(&to_vinc_vb(vb)->queue);
 
-	if (!list_empty(&priv->capture))
-		priv->active = &list_entry(priv->capture.next,
-					   struct vinc_buffer, queue)->vb;
+	if (!list_empty(&stream->capture))
+		stream->active = &list_entry(stream->capture.next,
+					     struct vinc_buffer, queue)->vb;
 	else
-		priv->active = NULL;
+		stream->active = NULL;
 
-	vinc_start_capture(priv);
+	vinc_start_capture(priv, priv->ici.icds[stream->devnum]);
 	v4l2_get_timestamp(&vb->v4l2_buf.timestamp);
 
-	vb->v4l2_buf.sequence = priv->sequence++;
+	vb->v4l2_buf.sequence = stream->sequence++;
 
 	vb2_buffer_done(vb, state);
-	spin_unlock(&priv->lock);
+	spin_unlock(&stream->lock);
 }
 
 static void vinc_stat_tasklet(unsigned long data)
 {
-	struct vinc_dev *priv = (struct vinc_dev *)data;
+	struct vinc_stream *stream = (struct vinc_stream *)data;
+	const u8 devnum = stream->devnum;
+	struct vinc_dev *priv = container_of(stream, struct vinc_dev,
+					     stream[devnum]);
 	struct vinc_stat_zone *zone;
 	struct vinc_stat_hist *hist;
 	struct vinc_stat_af *af;
@@ -2411,156 +2492,160 @@ static void vinc_stat_tasklet(unsigned long data)
 	u32 reg;
 	int z, i;
 
-	stat_en = priv->cluster.stat.enable->val;
+	stat_en = stream->cluster.stat.enable->val;
 	if (!stat_en)
 		return;
 
 	for (z = 0; z < 4; z++) {
-		zone = priv->cluster.stat.zone[z]->p_cur.p;
+		zone = stream->cluster.stat.zone[z]->p_cur.p;
 		if (!zone->enable)
 			continue;
 
-		hist = priv->cluster.stat.hist[z]->p_cur.p;
+		hist = stream->cluster.stat.hist[z]->p_cur.p;
 		if (stat_en & STT_EN_HIST) {
 			__u32 *component[3] = { hist->red, hist->green,
 						hist->blue };
 			int c;
 
 			for (c = 0; c < ARRAY_SIZE(component); c++) {
-				vinc_write(priv, STREAM_PROC_STAT_CTR(0),
+				vinc_write(priv, STREAM_PROC_STAT_CTR(devnum),
 					   STREAM_PROC_STAT_CTR_NUM_ZONE(z) |
 					   STREAM_PROC_STAT_CTR_COLOR_HIST(c));
 				for (i = 0; i < VINC_STAT_HIST_COUNT; i++)
 					component[c][i] = vinc_read(priv,
-						STREAM_PROC_STAT_DATA(0));
+						STREAM_PROC_STAT_DATA(devnum));
 			}
 		}
 		if (stat_en & STT_EN_AF) {
-			af = priv->cluster.stat.af[z]->p_cur.p;
-			vinc_write(priv, STREAM_PROC_STAT_CTR(0),
+			af = stream->cluster.stat.af[z]->p_cur.p;
+			vinc_write(priv, STREAM_PROC_STAT_CTR(devnum),
 				   STREAM_PROC_STAT_CTR_NUM_ZONE(z));
 			af->hsobel = vinc_read(priv,
-					STREAM_PROC_STAT_HSOBEL(0));
+					STREAM_PROC_STAT_HSOBEL(devnum));
 			af->vsobel = vinc_read(priv,
-					STREAM_PROC_STAT_VSOBEL(0));
+					STREAM_PROC_STAT_VSOBEL(devnum));
 			af->lsobel = vinc_read(priv,
-					STREAM_PROC_STAT_LSOBEL(0));
+					STREAM_PROC_STAT_LSOBEL(devnum));
 			af->rsobel = vinc_read(priv,
-					STREAM_PROC_STAT_RSOBEL(0));
-			vinc_write(priv, STREAM_PROC_CLEAR(0),
+					STREAM_PROC_STAT_RSOBEL(devnum));
+			vinc_write(priv, STREAM_PROC_CLEAR(devnum),
 				   STREAM_PROC_CLEAR_AF_CLR);
 		}
 		if (stat_en & STT_EN_ADD) {
-			add = priv->cluster.stat.add[z]->p_cur.p;
-			vinc_write(priv, STREAM_PROC_STAT_CTR(0),
+			add = stream->cluster.stat.add[z]->p_cur.p;
+			vinc_write(priv, STREAM_PROC_STAT_CTR(devnum),
 				   STREAM_PROC_STAT_CTR_NUM_ZONE(z));
-			reg = vinc_read(priv, STREAM_PROC_STAT_MIN(0));
+			reg = vinc_read(priv, STREAM_PROC_STAT_MIN(devnum));
 			add->min_b = reg & 0xFF;
 			add->min_g = (reg >> 8) & 0xFF;
 			add->min_r = (reg >> 16) & 0xFF;
-			reg = vinc_read(priv, STREAM_PROC_STAT_MAX(0));
+			reg = vinc_read(priv, STREAM_PROC_STAT_MAX(devnum));
 			add->max_b = reg & 0xFF;
 			add->max_g = (reg >> 8) & 0xFF;
 			add->max_r = (reg >> 16) & 0xFF;
-			add->sum_b = vinc_read(priv, STREAM_PROC_STAT_SUM_B(0));
-			add->sum_g = vinc_read(priv, STREAM_PROC_STAT_SUM_G(0));
-			add->sum_r = vinc_read(priv, STREAM_PROC_STAT_SUM_R(0));
-			reg = vinc_read(priv, STREAM_PROC_STAT_SUM2_HI(0));
+			add->sum_b = vinc_read(priv,
+					       STREAM_PROC_STAT_SUM_B(devnum));
+			add->sum_g = vinc_read(priv,
+					       STREAM_PROC_STAT_SUM_G(devnum));
+			add->sum_r = vinc_read(priv,
+					       STREAM_PROC_STAT_SUM_R(devnum));
+			reg = vinc_read(priv, STREAM_PROC_STAT_SUM2_HI(devnum));
 			add->sum2_b = reg & 0xFF;
 			add->sum2_g = (reg >> 8) & 0xFF;
 			add->sum2_r = (reg >> 16) & 0xFF;
 			add->sum2_b = (add->sum2_b << 32) |
-				vinc_read(priv, STREAM_PROC_STAT_SUM2_B(0));
+				vinc_read(priv,
+					  STREAM_PROC_STAT_SUM2_B(devnum));
 			add->sum2_g = (add->sum2_g << 32) |
-				vinc_read(priv, STREAM_PROC_STAT_SUM2_G(0));
+				vinc_read(priv,
+					  STREAM_PROC_STAT_SUM2_G(devnum));
 			add->sum2_r = (add->sum2_r << 32) |
-				vinc_read(priv, STREAM_PROC_STAT_SUM2_R(0));
-			vinc_write(priv, STREAM_PROC_CLEAR(0),
+				vinc_read(priv,
+					  STREAM_PROC_STAT_SUM2_R(devnum));
+			vinc_write(priv, STREAM_PROC_CLEAR(devnum),
 				   STREAM_PROC_CLEAR_ADD_CLR);
 		}
 	}
 }
 
-static void vinc_eof_handler(struct vinc_dev *priv)
+static void vinc_eof_handler(struct vinc_stream *stream)
 {
-	if (priv->cluster.stat.enable->val) {
+	struct vinc_dev *priv = container_of(stream, struct vinc_dev,
+					     stream[stream->devnum]);
+
+	if (stream->cluster.stat.enable->val) {
 		/* TODO: Tasklet must complete before the next frame starts.
 		 * Otherwise it will read broken statistic. We need to take
 		 * into account that tasklet can run when the next frame starts
 		 * (or protect ourselves from this situation). */
-		if (priv->stat_odd)
-			tasklet_schedule(&priv->stat_tasklet);
-		priv->stat_odd = ~priv->stat_odd;
+		if (stream->stat_odd)
+			tasklet_schedule(&stream->stat_tasklet);
+		stream->stat_odd = ~stream->stat_odd;
 	}
-	if (priv->active) {
+	if (stream->active) {
 		dev_dbg(priv->ici.v4l2_dev.dev, "Frame end\n");
-		vinc_next_buffer(priv, VB2_BUF_STATE_DONE);
+		vinc_next_buffer(stream, VB2_BUF_STATE_DONE);
 	} else
 		dev_warn(priv->ici.v4l2_dev.dev,
 			 "Unexpected interrupt. VINC started without driver?\n");
 }
 
-static irqreturn_t vinc_irq_s0(int irq, void *data)
+static irqreturn_t vinc_irq_stream(int irq, void *data)
 {
-	struct vinc_dev *priv = data;
-	u32 int_status = vinc_read(priv, STREAM_INTERRUPT(0));
+	struct vinc_stream *stream = (struct vinc_stream *)data;
+	const u8 devnum = stream->devnum;
+	struct vinc_dev *priv = container_of(stream, struct vinc_dev,
+					     stream[devnum]);
+	u32 int_status = vinc_read(priv, STREAM_INTERRUPT(devnum));
 
-	dev_dbg(priv->ici.v4l2_dev.dev, "Interrupt stream0 0x%x\n",
+	dev_dbg(priv->ici.v4l2_dev.dev, "Interrupt stream%d 0x%x\n", devnum,
 		int_status);
 	if (int_status & STREAM_INTERRUPT_PROC) {
-		u32 int_proc = vinc_read(priv, STREAM_STATUS(0));
+		u32 int_proc = vinc_read(priv, STREAM_STATUS(devnum));
 		u32 stream_ctr = vinc_read(priv, STREAM_CTR);
+		u32 wr_ctr = vinc_read(priv, STREAM_DMA_WR_CTR(devnum, 0));
 
-		vinc_write(priv, STREAM_CTR, 0);
-		stream_ctr &= ~STREAM_CTR_DMA_CHANNELS_ENABLE;
+		stream_ctr &= ~STREAM_CTR_STREAM_ENABLE(devnum);
 		vinc_write(priv, STREAM_CTR, stream_ctr);
-		vinc_next_buffer(priv, VB2_BUF_STATE_ERROR);
+
+		wr_ctr &= ~DMA_WR_CTR_DMA_EN;
+		vinc_write(priv, STREAM_DMA_WR_CTR(devnum, 0), wr_ctr);
+
+		vinc_next_buffer(stream, VB2_BUF_STATE_ERROR);
 
 		dev_warn(priv->ici.v4l2_dev.dev,
-			 "Short frame/line. Stream0_status: 0x%x\n", int_proc);
+			 "Short frame/line. Stream%d_status: 0x%x\n", devnum,
+			 int_proc);
+
+		stream_ctr |= STREAM_CTR_STREAM_ENABLE(devnum);
+		vinc_write(priv, STREAM_CTR, stream_ctr);
 	}
 	if (int_status & STREAM_INTERRUPT_DMA0) {
-		u32 int_d0 = vinc_read(priv, STREAM_DMA_WR_STATUS(0, 0));
+		u32 int_d0 = vinc_read(priv, STREAM_DMA_WR_STATUS(devnum, 0));
 
 		if (int_d0 & DMA_WR_STATUS_FRAME_END)
-			vinc_eof_handler(priv);
+			vinc_eof_handler(stream);
 		if (int_d0 & DMA_WR_STATUS_DMA_OVF) {
 			u32 stream_ctr = vinc_read(priv, STREAM_CTR);
 
 			stream_ctr &= ~STREAM_CTR_DMA_CHANNELS_ENABLE;
 			vinc_write(priv, STREAM_CTR, stream_ctr);
-			vinc_next_buffer(priv, VB2_BUF_STATE_ERROR);
-			dev_warn(priv->ici.v4l2_dev.dev, "s0d0: DMA overflow\n");
+			vinc_next_buffer(stream, VB2_BUF_STATE_ERROR);
+			dev_warn(priv->ici.v4l2_dev.dev,
+				 "s%dd0: DMA overflow\n", devnum);
+			stream_ctr |= STREAM_CTR_DMA_CHANNELS_ENABLE;
+			vinc_write(priv, STREAM_CTR, stream_ctr);
 		}
 	}
 	if (int_status & STREAM_INTERRUPT_DMA1) {
-		u32 int_d1 = vinc_read(priv, STREAM_DMA_WR_STATUS(0, 1));
+		u32 int_d1 = vinc_read(priv, STREAM_DMA_WR_STATUS(devnum, 1));
 
 		if (int_d1 & DMA_WR_STATUS_DMA_OVF)
-			dev_warn(priv->ici.v4l2_dev.dev, "s0d1: DMA overflow\n");
+			dev_warn(priv->ici.v4l2_dev.dev,
+				 "s%dd1: DMA overflow\n", devnum);
 	}
-	vinc_write(priv, STREAM_INTERRUPT_RESET(0), int_status);
-	return IRQ_HANDLED;
-}
+	vinc_write(priv, STREAM_INTERRUPT_RESET(devnum), int_status);
 
-static irqreturn_t vinc_irq_s1(int irq, void *data)
-{
-	struct vinc_dev *priv = data;
-	u32 int_status = vinc_read(priv, STREAM_INTERRUPT(1));
-
-	dev_dbg(priv->ici.v4l2_dev.dev, "Interrupt stream1 0x%x\n",
-		int_status);
-	if (int_status & STREAM_INTERRUPT_PROC) {
-		u32 int_proc = vinc_read(priv, STREAM_STATUS(1));
-
-		dev_warn(priv->ici.v4l2_dev.dev,
-			 "Short frame/line. Stream1_status: 0x%x\n", int_proc);
-	}
-	if (int_status & STREAM_INTERRUPT_DMA0)
-		vinc_read(priv, STREAM_DMA_WR_STATUS(1, 0));
-	if (int_status & STREAM_INTERRUPT_DMA1)
-		vinc_read(priv, STREAM_DMA_WR_STATUS(1, 1));
-	vinc_write(priv, STREAM_INTERRUPT_RESET(1), int_status);
 	return IRQ_HANDLED;
 }
 
@@ -2631,6 +2716,7 @@ static int vinc_probe(struct platform_device *pdev)
 	int err;
 	u32 id;
 	u32 cmos_ctr;
+	int i;
 
 	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
@@ -2658,13 +2744,16 @@ static int vinc_probe(struct platform_device *pdev)
 	if (id != 0x76494e01)
 		dev_err(&pdev->dev, "Bad magic: %#08x\n", id);
 
-	INIT_LIST_HEAD(&priv->capture);
-	spin_lock_init(&priv->lock);
-	init_completion(&priv->complete);
+	for (i = 0; i < 2; i++) {
+		INIT_LIST_HEAD(&priv->stream[i].capture);
+		spin_lock_init(&priv->stream[i].lock);
+		init_completion(&priv->stream[i].complete);
 
-	priv->video_source = V4L2_MBUS_CSI2;
-	priv->input_format = BAYER;
-	priv->fdecim = 1;
+		priv->stream[i].video_source = V4L2_MBUS_CSI2;
+		priv->stream[i].input_format = BAYER;
+		priv->stream[i].fdecim = 1;
+		priv->stream[i].devnum = i;
+	}
 
 	priv->ici.priv = priv;
 	priv->ici.v4l2_dev.dev = &pdev->dev;
@@ -2673,14 +2762,19 @@ static int vinc_probe(struct platform_device *pdev)
 	priv->ici.ops = &vinc_host_ops;
 	priv->ici.capabilities = SOCAM_HOST_CAP_STRIDE;
 
-	priv->alloc_ctx = vb2_dma_contig_init_ctx(&pdev->dev);
-	if (IS_ERR(priv->alloc_ctx))
-		return PTR_ERR(priv->alloc_ctx);
+	for (i = 0; i < 2; i++) {
+		priv->stream[i].alloc_ctx = vb2_dma_contig_init_ctx(&pdev->dev);
+		if (IS_ERR(priv->stream[i].alloc_ctx))
+			return PTR_ERR(priv->stream[i].alloc_ctx);
+	}
 
 	priv->irq_vio = platform_get_irq(pdev, 0);
-	priv->irq_s0 = platform_get_irq(pdev, 1);
-	priv->irq_s1 = platform_get_irq(pdev, 2);
-	if (priv->irq_vio < 0 || priv->irq_s0 < 0 || priv->irq_s1 < 0) {
+	err = priv->irq_vio;
+	for (i = 0; i < 2; i++) {
+		priv->irq_stream[i] = platform_get_irq(pdev, i + 1);
+		err |= priv->irq_stream[i];
+	}
+	if (err < 0) {
 		dev_err(&pdev->dev, "Failed to get required IRQs\n");
 		return -ENODEV;
 	}
@@ -2688,16 +2782,17 @@ static int vinc_probe(struct platform_device *pdev)
 	/* request irq */
 	err = devm_request_irq(&pdev->dev, priv->irq_vio, vinc_irq_vio,
 			       0, dev_name(&pdev->dev), priv);
-	err |= devm_request_irq(&pdev->dev, priv->irq_s0, vinc_irq_s0,
-			       0, dev_name(&pdev->dev), priv);
-	err |= devm_request_irq(&pdev->dev, priv->irq_s1, vinc_irq_s1,
-			       0, dev_name(&pdev->dev), priv);
+	for (i = 0; i < 2; i++)
+		err |= devm_request_irq(&pdev->dev, priv->irq_stream[i],
+					vinc_irq_stream, 0,
+					dev_name(&pdev->dev), &priv->stream[i]);
 	if (err) {
 		dev_err(&pdev->dev, "Failed to request required IRQs\n");
 		return err;
 	}
-	tasklet_init(&priv->stat_tasklet, vinc_stat_tasklet,
-		     (unsigned long)priv);
+	for (i = 0; i < 2; i++)
+		tasklet_init(&priv->stream[i].stat_tasklet, vinc_stat_tasklet,
+			     (unsigned long)&priv->stream[i]);
 
 	cmos_ctr = CMOS_CTR_PCLK_EN | CMOS_CTR_PCLK_SRC(0) |
 			CMOS_CTR_CLK_DIV(4) | CMOS_CTR_FSYNC_EN;
@@ -2710,7 +2805,7 @@ static int vinc_probe(struct platform_device *pdev)
 	/* GLOBAL_ENABLE need for generate clocks to sensor */
 	vinc_write(priv, AXI_MASTER_CFG, AXI_MASTER_CFG_MAX_BURST(2) |
 			AXI_MASTER_CFG_MAX_WR_ID(1) |
-			AXI_MASTER_CFG_BUF_LAYOUT(0x1) |
+			AXI_MASTER_CFG_BUF_LAYOUT(0x5) |
 			AXI_MASTER_CFG_4K_BOUND_EN |
 			AXI_MASTER_CFG_GLOBAL_EN);
 
@@ -2728,16 +2823,20 @@ static int vinc_remove(struct platform_device *pdev)
 	struct soc_camera_host *soc_host = to_soc_camera_host(&pdev->dev);
 	struct vinc_dev *priv = container_of(soc_host, struct vinc_dev, ici);
 	u32 reg = vinc_read(priv, AXI_MASTER_CFG);
+	int i;
 
 	reg &= ~AXI_MASTER_CFG_GLOBAL_EN;
 	vinc_write(priv, AXI_MASTER_CFG, reg);
 
-	if (priv->ici.icd && priv->ici.icd->host_priv)
-		kfree(priv->ici.icd->host_priv);
+	for (i = 0; i < 2; i++) {
+		if (priv->ici.icds[i] && priv->ici.icds[i]->host_priv)
+			kfree(priv->ici.icds[i]->host_priv);
+	}
 	soc_camera_host_unregister(soc_host);
 	if (platform_get_resource(pdev, IORESOURCE_MEM, 1))
 		dma_release_declared_memory(&pdev->dev);
-	vb2_dma_contig_cleanup_ctx(priv->alloc_ctx);
+	for (i = 0; i < 2; i++)
+		vb2_dma_contig_cleanup_ctx(priv->stream[i].alloc_ctx);
 
 	clk_disable_unprepare(priv->pclk);
 	clk_disable_unprepare(priv->aclk);
