@@ -10,6 +10,7 @@
 #define _UAPI__LINUX_VINC_H
 
 #include <linux/types.h>
+#include <linux/v4l2-controls.h>
 
 #define V4L2_CID_BAD_CORRECTION_ENABLE	(V4L2_CID_CAMERA_CLASS_BASE + 0x1000)
 #define V4L2_CID_BAD_PIXELS		(V4L2_CID_CAMERA_CLASS_BASE + 0x1001)
