@@ -8,6 +8,7 @@
 #include <linux/interrupt.h>
 #include <linux/of.h>
 #include <linux/platform_data/vpoutfb.h>
+#include <linux/spinlock.h>
 #include "it66121.h"
 
 #define PSEUDO_PALETTE_SIZE 16
@@ -21,6 +22,7 @@ struct vpoutfb_par {
 	struct it66121_device_data	hdmidata;
 	struct vpoutfb_format		*color_fmt;
 	struct tasklet_struct		reset_tasklet;
+	spinlock_t			reglock;
 
 #if defined CONFIG_OF && defined CONFIG_COMMON_CLK
 	int clk_count;

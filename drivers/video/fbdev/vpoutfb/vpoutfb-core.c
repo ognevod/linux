@@ -16,6 +16,7 @@
  * more details.
  */
 
+#include <linux/clk-provider.h>
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
 #include <linux/errno.h>
@@ -23,10 +24,10 @@
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/module.h>
+#include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/platform_data/vpoutfb.h>
-#include <linux/clk-provider.h>
-#include <linux/of_platform.h>
+#include <linux/spinlock.h>
 #include "vpoutfb.h"
 #include "it66121.h"
 
@@ -92,6 +93,7 @@ static void vpoutfb_hwreset(unsigned long data)
 
 	dev_err(info->dev, "Invalid output, choose smaller resolution\n");
 	par = info->par;
+	spin_lock(&par->reglock);
 	for (j = 0; j < 2; j++) {
 		iowrite32(CSR_EN, par->mmio_base + LCDCSR);
 		iowrite32(CSR_INIT | CSR_EN, par->mmio_base + LCDCSR);
@@ -103,6 +105,7 @@ static void vpoutfb_hwreset(unsigned long data)
 			dev_err(info->dev, "Initialization failed\n");
 	}
 	iowrite32(CSR_RUN | CSR_EN, par->mmio_base + LCDCSR);
+	spin_unlock(&par->reglock);
 }
 
 static int vpoutfb_check_var(struct fb_var_screeninfo *var,
@@ -164,6 +167,7 @@ static int vpoutfb_set_par(struct fb_info *info)
 	info->fix.line_length = var->xres *
 		par->color_fmt->bits_per_pixel / 8;
 	/* If the device is currently on, clear FIFO and power it off */
+	spin_lock(&par->reglock);
 	if (ioread32(par->mmio_base + LCDCSR) & CSR_EN) {
 		iowrite32(CSR_EN, par->mmio_base + LCDCSR);
 		iowrite32(CSR_EN|CSR_CLR, par->mmio_base + LCDCSR);
@@ -174,6 +178,7 @@ static int vpoutfb_set_par(struct fb_info *info)
 		}
 		if (i == CLEAR_MSEC) {
 			dev_err(info->dev, "FIFO clear looped\n");
+			spin_unlock(&par->reglock);
 			return -EBUSY;
 		}
 		iowrite32(0, par->mmio_base + LCDCSR);
@@ -188,6 +193,7 @@ static int vpoutfb_set_par(struct fb_info *info)
 	}
 	if (i == CLEAR_MSEC) {
 		dev_err(info->dev, "FIFO clear looped\n");
+		spin_unlock(&par->reglock);
 		return -EBUSY;
 	}
 	/* Configure video mode */
@@ -211,9 +217,11 @@ static int vpoutfb_set_par(struct fb_info *info)
 	}
 	if (i == CLEAR_MSEC) {
 		dev_err(info->dev, "Initialization failed\n");
+		spin_unlock(&par->reglock);
 		return -EBUSY;
 	}
 	iowrite32(CSR_RUN | CSR_EN, par->mmio_base + LCDCSR);
+	spin_unlock(&par->reglock);
 	if (par->hdmidata.client != NULL)
 		return it66121_init(&par->hdmidata, info);
 	return 0;
@@ -524,6 +532,7 @@ static int vpoutfb_probe(struct platform_device *pdev)
 	info->var.transp = pdata.format->transp;
 	par->color_fmt = pdata.format;
 
+	spin_lock_init(&par->reglock);
 
 	info->apertures = alloc_apertures(1);
 	if (!info->apertures) {
