@@ -436,9 +436,9 @@ struct vinc_cluster {
 struct vinc_dev {
 	struct soc_camera_host ici;
 
-	unsigned int irq_vio;
-	unsigned int irq_s0;
-	unsigned int irq_s1;
+	int irq_vio;
+	int irq_s0;
+	int irq_s1;
 	void __iomem *base;
 	struct tasklet_struct stat_tasklet;
 
