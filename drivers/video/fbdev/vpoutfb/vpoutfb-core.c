@@ -113,13 +113,24 @@ static int vpoutfb_check_var(struct fb_var_screeninfo *var,
 {
 	struct fb_var_screeninfo *oldvar;
 	struct fb_videomode *modecaret;
-	/*First thing first, color info STAYS SAME .*/
 	oldvar = &info->var;
-	var->bits_per_pixel = oldvar->bits_per_pixel;
-	var->grayscale = oldvar->grayscale;
+
+	/* SDL Applications zero out the var.<color> fields.
+	 * In order for them not to crash, we ignore changes to
+	 * those fields. However, we don't ignore changes to grayscale,
+	 * bits_per_pixel or transp since those mean apps want the pixel
+	 * scheme changed, and we can't have that.
+	 */
+	if (var->bits_per_pixel != oldvar->bits_per_pixel ||
+	    oldvar->grayscale != var->grayscale ||
+	    memcmp(&oldvar->transp, &var->transp,
+		   sizeof(struct fb_bitfield))) {
+		return -EINVAL;
+	}
 	var->red = oldvar->red;
 	var->green = oldvar->green;
 	var->blue = oldvar->blue;
+
 	/* While EDID reading is not implemented, just check via modedb */
 	/* When it is implemented, should check for buffer size violation */
 	for (modecaret = vpoutfb_guaranteed_modedb;
@@ -128,9 +139,9 @@ static int vpoutfb_check_var(struct fb_var_screeninfo *var,
 		    modecaret->yres == var->yres)
 			break;
 	}
-	/* Fall back on 720p */
+	/* Don't switch if not in modedb */
 	if (modecaret->name == NULL)
-		modecaret = vpoutfb_guaranteed_modedb;
+		return -EINVAL;
 	var->xres = modecaret->xres;
 	var->xres_virtual = var->xres;
 	var->yres = modecaret->yres;
