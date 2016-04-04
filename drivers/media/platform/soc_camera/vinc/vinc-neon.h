@@ -26,7 +26,15 @@ struct vector {
 	double offset[VINC_CC_OFFSET_COUNT];
 };
 
+struct ctrl_priv {
+	void *dowb;
+	void *brightness;
+	void *contrast;
+};
+
 void vinc_neon_calculate_v_bri(void *vector, s32 val);
+
+void vinc_neon_calculate_m_con(void *matrix, s32 val);
 
 void vinc_neon_calculate_m_wb(u32 sum_r, u32 sum_g, u32 sum_b, void *matrix);
 
@@ -34,7 +42,7 @@ void vinc_neon_calculate_gamma_curve(int value,
 		struct vinc_gamma_curve *gamma_ptr);
 
 /* Calculate CC matrix and offset */
-void vinc_neon_calculate_cc(void *ctrl_privs[],
+void vinc_neon_calculate_cc(struct ctrl_priv *ctrl_privs,
 		enum v4l2_ycbcr_encoding ycbcr_enc, struct vinc_cc *cc);
 
 #endif /* VINC_NEON_H */

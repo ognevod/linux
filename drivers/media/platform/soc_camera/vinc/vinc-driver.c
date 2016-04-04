@@ -402,6 +402,7 @@ struct vinc_cluster_cc {
 	struct v4l2_ctrl *enable;
 	struct v4l2_ctrl *cc;
 	struct v4l2_ctrl *brightness;
+	struct v4l2_ctrl *contrast;
 	struct v4l2_ctrl *dowb;
 };
 
@@ -1094,7 +1095,8 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		p_cc = cc->cc->p_cur.p;
 		/*TODO: is_new flags for other cc controls must be
 		added to std_is_new condition */
-		std_is_new = cc->dowb->is_new | cc->brightness->is_new;
+		std_is_new = cc->dowb->is_new | cc->brightness->is_new |
+			     cc->contrast->is_new;
 		init = cc->enable->is_new & cc->cc->is_new &
 			std_is_new;
 		cluster_activate(priv, devnum, STREAM_PROC_CFG_CC_EN,
@@ -1114,21 +1116,34 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 						cc->brightness->val);
 			kernel_neon_end();
 		}
-		if (std_is_new) {
-			void *ctrl_privs[] = { cc->dowb->priv,
-					   cc->brightness->priv };
+		if (cc->contrast->is_new) {
 			kernel_neon_begin();
-			vinc_neon_calculate_cc(ctrl_privs, stream->ycbcr_enc,
+			vinc_neon_calculate_m_con(cc->contrast->priv,
+						  cc->contrast->val);
+			kernel_neon_end();
+		}
+		if (std_is_new) {
+			struct ctrl_priv ctrl_privs = {
+				.dowb = cc->dowb->priv,
+				.brightness = cc->brightness->priv,
+				.contrast = cc->contrast->priv
+			};
+			kernel_neon_begin();
+			vinc_neon_calculate_cc(&ctrl_privs, stream->ycbcr_enc,
 					       cc->cc->p_cur.p);
 			kernel_neon_end();
 
 			cc->brightness->flags &= ~V4L2_CTRL_FLAG_WRITE_ONLY &
+					~V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
+			cc->contrast->flags &= ~V4L2_CTRL_FLAG_WRITE_ONLY &
 					~V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
 			cc->cc->flags |= V4L2_CTRL_FLAG_UPDATE;
 		} else if (cc->cc->is_new) {
 			p_cc = cc->cc->p_new.p;
 
 			cc->brightness->flags |= V4L2_CTRL_FLAG_WRITE_ONLY |
+					V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
+			cc->contrast->flags |= V4L2_CTRL_FLAG_WRITE_ONLY |
 					V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
 			cc->cc->flags &= ~V4L2_CTRL_FLAG_UPDATE;
 		}
@@ -1341,6 +1356,17 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 		.step  =  1,
 		.def   =  0,
 		.flags =  V4L2_CTRL_FLAG_UPDATE
+	},
+	{
+		.ops   = &ctrl_ops,
+		.id    = V4L2_CID_CONTRAST,
+		.name  = "Contrast",
+		.type  = V4L2_CTRL_TYPE_INTEGER,
+		.min   = 0,
+		.max   = 255,
+		.step  = 1,
+		.def   = 128,
+		.flags = V4L2_CTRL_FLAG_UPDATE
 	},
 	{
 		.ops = &ctrl_ops,
@@ -1786,6 +1812,7 @@ static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 	stream->cluster.cc.cc = v4l2_ctrl_find(hdl, V4L2_CID_CC);
 	stream->cluster.cc.brightness = v4l2_ctrl_find(hdl,
 			V4L2_CID_BRIGHTNESS);
+	stream->cluster.cc.contrast = v4l2_ctrl_find(hdl, V4L2_CID_CONTRAST);
 	stream->cluster.cc.dowb = v4l2_ctrl_find(hdl,
 			V4L2_CID_DO_WHITE_BALANCE);
 	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_cc),
@@ -1822,6 +1849,9 @@ static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 	stream->cluster.cc.brightness->priv = devm_kmalloc(
 			priv->ici.v4l2_dev.dev,
 			sizeof(struct vector), GFP_KERNEL);
+	stream->cluster.cc.contrast->priv = devm_kmalloc(
+			priv->ici.v4l2_dev.dev, sizeof(struct matrix),
+			GFP_KERNEL);
 	stream->cluster.cc.dowb->priv = kzalloc(sizeof(struct matrix),
 						GFP_KERNEL);
 	kernel_neon_begin();

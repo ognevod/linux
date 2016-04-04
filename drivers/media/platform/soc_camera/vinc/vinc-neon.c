@@ -281,6 +281,17 @@ void vinc_neon_calculate_v_bri(void *vector, s32 val)
 		v->offset[i] = 0;
 }
 
+void vinc_neon_calculate_m_con(void *matrix, s32 val)
+{
+	struct matrix *con = (struct matrix *)matrix;
+
+	*con = (struct matrix) {
+		.coeff[0] = tan((double)val * PI / 512),
+		.coeff[4] = 1,
+		.coeff[8] = 1
+	};
+}
+
 void vinc_neon_calculate_m_wb(u32 sum_r, u32 sum_g, u32 sum_b, void *matrix)
 {
 	struct matrix *wb = (struct matrix *)matrix;
@@ -348,48 +359,79 @@ static void vxv_add(struct vector *sum, const struct vector *v1,
 }
 
 /*  Calculate CC coefficient matrix. Uses controls matrices and vectors */
-static void cc_matrix_calc(struct matrix *coeff, void *ctrl_privs[],
-				u8 vinc_enc)
+static void cc_matrix_calc(struct matrix *coeff, struct ctrl_priv *ctrl_privs,
+			   u8 vinc_enc)
 {
 	struct matrix tmp1;
 	struct matrix tmp2;
 
-	struct matrix *wb = (struct matrix *)ctrl_privs[0];
+	struct matrix *m_wb = (struct matrix *)ctrl_privs->dowb;
+	struct matrix *m_con = (struct matrix *)ctrl_privs->contrast;
 
-	/* V4L2_CID_DO_WHITE_BALANCE control matrix and RGB->YCbCr matrix
-	 * multiplication */
-	mxm_mult(&tmp2, &m_ycbcr[vinc_enc], wb);
+	/* M_cc = M_rgb*M_con*M_ycbcr*M_wb
+	 *                           ^    */
+	mxm_mult(&tmp2, &m_ycbcr[vinc_enc], m_wb);
 
-	/* YCbCr->RGB matrix multiplication */
-	mxm_mult(&tmp1, &m_rgb[vinc_enc][1], &tmp2);
+	/* M_cc = M_rgb*M_con*M_ycbcr*M_wb
+	 *                   ^            */
+	mxm_mult(&tmp1, m_con, &tmp2);
 
-	*coeff = tmp1;
+	/* M_cc = M_rgb*M_con*M_ycbcr*M_wb
+	 *	       ^                  */
+	mxm_mult(&tmp2, &m_rgb[vinc_enc][1], &tmp1);
+
+	*coeff = tmp2;
 }
 
 /* Calculate CC offset vector according to control matrices and vectors */
-static void cc_vector_calc(struct vector *offset, void *ctrl_privs[],
-				u8 vinc_enc)
+static void cc_vector_calc(struct vector *offset, struct ctrl_priv *ctrl_privs,
+			   u8 vinc_enc)
 {
 	struct vector tmp1;
 	struct vector tmp2;
+	struct vector half_plus = {
+		.offset[0] = 2048,
+		.offset[1] = 2048,
+		.offset[2] = 2048
+	};
+	struct vector half_minus = {
+		.offset[0] = -2048,
+		.offset[1] = -2048,
+		.offset[2] = -2048
+	};
+	struct vector *v_bri = (struct vector *)ctrl_privs->brightness;
+	struct matrix *m_con = (struct matrix *)ctrl_privs->contrast;
 
-	struct vector *v_bri = (struct vector *)ctrl_privs[1];
+	/* V_cc = M_rgb*(M_con*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
+	 *			       ^                           */
+	vxv_add(&tmp2, &v_ycbcr, &half_minus);
 
-	/* RGB->YCbCr vector and V4L2_CID_BRIGHTNESS control vector addition */
-	vxv_add(&tmp2, &v_ycbcr, v_bri);
+	/* V_cc = M_rgb*(M_con*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
+	 *		      ^                                    */
+	mxv_mult(&tmp1, m_con, &tmp2);
 
-	/* YCbCr->RGB matrix multiplication */
-	mxv_mult(&tmp1, &m_rgb[vinc_enc][1], &tmp2);
+	/* V_cc = M_rgb*(M_con*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
+	 *				       ^                   */
+	vxv_add(&tmp2, v_bri, &tmp1);
 
-	/* YCbCr->RGB vector addition */
-	vxv_add(&tmp2, &v_rgb[vinc_enc][1], &tmp1);
+	/* V_cc = M_rgb*(M_con*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
+	 *					     ^             */
+	vxv_add(&tmp1, &half_plus, &tmp2);
 
-	*offset = tmp2;
+	/* V_cc = M_rgb*(M_con*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
+	 *	       ^                                           */
+	mxv_mult(&tmp2, &m_rgb[vinc_enc][1], &tmp1);
+
+	/* V_cc = M_rgb*(M_con*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
+	 *						     ^     */
+	vxv_add(&tmp1, &v_rgb[vinc_enc][1], &tmp2);
+
+	*offset = tmp1;
 }
 
 /* Color Correction coefficient matrix, offset vector and scaling register
  * calculation routine */
-void vinc_neon_calculate_cc(void *ctrl_privs[],
+void vinc_neon_calculate_cc(struct ctrl_priv *ctrl_privs,
 		enum v4l2_ycbcr_encoding ycbcr_enc, struct vinc_cc *cc)
 {
 	struct matrix coeff;
