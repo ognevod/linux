@@ -393,6 +393,7 @@ struct ov772x_win_size {
 struct ov772x_priv {
 	struct v4l2_subdev                subdev;
 	struct v4l2_ctrl_handler	  hdl;
+	struct soc_camera_subdev_desc	  ssdd_dt;
 	struct v4l2_clk			 *clk;
 	struct ov772x_camera_info        *info;
 	const struct ov772x_color_format *cfmt;
@@ -1030,6 +1031,47 @@ static struct v4l2_subdev_ops ov772x_subdev_ops = {
 	.video	= &ov772x_subdev_video_ops,
 };
 
+static int ov772x_probe_dt(struct i2c_client *client, struct ov772x_priv *priv)
+{
+	int ret;
+	u8 value;
+
+	priv->info = devm_kzalloc(&client->dev, sizeof(*priv->info),
+				  GFP_KERNEL);
+	if (!priv->info)
+		return -ENOMEM;
+
+	if (of_property_read_bool(client->dev.of_node, "ov772x,vflip"))
+		priv->info->flags |= OV772X_FLAG_VFLIP;
+	if (of_property_read_bool(client->dev.of_node, "ov772x,hflip"))
+		priv->info->flags |= OV772X_FLAG_HFLIP;
+
+	ret = of_property_read_u8(client->dev.of_node, "edge-threshold",
+				  &value);
+	if (!ret) {
+		priv->info->edgectrl.threshold = value;
+		ret = of_property_read_u8(client->dev.of_node, "edge-strength",
+					  &value);
+		if (!ret)
+			priv->info->edgectrl.strength = value |
+					OV772X_MANUAL_EDGE_CTRL;
+	}
+	ret = of_property_read_u8(client->dev.of_node, "edge-upper",
+				  &value);
+	if (!ret)
+		priv->info->edgectrl.upper = value;
+
+	ret = of_property_read_u8(client->dev.of_node, "edge-lower",
+				  &value);
+	if (!ret)
+		priv->info->edgectrl.lower = value;
+
+	client->dev.platform_data = &priv->ssdd_dt;
+	priv->ssdd_dt.drv_priv = priv->info;
+
+	return 0;
+}
+
 /*
  * i2c_driver function
  */
@@ -1042,11 +1084,6 @@ static int ov772x_probe(struct i2c_client *client,
 	struct i2c_adapter	*adapter = to_i2c_adapter(client->dev.parent);
 	int			ret;
 
-	if (!ssdd || !ssdd->drv_priv) {
-		dev_err(&client->dev, "OV772X: missing platform data!\n");
-		return -EINVAL;
-	}
-
 	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE_DATA)) {
 		dev_err(&adapter->dev,
 			"I2C-Adapter doesn't support "
@@ -1058,7 +1095,16 @@ static int ov772x_probe(struct i2c_client *client,
 	if (!priv)
 		return -ENOMEM;
 
-	priv->info = ssdd->drv_priv;
+	if ((!ssdd || !ssdd->drv_priv) && !client->dev.of_node) {
+		dev_err(&client->dev, "OV772X: missing platform data!\n");
+		return -EINVAL;
+	}
+	if (!ssdd || !ssdd->drv_priv) {
+		ret = ov772x_probe_dt(client, priv);
+		if (ret)
+			return ret;
+	} else
+		priv->info = ssdd->drv_priv;
 
 	v4l2_i2c_subdev_init(&priv->subdev, client, &ov772x_subdev_ops);
 	v4l2_ctrl_handler_init(&priv->hdl, 3);
@@ -1079,14 +1125,15 @@ static int ov772x_probe(struct i2c_client *client,
 	}
 
 	ret = ov772x_video_probe(priv);
-	if (ret < 0) {
-		v4l2_clk_put(priv->clk);
-eclkget:
-		v4l2_ctrl_handler_free(&priv->hdl);
-	} else {
+	if (!ret) {
 		priv->cfmt = &ov772x_cfmts[0];
 		priv->win = &ov772x_win_sizes[0];
+		return v4l2_async_register_subdev(&priv->subdev);
 	}
+
+	v4l2_clk_put(priv->clk);
+eclkget:
+	v4l2_ctrl_handler_free(&priv->hdl);
 
 	return ret;
 }
@@ -1096,7 +1143,7 @@ static int ov772x_remove(struct i2c_client *client)
 	struct ov772x_priv *priv = to_ov772x(i2c_get_clientdata(client));
 
 	v4l2_clk_put(priv->clk);
-	v4l2_device_unregister_subdev(&priv->subdev);
+	v4l2_async_unregister_subdev(&priv->subdev);
 	v4l2_ctrl_handler_free(&priv->hdl);
 	return 0;
 }
