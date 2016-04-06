@@ -424,7 +424,7 @@ void vinc_calculate_cc(void *ctrl_privs[], enum v4l2_ycbcr_encoding ycbcr_enc,
 	u8 scaling;
 
 	u16 i;
-	u16 max_coeff = 0;
+	double max_abs = 0;
 	u8 vinc_enc;
 	u8 vinc_qnt;
 
@@ -461,13 +461,20 @@ void vinc_calculate_cc(void *ctrl_privs[], enum v4l2_ycbcr_encoding ycbcr_enc,
 	cc_vector_calc(&offset, ctrl_privs, vinc_enc, vinc_qnt);
 	/*  Scaling calculation */
 	for (i = 0; i < VINC_CC_COEFF_COUNT; i++)
-		if ((u16)fabs(coeff.coeff[i]) > max_coeff)
-			max_coeff = (u16)fabs(coeff.coeff[i]);
+		if (fabs(coeff.coeff[i]) > max_abs)
+			max_abs = fabs(coeff.coeff[i]);
 
-	if (max_coeff == 0)
+	if (max_abs < 1)
 		scaling = 0;
 	else
-		scaling = ilog2(max_coeff) + 1;
+		scaling = ilog2((u16)max_abs) + 1;
+
+	max_abs = max_abs + pow(2, scaling - 16);
+
+	if (max_abs < 1)
+		scaling = 0;
+	else
+		scaling = ilog2((u16)max_abs) + 1;
 
 	/* Vector, matrix and scaling write to CC cache */
 	cc->scaling = scaling;
