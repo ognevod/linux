@@ -255,7 +255,7 @@ const struct vector v_rgb[4][2] = {
 	}
 };
 
-void vinc_calculate_gamma_curve(int value, struct vinc_gamma_curve *gamma)
+void vinc_neon_calculate_gamma_curve(int value, struct vinc_gamma_curve *gamma)
 {
 	double gamma_dbl, cur_dbl;
 	int i, cur;
@@ -271,7 +271,7 @@ void vinc_calculate_gamma_curve(int value, struct vinc_gamma_curve *gamma)
 }
 
 /* Matrices and vectors for CC controls */
-void vinc_calculate_v_bri(void *vector, s32 val)
+void vinc_neon_calculate_v_bri(void *vector, s32 val)
 {
 	u8 i;
 	struct vector *v = (struct vector *)vector;
@@ -281,8 +281,7 @@ void vinc_calculate_v_bri(void *vector, s32 val)
 		v->offset[i] = 0;
 }
 
-void vinc_calculate_m_wb(u32 sum_r, u32 sum_g, u32 sum_b,
-			      void *matrix)
+void vinc_neon_calculate_m_wb(u32 sum_r, u32 sum_g, u32 sum_b, void *matrix)
 {
 	struct matrix *wb = (struct matrix *)matrix;
 
@@ -390,8 +389,9 @@ static void cc_vector_calc(struct vector *offset, void *ctrl_privs[],
 
 /* Color Correction coefficient matrix, offset vector and scaling register
  * calculation routine */
-void vinc_calculate_cc(void *ctrl_privs[], enum v4l2_ycbcr_encoding ycbcr_enc,
-		       enum v4l2_quantization quantization, struct vinc_cc *cc)
+void vinc_neon_calculate_cc(void *ctrl_privs[],
+		enum v4l2_ycbcr_encoding ycbcr_enc,
+		enum v4l2_quantization quantization, struct vinc_cc *cc)
 {
 	struct matrix coeff;
 	struct vector offset;
