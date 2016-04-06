@@ -98,7 +98,8 @@ static void vpoutfb_hwreset(unsigned long data)
 	int i, j;
 	struct vpoutfb_par *par;
 
-	dev_err(info->dev, "Invalid output, choose smaller resolution\n");
+	dev_err(info->dev,
+		"Caught OUT_FIFO_INT interrupt, reinitializing VPOUT\n");
 	par = info->par;
 	spin_lock(&par->reglock);
 	for (j = 0; j < 2; j++) {
