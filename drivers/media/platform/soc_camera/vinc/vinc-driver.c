@@ -1871,6 +1871,7 @@ static void color_space_adjust(u32 *colorspace, u32 *ycbcr_enc,
 	switch (*colorspace) {
 	case V4L2_COLORSPACE_REC709:
 	case V4L2_COLORSPACE_BT2020:
+	case V4L2_COLORSPACE_SRGB:
 		break;
 	/* SMPTE 170M */
 	default:
@@ -1882,6 +1883,7 @@ static void color_space_adjust(u32 *colorspace, u32 *ycbcr_enc,
 	case V4L2_YCBCR_ENC_601:
 	case V4L2_YCBCR_ENC_709:
 	case V4L2_YCBCR_ENC_BT2020:
+	case V4L2_YCBCR_ENC_SYCC:
 		break;
 	default:
 		switch (*colorspace) {
@@ -1890,6 +1892,9 @@ static void color_space_adjust(u32 *colorspace, u32 *ycbcr_enc,
 			break;
 		case V4L2_COLORSPACE_BT2020:
 			*ycbcr_enc = V4L2_YCBCR_ENC_BT2020;
+			break;
+		case V4L2_COLORSPACE_SRGB:
+			*ycbcr_enc = V4L2_YCBCR_ENC_SYCC;
 			break;
 		default:
 			*ycbcr_enc = V4L2_YCBCR_ENC_601;
@@ -1900,13 +1905,17 @@ static void color_space_adjust(u32 *colorspace, u32 *ycbcr_enc,
 
 	switch (*quantization) {
 	case V4L2_QUANTIZATION_FULL_RANGE:
+	case V4L2_QUANTIZATION_LIM_RANGE:
 		break;
-	/* default quantization is set to limited,
-	 * cause all current color spaces have limited range by default
-	 * if you need to add more color spaces,
-	 * check default quantization for them */
 	default:
-		*quantization = V4L2_QUANTIZATION_LIM_RANGE;
+		switch (*colorspace) {
+		case V4L2_COLORSPACE_SRGB:
+			*quantization = V4L2_QUANTIZATION_FULL_RANGE;
+			break;
+		default:
+			*quantization = V4L2_QUANTIZATION_LIM_RANGE;
+			break;
+		}
 		break;
 	}
 }
