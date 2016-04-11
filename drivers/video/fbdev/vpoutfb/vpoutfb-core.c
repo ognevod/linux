@@ -57,6 +57,7 @@
 #define INT_OUTEMPTY	BIT(3)
 #define INT_VSYNC	BIT(5)
 
+/* UNDIVPIXCLK is undivided pixclock in picoseconds for 432MHz */
 #define UNDIVPIXCLK 2315
 #define MAX_BUFSIZE (1920 * 1080 * 4)
 #define CLEAR_MSEC 40
@@ -74,6 +75,15 @@ static struct fb_var_screeninfo vpoutfb_var = {
 	.activate	= FB_ACTIVATE_NOW,
 	.vmode		= FB_VMODE_NONINTERLACED,
 };
+
+static inline u32 hz_to_ps(unsigned int rate)
+{
+	u32 ps_in_us = 1000000;
+
+	/* convert to times / microsecond */
+	rate /= 1000000;
+	return ps_in_us / rate;
+}
 
 static struct fb_videomode vpoutfb_guaranteed_modedb[] = {
 	{"720p@59.94", 0, 1280, 720, 13890, 220, 110, 20, 5, 40, 5, 0,
@@ -166,7 +176,7 @@ static int vpoutfb_check_var(struct fb_var_screeninfo *var,
 
 static int vpoutfb_set_par(struct fb_info *info)
 {
-	int hsw, hgdel, hgate, hlen, vsw, vgdel, vgate, vlen, div, i;
+	int hsw, hgdel, hgate, hlen, vsw, vgdel, vgate, vlen, div, i, undiv;
 	struct fb_var_screeninfo *var;
 	struct vpoutfb_par *par;
 
@@ -182,7 +192,11 @@ static int vpoutfb_set_par(struct fb_info *info)
 		var->right_margin + var->hsync_len - 1;
 	vlen = var->yres + var->upper_margin +
 		var->lower_margin + var->vsync_len - 1;
-	div = var->pixclock / UNDIVPIXCLK - 1;
+	if (par->clk_count == 2)
+		undiv = hz_to_ps(clk_get_rate(par->clks[1]));
+	else
+		undiv = UNDIVPIXCLK;
+	div = DIV_ROUND_CLOSEST(var->pixclock, undiv) - 1;
 	info->fix.line_length = var->xres *
 		par->color_fmt->bits_per_pixel / 8;
 	/* If the device is currently on, clear FIFO and power it off */
