@@ -474,7 +474,7 @@ static const struct ov772x_color_format ov772x_cfmts[] = {
 		.dsp3		= 0x0,
 		.dsp4		= DSP_OFMT_RAW10,
 		.com3		= 0x0,
-		.com7		= SENSOR_RAW | OFMT_BRAW,
+		.com7		= OFMT_BRAW,
 	},
 };
 
