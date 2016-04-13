@@ -517,13 +517,19 @@ static struct ov772x_priv *to_ov772x(struct v4l2_subdev *sd)
 static inline int ov772x_read(struct i2c_client *client, u8 addr)
 {
 	int ret;
+	int retry = 0;
 	u8 val;
 
-	ret = i2c_master_send(client, &addr, 1);
+	do {
+		ret = i2c_master_send(client, &addr, 1);
+	} while (ret < 1 && retry++ < 10);
 	if (ret < 1)
 		return ret < 0 ? ret : -EIO;
 
-	ret = i2c_master_recv(client, &val, 1);
+	retry = 0;
+	do {
+		ret = i2c_master_recv(client, &val, 1);
+	} while (ret < 1 && retry++ < 10);
 	if (ret < 1)
 		return ret < 0 ? ret : -EIO;
 
@@ -533,9 +539,12 @@ static inline int ov772x_read(struct i2c_client *client, u8 addr)
 static inline int ov772x_write(struct i2c_client *client, u8 addr, u8 value)
 {
 	int ret;
+	int retry = 0;
 	u8 data[3] = { addr, value };
 
-	ret = i2c_master_send(client, data, 2);
+	do {
+		ret = i2c_master_send(client, data, 2);
+	} while (ret < 2 && retry++ < 10);
 
 	if (ret != 2)
 		return ret < 0 ? ret : -EIO;
