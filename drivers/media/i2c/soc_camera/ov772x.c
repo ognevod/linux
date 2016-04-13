@@ -516,12 +516,31 @@ static struct ov772x_priv *to_ov772x(struct v4l2_subdev *sd)
 
 static inline int ov772x_read(struct i2c_client *client, u8 addr)
 {
-	return i2c_smbus_read_byte_data(client, addr);
+	int ret;
+	u8 val;
+
+	ret = i2c_master_send(client, &addr, 1);
+	if (ret < 1)
+		return ret < 0 ? ret : -EIO;
+
+	ret = i2c_master_recv(client, &val, 1);
+	if (ret < 1)
+		return ret < 0 ? ret : -EIO;
+
+	return val;
 }
 
 static inline int ov772x_write(struct i2c_client *client, u8 addr, u8 value)
 {
-	return i2c_smbus_write_byte_data(client, addr, value);
+	int ret;
+	u8 data[3] = { addr, value };
+
+	ret = i2c_master_send(client, data, 2);
+
+	if (ret != 2)
+		return ret < 0 ? ret : -EIO;
+
+	return 0;
 }
 
 static int ov772x_mask_set(struct i2c_client *client, u8  command, u8  mask,
