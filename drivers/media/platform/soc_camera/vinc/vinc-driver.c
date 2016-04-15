@@ -33,6 +33,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/sched.h>
 #include <linux/clk.h>
+#include <linux/workqueue.h>
 
 #include <media/v4l2-async.h>
 #include <media/v4l2-common.h>
@@ -383,6 +384,8 @@
 
 #define CLUSTER_SIZE(c) (sizeof(c) / sizeof(struct v4l2_ctrl *))
 
+#define AWB_MEMBER_NUM 4
+
 enum vinc_input_format { UNKNOWN, BAYER, RGB, YCbCr };
 
 struct vinc_cluster_bp {
@@ -401,12 +404,13 @@ struct vinc_cluster_gamma {
 struct vinc_cluster_cc {
 	struct v4l2_ctrl *enable;
 	struct v4l2_ctrl *cc;
-	struct v4l2_ctrl *dowb;
+	struct v4l2_ctrl *ck;
 	struct v4l2_ctrl *brightness;
 	struct v4l2_ctrl *contrast;
 	struct v4l2_ctrl *saturation;
 	struct v4l2_ctrl *hue;
-	struct v4l2_ctrl *ck;
+	struct v4l2_ctrl *awb;
+	struct v4l2_ctrl *dowb;
 	struct v4l2_ctrl *rb;
 	struct v4l2_ctrl *bb;
 	struct v4l2_ctrl *wbt;
@@ -470,6 +474,8 @@ struct vinc_stream {
 	int sequence;
 
 	u8 devnum;
+
+	struct work_struct stat_work;
 };
 
 struct vinc_dev {
@@ -1002,6 +1008,20 @@ static void cluster_activate(struct vinc_dev *priv, u8 devnum, u32 block_mask,
 		v4l2_ctrl_activate(cluster[i], master->val);
 }
 
+static void cluster_activate_auto(bool activate, struct v4l2_ctrl **cluster,
+				  u8 num)
+{
+	int i;
+
+	for (i = 0; i < num; i++) {
+		v4l2_ctrl_activate(cluster[i], activate);
+		if (!activate)
+			cluster[i]->flags |= V4L2_CTRL_FLAG_VOLATILE;
+		else
+			cluster[i]->flags &= ~V4L2_CTRL_FLAG_VOLATILE;
+	}
+}
+
 static void cluster_activate_only(struct v4l2_ctrl **cluster)
 {
 	struct v4l2_ctrl *master = cluster[0];
@@ -1113,9 +1133,11 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 	}
 	case V4L2_CID_CC_ENABLE: {
 		struct vinc_cc *p_cc;
-		cc = (struct vinc_cluster_cc *)ctrl->cluster;
+		bool activate;
 
+		cc = (struct vinc_cluster_cc *)ctrl->cluster;
 		p_cc = cc->cc->p_cur.p;
+
 		/*TODO: is_new flags for other cc controls must be
 		added to std_is_new condition */
 
@@ -1130,28 +1152,31 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 
 		cluster_activate(priv, devnum, STREAM_PROC_CFG_CC_EN,
 				 ctrl->cluster);
+		activate = (cc->awb->val) ? 0 : 1;
+		cluster_activate_auto(activate, &cc->cc, 1);
+		cluster_activate_auto(activate, &cc->dowb, AWB_MEMBER_NUM);
 
-		if ((cc->dowb->is_new || cc->wbt->is_new) && !init) {
+		if ((cc->dowb->is_new || cc->wbt->is_new) && !init &&
+					!cc->awb->cur.val) {
 			struct vinc_stat_add *add;
-			s32 *cptr[] = { &cc->rb->val, &cc->bb->val };
 			u32 temp = 0;
 
 			if (cc->wbt->is_new) {
 				temp = cc->wbt->val;
-				change_write_only(ctrl->cluster, 5, 0);
+				change_write_only(ctrl->cluster, 11, 0);
 			}
 			add = stream->cluster.stat.add[3]->p_cur.p;
 
 			kernel_neon_begin();
 			vinc_neon_wb_stat(add->sum_r, add->sum_g, add->sum_b,
-					  temp, cptr);
+					  temp, &cc->rb->val, &cc->bb->val);
 			kernel_neon_end();
 			cc->rb->has_changed = 1;
 			cc->bb->has_changed = 1;
 		}
 
-		if (cc->dowb->is_new || cc->rb->is_new || cc->bb->is_new ||
-			cc->wbt->is_new) {
+		if ((cc->dowb->is_new || cc->rb->is_new || cc->bb->is_new ||
+			cc->wbt->is_new) && !cc->awb->cur.val) {
 			kernel_neon_begin();
 			vinc_neon_calculate_m_wb(cc->rb->val, cc->bb->val,
 						 cc->dowb->priv);
@@ -1159,8 +1184,8 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		}
 
 		if ((cc->dowb->is_new || cc->rb->is_new || cc->bb->is_new)
-			&& !init)
-			change_write_only(ctrl->cluster, 5, 1);
+			&& !init  && !cc->awb->cur.val)
+			change_write_only(ctrl->cluster, 11, 1);
 
 		if (cc->brightness->is_new) {
 			kernel_neon_begin();
@@ -1182,6 +1207,7 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 						  cc->saturation->val);
 			kernel_neon_end();
 		}
+
 		if (cc->hue->is_new) {
 			kernel_neon_begin();
 			vinc_neon_calculate_m_hue(cc->hue->priv, cc->hue->val);
@@ -1193,6 +1219,9 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 			vinc_neon_calculate_m_ck(cc->ck->priv, cc->ck->val);
 			kernel_neon_end();
 		}
+
+		if (cc->awb->is_new && !cc->awb->val)
+			cancel_work_sync(&stream->stat_work);
 
 		if (std_is_new) {
 			struct ctrl_priv ctrl_privs = {
@@ -1209,7 +1238,7 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 			kernel_neon_end();
 			change_write_only(ctrl->cluster, 2, 0);
 			cc->cc->flags |= V4L2_CTRL_FLAG_UPDATE;
-		} else if (cc->cc->is_new) {
+		} else if (cc->cc->is_new && !cc->awb->cur.val) {
 			p_cc = cc->cc->p_new.p;
 			change_write_only(ctrl->cluster, 2, 1);
 			cc->cc->flags &= ~V4L2_CTRL_FLAG_UPDATE;
@@ -1517,6 +1546,17 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 		.max = 9000,
 		.step = 10,
 		.def = 6500,
+		.flags = V4L2_CTRL_FLAG_UPDATE
+	},
+	{
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_AUTO_WHITE_BALANCE,
+		.name = "White balance, Automatic",
+		.type = V4L2_CTRL_TYPE_BOOLEAN,
+		.min = 0,
+		.max = 1,
+		.step = 1,
+		.def = 0,
 		.flags = V4L2_CTRL_FLAG_UPDATE
 	},
 	{
@@ -1908,6 +1948,38 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	},
 };
 
+static void auto_stat_work(struct work_struct *work)
+{
+	struct vinc_stream *stream = container_of(work, struct vinc_stream,
+						  stat_work);
+	const u8 devnum = stream->devnum;
+	struct vinc_dev *priv = container_of(stream, struct vinc_dev,
+					     stream[devnum]);
+	struct vinc_cluster_cc *cc = &stream->cluster.cc;
+	struct vinc_stat_add *add = stream->cluster.stat.add[3]->p_cur.p;
+	struct ctrl_priv ctrl_privs = {
+		.dowb = cc->dowb->priv,
+		.brightness = cc->brightness->priv,
+		.contrast = cc->contrast->priv,
+		.saturation = cc->saturation->priv,
+		.hue = cc->hue->priv,
+		.ck = cc->ck->priv
+	};
+
+	if (cc->awb->val) {
+		kernel_neon_begin();
+		vinc_neon_wb_stat(add->sum_r, add->sum_g, add->sum_b, 0,
+				  cc->rb->p_cur.p_s32, cc->bb->p_cur.p_s32);
+		vinc_neon_calculate_m_wb(*cc->rb->p_cur.p_s32,
+					 *cc->bb->p_cur.p_s32, cc->dowb->priv);
+		vinc_neon_calculate_cc(&ctrl_privs, stream->ycbcr_enc,
+				       cc->cc->p_cur.p);
+		kernel_neon_end();
+
+		set_cc_ct(priv, devnum, cc->cc->p_cur.p, 0);
+	}
+}
+
 static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 				struct vinc_stream *stream)
 {
@@ -1956,6 +2028,9 @@ static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 	stream->cluster.cc.bb = v4l2_ctrl_find(hdl, V4L2_CID_BLUE_BALANCE);
 	stream->cluster.cc.wbt = v4l2_ctrl_find(hdl,
 			V4L2_CID_WHITE_BALANCE_TEMPERATURE);
+	stream->cluster.cc.awb = v4l2_ctrl_find(hdl,
+			V4L2_CID_AUTO_WHITE_BALANCE);
+
 	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_cc),
 			  &stream->cluster.cc.enable);
 
@@ -1987,6 +2062,7 @@ static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 			  &stream->cluster.stat.enable);
 
 	stream->test_pattern = v4l2_ctrl_find(hdl, V4L2_CID_TEST_PATTERN);
+
 	stream->cluster.cc.brightness->priv = devm_kmalloc(
 			priv->ici.v4l2_dev.dev,
 			sizeof(struct vector), GFP_KERNEL);
@@ -2004,6 +2080,9 @@ static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 			GFP_KERNEL);
 	stream->cluster.cc.dowb->priv = kzalloc(sizeof(struct matrix),
 						GFP_KERNEL);
+
+	INIT_WORK(&priv->stream[0].stat_work, auto_stat_work);
+	INIT_WORK(&priv->stream[1].stat_work, auto_stat_work);
 	return hdl->error;
 }
 
@@ -2487,7 +2566,6 @@ static void vinc_configure(struct vinc_dev *priv, struct soc_camera_device *icd)
 	zone->x_rb = stream->crop1.c.left + stream->crop1.c.width - 1;
 	zone->y_rb = stream->crop1.c.top + stream->crop1.c.height - 1;
 	stream->cluster.stat.enable->val = 0x4;
-
 	proc_cfg = vinc_read(priv, STREAM_PROC_CFG(devnum));
 	proc_cfg |= STREAM_PROC_CFG_STT_EN(stream->cluster.stat.enable->val);
 	vinc_write(priv, STREAM_PROC_CFG(devnum), proc_cfg);
@@ -2782,6 +2860,8 @@ static void vinc_stat_tasklet(unsigned long data)
 				   STREAM_PROC_CLEAR_ADD_CLR);
 		}
 	}
+
+	schedule_work(&stream->stat_work);
 }
 
 static void vinc_eof_handler(struct vinc_stream *stream)

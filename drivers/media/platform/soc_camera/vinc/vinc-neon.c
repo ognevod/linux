@@ -347,7 +347,7 @@ static void t2rgb_interpolate(u32 t, double rgb[3])
 	}
 }
 
-void vinc_neon_wb_stat(u32 red, u32 green, u32 blue, u32 t, s32 *cptr[])
+void vinc_neon_wb_stat(u32 red, u32 green, u32 blue, u32 t, s32 *rb, s32 *bb)
 {
 	double green_level = 1.0;
 	double rgb[3], Kr, Kg, Kb;
@@ -364,8 +364,8 @@ void vinc_neon_wb_stat(u32 red, u32 green, u32 blue, u32 t, s32 *cptr[])
 		Kb = (double)green / blue;
 	}
 
-	*cptr[0] = rint((Kr / (Kr + 1)) * 256 - 128);
-	*cptr[1] = rint((Kb / (Kb + 1)) * 256 - 128);
+	*rb = rint((Kr / (Kr + 1)) * 256 - 128);
+	*bb = rint((Kb / (Kb + 1)) * 256 - 128);
 }
 
 void vinc_neon_calculate_m_wb(u32 rb, u32 bb, void *matrix)
