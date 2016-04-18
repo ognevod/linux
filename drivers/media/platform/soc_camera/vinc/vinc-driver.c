@@ -775,6 +775,13 @@ static int vinc_start_streaming(struct vb2_queue *q, unsigned int count)
 		} while (!(csi2_intr & BIT(9)) && retry_count--);
 
 		if (retry_count < 0) {
+			struct vinc_buffer *buf, *tmp;
+
+			list_for_each_entry_safe(buf, tmp,
+						 &stream->capture, queue) {
+				list_del_init(&buf->queue);
+				vb2_buffer_done(&buf->vb, VB2_BUF_STATE_QUEUED);
+			}
 			dev_err(icd->parent,
 				"Can not receive video from sensor\n");
 			return -EIO;
