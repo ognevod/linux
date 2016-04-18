@@ -999,8 +999,7 @@ static void cluster_activate(struct vinc_dev *priv, u8 devnum, u32 block_mask,
 		v4l2_ctrl_activate(cluster[i], master->val);
 }
 
-static void cluster_activate_only(struct vinc_dev *priv,
-				  struct v4l2_ctrl **cluster)
+static void cluster_activate_only(struct v4l2_ctrl **cluster)
 {
 	struct v4l2_ctrl *master = cluster[0];
 	int i;
@@ -1079,7 +1078,7 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		}
 
 		if (gamma->enable->is_new)
-			cluster_activate_only(priv, ctrl->cluster);
+			cluster_activate_only(ctrl->cluster);
 
 		if (gamma->enable->val && (gamma->gamma->val != 16 ||
 			gamma->gamma->flags & V4L2_CTRL_FLAG_WRITE_ONLY)) {
