@@ -273,12 +273,11 @@ void vinc_neon_calculate_gamma_curve(int value, struct vinc_gamma_curve *gamma)
 /* Matrices and vectors for CC controls */
 void vinc_neon_calculate_v_bri(void *vector, s32 val)
 {
-	u8 i;
-	struct vector *v = (struct vector *)vector;
+	struct vector *bri = (struct vector *)vector;
 
-	v->offset[0] = (double)val;
-	for (i = 1; i < VINC_CC_OFFSET_COUNT; i++)
-		v->offset[i] = 0;
+	*bri = (struct vector) {
+		.offset[0] = (double)val
+	};
 }
 
 void vinc_neon_calculate_m_con(void *matrix, s32 val)
@@ -296,10 +295,11 @@ void vinc_neon_calculate_m_wb(u32 sum_r, u32 sum_g, u32 sum_b, void *matrix)
 {
 	struct matrix *wb = (struct matrix *)matrix;
 
-	memset(wb, 0, sizeof(struct matrix));
-	wb->coeff[0] = ((double) sum_g) / sum_r;
-	wb->coeff[4] = 1;
-	wb->coeff[8] = ((double) sum_g) / sum_b;
+	*wb = (struct matrix) {
+		.coeff[0] = ((double) sum_g) / sum_r,
+		.coeff[4] = 1,
+		.coeff[8] = ((double) sum_g) / sum_b
+	};
 }
 
 /*  Matrix and matrix multiplication
