@@ -18,6 +18,18 @@
 #define CT_OFFSET_FLOAT_TO_U16(coeff) ((u16)((s16)((coeff) << 2) +  \
 			((coeff) < 0 ? -0.5 : 0.5)))
 
+enum vinc_ycbcr_encoding {
+	VINC_YCBCR_ENC_601            = 0,
+	VINC_YCBCR_ENC_709            = 1,
+	VINC_YCBCR_ENC_BT2020         = 2,
+	VINC_YCBCR_ENC_SYCC           = 3
+};
+
+enum vinc_quantization {
+	VINC_QUANTIZATION_LIM_RANGE   = 0,
+	VINC_QUANTIZATION_FULL_RANGE  = 1
+};
+
 struct matrix {
 	double coeff[VINC_CC_COEFF_COUNT];
 };
@@ -54,6 +66,6 @@ void vinc_neon_calculate_gamma_curve(int value,
 
 /* Calculate CC matrix and offset */
 void vinc_neon_calculate_cc(struct ctrl_priv *ctrl_privs,
-		enum v4l2_ycbcr_encoding ycbcr_enc, struct vinc_cc *cc);
+		enum vinc_ycbcr_encoding ycbcr_enc, struct vinc_cc *cc);
 
 #endif /* VINC_NEON_H */

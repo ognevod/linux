@@ -21,8 +21,7 @@
      for Cb    || 3  4  5
      for Cr    || 6  7  8 */
 const struct matrix m_ycbcr[4] = {
-	/* BT 601 */
-	[0] = {
+	[VINC_YCBCR_ENC_601] = {
 		.coeff[0] =  0.299,
 		.coeff[1] =  0.587,
 		.coeff[2] =  0.114,
@@ -33,8 +32,7 @@ const struct matrix m_ycbcr[4] = {
 		.coeff[7] = -0.418687589158345,
 		.coeff[8] = -0.0813124108416548,
 	},
-	/* REC 709 */
-	[1] = {
+	[VINC_YCBCR_ENC_709] = {
 		.coeff[0] =  0.2126,
 		.coeff[1] =  0.7152,
 		.coeff[2] =  0.0722,
@@ -45,8 +43,7 @@ const struct matrix m_ycbcr[4] = {
 		.coeff[7] = -0.454152908305817,
 		.coeff[8] = -0.0458470916941834,
 	},
-	/* BT 2020 */
-	[2] = {
+	[VINC_YCBCR_ENC_BT2020] = {
 		.coeff[0] =  0.2627,
 		.coeff[1] =  0.678,
 		.coeff[2] =  0.0593,
@@ -57,8 +54,7 @@ const struct matrix m_ycbcr[4] = {
 		.coeff[7] = -0.459785704597857,
 		.coeff[8] = -0.040214295402143,
 	},
-	/* sRGB */
-	[3] = {
+	[VINC_YCBCR_ENC_SYCC] = {
 		.coeff[0] =  0.299,
 		.coeff[1] =  0.587,
 		.coeff[2] =  0.114,
@@ -93,8 +89,7 @@ const struct vector v_ycbcr = {
      for G     || 3  4  5
      for B     || 6  7  8 */
 const struct matrix m_rgb[4][2] = {
-	/* BT 601, LIMITED RANGE */
-	[0][0] = {
+	[VINC_YCBCR_ENC_601][VINC_QUANTIZATION_LIM_RANGE] = {
 		.coeff[0] =  1.16438356164384,
 		.coeff[1] =  5.59894392753486e-17,
 		.coeff[2] =  1.59602678571429,
@@ -106,8 +101,7 @@ const struct matrix m_rgb[4][2] = {
 		.coeff[8] =  1.11022302462516e-16,
 
 	},
-	/* BT 601, FULL RANGE */
-	[0][1] = {
+	[VINC_YCBCR_ENC_601][VINC_QUANTIZATION_FULL_RANGE] = {
 		.coeff[0] =  1,
 		.coeff[1] =  4.91828799908944e-17,
 		.coeff[2] =  1.402,
@@ -119,8 +113,7 @@ const struct matrix m_rgb[4][2] = {
 		.coeff[8] =  0,
 	},
 
-	/* REC 709, LIMITED RANGE */
-	[1][0] = {
+	[VINC_YCBCR_ENC_709][VINC_QUANTIZATION_LIM_RANGE] = {
 		.coeff[0] =  1.16438356164384,
 		.coeff[1] =  0,
 		.coeff[2] =  1.79274107142857,
@@ -131,8 +124,7 @@ const struct matrix m_rgb[4][2] = {
 		.coeff[7] =  2.11240178571429,
 		.coeff[8] = -5.55111512312578e-17,
 	},
-	/* REC 709, FULL RANGE */
-	[1][1] = {
+	[VINC_YCBCR_ENC_709][VINC_QUANTIZATION_FULL_RANGE] = {
 		.coeff[0] =  1,
 		.coeff[1] =  0,
 		.coeff[2] =  1.5748,
@@ -144,8 +136,7 @@ const struct matrix m_rgb[4][2] = {
 		.coeff[8] =  5.55111512312578e-17,
 	},
 
-	/* BT 2020, LIMITED RANGE */
-	[2][0] = {
+	[VINC_YCBCR_ENC_BT2020][VINC_QUANTIZATION_LIM_RANGE] = {
 		.coeff[0] =  1.16438356164384,
 		.coeff[1] = -5.94461236188718e-17,
 		.coeff[2] =  1.67867410714286,
@@ -156,8 +147,7 @@ const struct matrix m_rgb[4][2] = {
 		.coeff[7] =  2.14177232142857,
 		.coeff[8] =  0,
 	},
-	/* BT 2020, FULL RANGE */
-	[2][1] = {
+	[VINC_YCBCR_ENC_BT2020][VINC_QUANTIZATION_FULL_RANGE] = {
 		.coeff[0] =  1,
 		.coeff[1] = -2.61096699816221e-17,
 		.coeff[2] =  1.4746,
@@ -169,8 +159,7 @@ const struct matrix m_rgb[4][2] = {
 		.coeff[8] =  0,
 	},
 
-	/* sRGB, LIMITED RANGE */
-	[3][0] = {
+	[VINC_YCBCR_ENC_SYCC][VINC_QUANTIZATION_LIM_RANGE] = {
 		.coeff[0] =  1.16438356164384,
 		.coeff[1] = -4.19156139872783e-05,
 		.coeff[2] =  1.59601264338613,
@@ -181,8 +170,7 @@ const struct matrix m_rgb[4][2] = {
 		.coeff[7] =  2.01720723110692,
 		.coeff[8] = -0.000153208795953375,
 	},
-	/* sRGB, FULL RANGE */
-	[3][1] = {
+	[VINC_YCBCR_ENC_SYCC][VINC_QUANTIZATION_FULL_RANGE] = {
 		.coeff[0] =  1,
 		.coeff[1] = -3.68199903261289e-05,
 		.coeff[2] =  1.40198757693526,
@@ -202,53 +190,45 @@ const struct matrix m_rgb[4][2] = {
  * 1: G offset
  * 2: B offset */
 const struct vector v_rgb[4][2] = {
-	/* BT 601, LIMITED RANGE */
-	[0][0] = {
+	[VINC_YCBCR_ENC_601][VINC_QUANTIZATION_LIM_RANGE] = {
 		.offset[0] = -3566.74504892368,
 		.offset[1] =  2169.20471987651,
 		.offset[2] = -4429.37362035225,
 	},
-	/* BT 601, FULL RANGE */
-	[0][1] = {
+	[VINC_YCBCR_ENC_601][VINC_QUANTIZATION_FULL_RANGE] = {
 		.offset[0] = -2871.296,
 		.offset[1] =  2167.34222827939,
 		.offset[2] = -3629.056,
 	},
 
-	/* REC 709, LIMITED RANGE */
-	[1][0] = {
+	[VINC_YCBCR_ENC_709][VINC_QUANTIZATION_LIM_RANGE] = {
 		.offset[0] = -3969.61590606654,
 		.offset[1] =  1230.04927514152,
 		.offset[2] = -4624.28104892368,
 	},
-	/* REC 709, FULL RANGE */
-	[1][1] = {
+	[VINC_YCBCR_ENC_709][VINC_QUANTIZATION_FULL_RANGE] = {
 		.offset[0] = -3225.1904,
 		.offset[1] =  1342.35862192394,
 		.offset[2] = -3800.2688,
 	},
 
-	/* BT 2020, LIMITED RANGE */
-	[2][0] = {
+	[VINC_YCBCR_ENC_BT2020][VINC_QUANTIZATION_LIM_RANGE] = {
 		.offset[0] = -3736.00676320939,
 		.offset[1] =  1417.63067395875,
 		.offset[2] = -4684.43190606654,
 	},
-	/* BT 2020, FULL RANGE */
-	[2][1] = {
+	[VINC_YCBCR_ENC_BT2020][VINC_QUANTIZATION_FULL_RANGE] = {
 		.offset[0] = -3019.9808,
 		.offset[1] =  1507.13600755162,
 		.offset[2] = -3853.1072,
 	},
 
-	/* sRGB, LIMITED RANGE */
-	[3][0] = {
+	[VINC_YCBCR_ENC_SYCC][VINC_QUANTIZATION_LIM_RANGE] = {
 		.offset[0] = -3566.63024225816,
 		.offset[1] =  2169.07539559518,
 		.offset[2] = -4429.00882947368,
 	},
-	/* sRGB, FULL RANGE */
-	[3][1] = {
+	[VINC_YCBCR_ENC_SYCC][VINC_QUANTIZATION_FULL_RANGE] = {
 		.offset[0] = -2871.19515022323,
 		.offset[1] =  2167.22862577343,
 		.offset[2] = -3628.73555624785,
@@ -406,7 +386,7 @@ static void vxv_add(struct vector *sum, const struct vector *v1,
 
 /*  Calculate CC coefficient matrix. Uses controls matrices and vectors */
 static void cc_matrix_calc(struct matrix *coeff, struct ctrl_priv *ctrl_privs,
-			   u8 vinc_enc)
+		enum vinc_ycbcr_encoding ycbcr_enc)
 {
 	struct matrix tmp1;
 	struct matrix tmp2;
@@ -419,17 +399,18 @@ static void cc_matrix_calc(struct matrix *coeff, struct ctrl_priv *ctrl_privs,
 
 	/* M_cc = M_rgb * M_ck * M_sat * M_con * M_hue * M_ycbcr * M_wb
 	 *              6      5       4       3       2         1   */
-	mxm_mult(&tmp1, &m_ycbcr[vinc_enc], m_wb);     /* [1] */
-	mxm_mult(&tmp2, m_hue, &tmp1);		       /* [2] */
-	mxm_mult(&tmp1, m_con, &tmp2);		       /* [3] */
-	mxm_mult(&tmp2, m_sat, &tmp1);		       /* [4] */
-	mxm_mult(&tmp1, m_ck, &tmp2);		       /* [5] */
-	mxm_mult(coeff, &m_rgb[vinc_enc][1], &tmp1);   /* [6] */
+	mxm_mult(&tmp1, &m_ycbcr[ycbcr_enc], m_wb);   /* [1] */
+	mxm_mult(&tmp2, m_hue, &tmp1);		     /* [2] */
+	mxm_mult(&tmp1, m_con, &tmp2);		     /* [3] */
+	mxm_mult(&tmp2, m_sat, &tmp1);		     /* [4] */
+	mxm_mult(&tmp1, m_ck, &tmp2);		     /* [5] */
+	mxm_mult(coeff, &m_rgb[ycbcr_enc][VINC_QUANTIZATION_FULL_RANGE],
+		 &tmp1);			     /* [6] */
 }
 
 /* Calculate CC offset vector according to control matrices and vectors */
 static void cc_vector_calc(struct vector *offset, struct ctrl_priv *ctrl_privs,
-			   u8 vinc_enc)
+		enum vinc_ycbcr_encoding ycbcr_enc)
 {
 	struct vector tmp1;
 	struct vector tmp2;
@@ -451,21 +432,23 @@ static void cc_vector_calc(struct vector *offset, struct ctrl_priv *ctrl_privs,
 
 	/* Vcc = M_rgb*(Mck*Msat*Mcon*Mhue*(Vycbcr-Vhalf)+Vbri+Vhalf)+Vrgb
 	 *            8    5    4    3    2       1      6    7      9  */
-	vxv_add(&tmp1, &v_ycbcr, &half_minus);	       /* [1] */
-	mxv_mult(&tmp2, m_hue, &tmp1);		       /* [2] */
-	mxv_mult(&tmp1, m_con, &tmp2);		       /* [3] */
-	mxv_mult(&tmp2, m_sat, &tmp1);		       /* [4] */
-	mxv_mult(&tmp1, m_ck, &tmp2);		       /* [5] */
-	vxv_add(&tmp2, v_bri, &tmp1);		       /* [6] */
-	vxv_add(&tmp1, &half_plus, &tmp2);	       /* [7] */
-	mxv_mult(&tmp2, &m_rgb[vinc_enc][1], &tmp1);   /* [8] */
-	vxv_add(offset, &v_rgb[vinc_enc][1], &tmp2);   /* [9] */
+	vxv_add(&tmp1, &v_ycbcr, &half_minus);   /* [1] */
+	mxv_mult(&tmp2, m_hue, &tmp1);		 /* [2] */
+	mxv_mult(&tmp1, m_con, &tmp2);		 /* [3] */
+	mxv_mult(&tmp2, m_sat, &tmp1);		 /* [4] */
+	mxv_mult(&tmp1, m_ck, &tmp2);		 /* [5] */
+	vxv_add(&tmp2, v_bri, &tmp1);		 /* [6] */
+	vxv_add(&tmp1, &half_plus, &tmp2);	 /* [7] */
+	mxv_mult(&tmp2, &m_rgb[ycbcr_enc][VINC_QUANTIZATION_FULL_RANGE],
+		 &tmp1);			 /* [8] */
+	vxv_add(offset, &v_rgb[ycbcr_enc][VINC_QUANTIZATION_FULL_RANGE],
+		&tmp2);				 /* [9] */
 }
 
 /* Color Correction coefficient matrix, offset vector and scaling register
  * calculation routine */
 void vinc_neon_calculate_cc(struct ctrl_priv *ctrl_privs,
-		enum v4l2_ycbcr_encoding ycbcr_enc, struct vinc_cc *cc)
+		enum vinc_ycbcr_encoding ycbcr_enc, struct vinc_cc *cc)
 {
 	struct matrix coeff;
 	struct vector offset;
@@ -473,29 +456,9 @@ void vinc_neon_calculate_cc(struct ctrl_priv *ctrl_privs,
 
 	u16 i;
 	double max_abs = 0;
-	u8 vinc_enc;
 
-	/* Select proper YCbCr<-> RGB coefficients and offsets according to
-	 * YCbCr encoding and quantization */
-
-	/* BUG: Add proper color spaces handler */
-	switch (ycbcr_enc) {
-	case V4L2_YCBCR_ENC_709:
-		vinc_enc = 1;
-		break;
-	case V4L2_YCBCR_ENC_BT2020:
-		vinc_enc = 2;
-		break;
-	case V4L2_YCBCR_ENC_SYCC:
-		vinc_enc = 3;
-		break;
-	default:   /* V4L2_YCBCR_ENC_601 */
-		vinc_enc = 0;
-		break;
-	}
-
-	cc_matrix_calc(&coeff, ctrl_privs, vinc_enc);
-	cc_vector_calc(&offset, ctrl_privs, vinc_enc);
+	cc_matrix_calc(&coeff, ctrl_privs, ycbcr_enc);
+	cc_vector_calc(&offset, ctrl_privs, ycbcr_enc);
 	/*  Scaling calculation */
 	for (i = 0; i < VINC_CC_COEFF_COUNT; i++)
 		if (fabs(coeff.coeff[i]) > max_abs)

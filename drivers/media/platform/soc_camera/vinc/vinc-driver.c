@@ -463,8 +463,8 @@ struct vinc_stream {
 	struct v4l2_crop crop2;
 	u32 fdecim;
 
-	enum v4l2_ycbcr_encoding ycbcr_enc;
-	enum v4l2_quantization quantization;
+	enum vinc_ycbcr_encoding ycbcr_enc;
+	enum vinc_quantization quantization;
 
 	int sequence;
 
@@ -2083,59 +2083,68 @@ static struct soc_mbus_pixelfmt *vinc_get_mbus_pixelfmt(u32 fourcc)
 	return NULL;
 }
 
-static void color_space_adjust(u32 *colorspace, u32 *ycbcr_enc,
-				u32 *quantization)
+static bool is_colorspace_supported(enum v4l2_colorspace colorspace)
 {
-	switch (*colorspace) {
+	switch (colorspace) {
+	case V4L2_COLORSPACE_SMPTE170M:
 	case V4L2_COLORSPACE_REC709:
 	case V4L2_COLORSPACE_BT2020:
 	case V4L2_COLORSPACE_SRGB:
-		break;
-	/* SMPTE 170M */
+		return true;
 	default:
-		*colorspace = V4L2_COLORSPACE_SMPTE170M;
-		break;
+		return false;
 	}
+}
 
-	switch (*ycbcr_enc) {
+static bool is_ycbcr_enc_supported(enum v4l2_ycbcr_encoding ycbcr_enc)
+{
+	switch (ycbcr_enc) {
 	case V4L2_YCBCR_ENC_601:
 	case V4L2_YCBCR_ENC_709:
 	case V4L2_YCBCR_ENC_BT2020:
 	case V4L2_YCBCR_ENC_SYCC:
-		break;
+		return true;
 	default:
-		switch (*colorspace) {
-		case V4L2_COLORSPACE_REC709:
-			*ycbcr_enc = V4L2_YCBCR_ENC_709;
-			break;
-		case V4L2_COLORSPACE_BT2020:
-			*ycbcr_enc = V4L2_YCBCR_ENC_BT2020;
-			break;
-		case V4L2_COLORSPACE_SRGB:
-			*ycbcr_enc = V4L2_YCBCR_ENC_SYCC;
-			break;
-		default:
-			*ycbcr_enc = V4L2_YCBCR_ENC_601;
-			break;
-		}
-		break;
+		return false;
 	}
+}
 
-	switch (*quantization) {
-	case V4L2_QUANTIZATION_FULL_RANGE:
-	case V4L2_QUANTIZATION_LIM_RANGE:
-		break;
+static enum v4l2_ycbcr_encoding ycbcr_enc_default(
+				enum v4l2_colorspace colorspace)
+{
+	switch (colorspace) {
+	case V4L2_COLORSPACE_REC709:
+		return V4L2_YCBCR_ENC_709;
+	case V4L2_COLORSPACE_BT2020:
+		return V4L2_YCBCR_ENC_BT2020;
+	case V4L2_COLORSPACE_SRGB:
+		return V4L2_YCBCR_ENC_SYCC;
 	default:
-		switch (*colorspace) {
-		case V4L2_COLORSPACE_SRGB:
-			*quantization = V4L2_QUANTIZATION_FULL_RANGE;
-			break;
-		default:
-			*quantization = V4L2_QUANTIZATION_LIM_RANGE;
-			break;
-		}
-		break;
+		return V4L2_YCBCR_ENC_601;
 	}
+}
+
+static u32 colorspace_adjust(u32 colorspace_cam, u32 colorspace_user)
+{
+	enum v4l2_colorspace colorspace = colorspace_cam;
+
+	if (!is_colorspace_supported(colorspace))
+		colorspace = colorspace_user;
+	if (!is_colorspace_supported(colorspace))
+		colorspace = V4L2_COLORSPACE_SMPTE170M;
+	return colorspace;
+}
+
+static u32 ycbcr_enc_adjust(u16 ycbcr_enc_cam, u32 ycbcr_enc_user,
+			    u32 colorspace_user)
+{
+	enum v4l2_ycbcr_encoding ycbcr_enc = ycbcr_enc_user;
+
+	if (!is_ycbcr_enc_supported(ycbcr_enc))
+		ycbcr_enc = (u32)ycbcr_enc_cam;
+	if (!is_ycbcr_enc_supported(ycbcr_enc))
+		ycbcr_enc = ycbcr_enc_default(colorspace_user);
+	return ycbcr_enc;
 }
 
 static int __vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f,
@@ -2144,22 +2153,13 @@ static int __vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f,
 	struct v4l2_pix_format *pix = &f->fmt.pix;
 	struct v4l2_subdev *sd = soc_camera_to_subdev(icd);
 
-	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
-	struct vinc_dev *priv = ici->priv;
-
 	struct soc_mbus_pixelfmt *pixelfmt;
 	const struct soc_camera_format_xlate *xlate;
-	const u8 devnum = icd->devnum;
 	u32 width, height;
 	u32 min_bytesperline;
 	int ret;
 
 	pix->field = V4L2_FIELD_NONE;
-
-	color_space_adjust(&pix->colorspace, &pix->ycbcr_enc,
-			   &pix->quantization);
-	priv->stream[devnum].ycbcr_enc = pix->ycbcr_enc;
-	priv->stream[devnum].quantization = pix->quantization;
 
 	pixelfmt = vinc_get_mbus_pixelfmt(pix->pixelformat);
 	if (!pixelfmt)
@@ -2183,12 +2183,18 @@ static int __vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f,
 	mbus_fmt->height = pix->height;
 	mbus_fmt->field = pix->field;
 	mbus_fmt->ycbcr_enc = pix->ycbcr_enc;
-	mbus_fmt->quantization = pix->quantization;
+	mbus_fmt->quantization = V4L2_QUANTIZATION_FULL_RANGE;
 	ret = v4l2_subdev_call(sd, video, try_mbus_fmt, mbus_fmt);
 	if (ret) {
 		dev_warn(icd->parent, "Sensor can not negotiate format\n");
 		return ret;
 	}
+
+	pix->colorspace = colorspace_adjust(mbus_fmt->colorspace,
+					    pix->colorspace);
+	pix->ycbcr_enc = ycbcr_enc_adjust(mbus_fmt->ycbcr_enc, pix->ycbcr_enc,
+					  pix->colorspace);
+	pix->quantization = V4L2_QUANTIZATION_FULL_RANGE;
 
 	if (mbus_fmt->width != width || mbus_fmt->height != height) {
 		/* If userspace request HD resolution then we will use
@@ -2234,6 +2240,30 @@ static int vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f)
 	return __vinc_try_fmt(icd, f, &mbus_fmt);
 }
 
+static enum vinc_ycbcr_encoding stream_set_ycbcr_enc(u32 ycbcr_enc)
+{
+	switch (ycbcr_enc) {
+	case V4L2_YCBCR_ENC_709:
+		return VINC_YCBCR_ENC_709;
+	case V4L2_YCBCR_ENC_BT2020:
+		return VINC_YCBCR_ENC_BT2020;
+	case V4L2_YCBCR_ENC_SYCC:
+		return VINC_YCBCR_ENC_SYCC;
+	default:
+		return VINC_YCBCR_ENC_601;
+	}
+}
+
+static enum vinc_quantization stream_set_quantization(u32 quantization)
+{
+	switch (quantization) {
+	case V4L2_QUANTIZATION_FULL_RANGE:
+		return VINC_QUANTIZATION_FULL_RANGE;
+	default:
+		return VINC_QUANTIZATION_LIM_RANGE;
+	}
+}
+
 static int vinc_set_fmt(struct soc_camera_device *icd, struct v4l2_format *f)
 {
 	struct v4l2_pix_format *pix = &f->fmt.pix;
@@ -2250,6 +2280,9 @@ static int vinc_set_fmt(struct soc_camera_device *icd, struct v4l2_format *f)
 	ret = __vinc_try_fmt(icd, f, &mbus_fmt);
 	if (ret)
 		return ret;
+
+	stream->ycbcr_enc = stream_set_ycbcr_enc(pix->ycbcr_enc);
+	stream->quantization = stream_set_quantization(mbus_fmt.quantization);
 
 	switch (mbus_fmt.code) {
 	case MEDIA_BUS_FMT_SRGGB8_1X8:
