@@ -406,6 +406,7 @@ struct vinc_cluster_cc {
 	struct v4l2_ctrl *saturation;
 	struct v4l2_ctrl *hue;
 	struct v4l2_ctrl *dowb;
+	struct v4l2_ctrl *ck;
 };
 
 struct vinc_cluster_ct {
@@ -1099,7 +1100,7 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		added to std_is_new condition */
 		std_is_new = cc->dowb->is_new     | cc->brightness->is_new |
 			     cc->contrast->is_new | cc->saturation->is_new |
-			     cc->hue->is_new;
+			     cc->hue->is_new      | cc->ck->is_new;
 		init = cc->enable->is_new & cc->cc->is_new &
 			std_is_new;
 		cluster_activate(priv, devnum, STREAM_PROC_CFG_CC_EN,
@@ -1136,13 +1137,19 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 			vinc_neon_calculate_m_hue(cc->hue->priv, cc->hue->val);
 			kernel_neon_end();
 		}
+		if (cc->ck->is_new) {
+			kernel_neon_begin();
+			vinc_neon_calculate_m_ck(cc->ck->priv, cc->ck->val);
+			kernel_neon_end();
+		}
 		if (std_is_new) {
 			struct ctrl_priv ctrl_privs = {
 				.dowb = cc->dowb->priv,
 				.brightness = cc->brightness->priv,
 				.contrast = cc->contrast->priv,
 				.saturation = cc->saturation->priv,
-				.hue = cc->hue->priv
+				.hue = cc->hue->priv,
+				.ck = cc->ck->priv
 			};
 			kernel_neon_begin();
 			vinc_neon_calculate_cc(&ctrl_privs, stream->ycbcr_enc,
@@ -1157,6 +1164,8 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 					~V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
 			cc->hue->flags &= ~V4L2_CTRL_FLAG_WRITE_ONLY &
 					~V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
+			cc->ck->flags &= ~V4L2_CTRL_FLAG_WRITE_ONLY &
+					~V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
 			cc->cc->flags |= V4L2_CTRL_FLAG_UPDATE;
 		} else if (cc->cc->is_new) {
 			p_cc = cc->cc->p_new.p;
@@ -1168,6 +1177,8 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 			cc->saturation->flags |= V4L2_CTRL_FLAG_WRITE_ONLY |
 					V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
 			cc->hue->flags |= V4L2_CTRL_FLAG_WRITE_ONLY |
+					V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
+			cc->ck->flags |= V4L2_CTRL_FLAG_WRITE_ONLY |
 					V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
 			cc->cc->flags &= ~V4L2_CTRL_FLAG_UPDATE;
 		}
@@ -1431,6 +1442,17 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 		.step = 1,
 		.def = 16,
 		.flags = V4L2_CTRL_FLAG_UPDATE | V4L2_CTRL_FLAG_EXECUTE_ON_WRITE
+	},
+	{
+		.ops   = &ctrl_ops,
+		.id    = V4L2_CID_COLOR_KILLER,
+		.name  = "Color killer",
+		.type  = V4L2_CTRL_TYPE_BOOLEAN,
+		.min   = 0,
+		.max   = 1,
+		.step  = 1,
+		.def   = 0,
+		.flags = V4L2_CTRL_FLAG_UPDATE
 	},
 	{
 		.ops = &ctrl_ops,
@@ -1864,6 +1886,7 @@ static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 	stream->cluster.cc.hue = v4l2_ctrl_find(hdl, V4L2_CID_HUE);
 	stream->cluster.cc.dowb = v4l2_ctrl_find(hdl,
 			V4L2_CID_DO_WHITE_BALANCE);
+	stream->cluster.cc.ck = v4l2_ctrl_find(hdl, V4L2_CID_COLOR_KILLER);
 	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_cc),
 			  &stream->cluster.cc.enable);
 
@@ -1905,6 +1928,9 @@ static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 			priv->ici.v4l2_dev.dev, sizeof(struct matrix),
 			GFP_KERNEL);
 	stream->cluster.cc.hue->priv = devm_kmalloc(
+			priv->ici.v4l2_dev.dev, sizeof(struct matrix),
+			GFP_KERNEL);
+	stream->cluster.cc.ck->priv = devm_kmalloc(
 			priv->ici.v4l2_dev.dev, sizeof(struct matrix),
 			GFP_KERNEL);
 	stream->cluster.cc.dowb->priv = kzalloc(sizeof(struct matrix),

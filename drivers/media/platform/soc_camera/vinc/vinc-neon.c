@@ -326,6 +326,17 @@ void vinc_neon_calculate_m_wb(u32 sum_r, u32 sum_g, u32 sum_b, void *matrix)
 	};
 }
 
+void vinc_neon_calculate_m_ck(void *matrix, s32 val)
+{
+	struct matrix *ck = (struct matrix *)matrix;
+
+	*ck = (struct matrix) {
+		.coeff[0] =  1,
+		.coeff[4] =  1 - (double)val,
+		.coeff[8] =  1 - (double)val
+	};
+}
+
 /*  Matrix and matrix multiplication
  *  m1 - left matrix, m2 - right matrix. Order of multiplication matters. */
 static void mxm_mult(struct matrix *prod, const struct matrix *m1,
@@ -393,28 +404,16 @@ static void cc_matrix_calc(struct matrix *coeff, struct ctrl_priv *ctrl_privs,
 	struct matrix *m_con = (struct matrix *)ctrl_privs->contrast;
 	struct matrix *m_sat = (struct matrix *)ctrl_privs->saturation;
 	struct matrix *m_hue = (struct matrix *)ctrl_privs->hue;
+	struct matrix *m_ck  = (struct matrix *)ctrl_privs->ck;
 
-	/* M_cc = M_rgb*M_sat*M_con*M_hue*M_ycbcr*M_wb
-	 *                                       ^  */
-	mxm_mult(&tmp1, &m_ycbcr[vinc_enc], m_wb);
-
-	/* M_cc = M_rgb*M_sat*M_con*M_hue*M_ycbcr*M_wb
-	 *                               ^          */
-	mxm_mult(&tmp2, m_hue, &tmp1);
-
-	/* M_cc = M_rgb*M_sat*M_con*M_hue*M_ycbcr*M_wb
-	 *                         ^                */
-	mxm_mult(&tmp1, m_con, &tmp2);
-
-	/* M_cc = M_rgb*M_sat*M_con*M_hue*M_ycbcr*M_wb
-	 *	                   ^                */
-	mxm_mult(&tmp2, m_sat, &tmp1);
-
-	/* M_cc = M_rgb*M_sat*M_con*M_hue*M_ycbcr*M_wb
-	 *	             ^                      */
-	mxm_mult(&tmp1, &m_rgb[vinc_enc][1], &tmp2);
-
-	*coeff = tmp1;
+	/* M_cc = M_rgb * M_ck * M_sat * M_con * M_hue * M_ycbcr * M_wb
+	 *              6      5       4       3       2         1   */
+	mxm_mult(&tmp1, &m_ycbcr[vinc_enc], m_wb);     /* [1] */
+	mxm_mult(&tmp2, m_hue, &tmp1);		       /* [2] */
+	mxm_mult(&tmp1, m_con, &tmp2);		       /* [3] */
+	mxm_mult(&tmp2, m_sat, &tmp1);		       /* [4] */
+	mxm_mult(&tmp1, m_ck, &tmp2);		       /* [5] */
+	mxm_mult(coeff, &m_rgb[vinc_enc][1], &tmp1);   /* [6] */
 }
 
 /* Calculate CC offset vector according to control matrices and vectors */
@@ -437,40 +436,19 @@ static void cc_vector_calc(struct vector *offset, struct ctrl_priv *ctrl_privs,
 	struct matrix *m_con = (struct matrix *)ctrl_privs->contrast;
 	struct matrix *m_sat = (struct matrix *)ctrl_privs->saturation;
 	struct matrix *m_hue = (struct matrix *)ctrl_privs->hue;
+	struct matrix *m_ck  = (struct matrix *)ctrl_privs->ck;
 
-	/* V_cc = M_rgb*(M_sat*M_con*M_hue*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
-	 *			                   ^                         */
-	vxv_add(&tmp2, &v_ycbcr, &half_minus);
-
-	/* V_cc = M_rgb*(M_sat*M_con*M_hue*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
-	 *		                  ^                                  */
-	mxv_mult(&tmp1, m_hue, &tmp2);
-
-	/* V_cc = M_rgb*(M_sat*M_con*M_hue*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
-	 *		            ^                                        */
-	mxv_mult(&tmp2, m_con, &tmp1);
-
-	/* V_cc = M_rgb*(M_sat*M_con*M_hue*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
-	 *		      ^                                              */
-	mxv_mult(&tmp1, m_sat, &tmp2);
-
-	/* V_cc = M_rgb*(M_sat*M_con*M_hue*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
-	 *				                   ^                 */
-	vxv_add(&tmp2, v_bri, &tmp1);
-
-	/* V_cc = M_rgb*(M_sat*M_con*M_hue*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
-	 *					                 ^           */
-	vxv_add(&tmp1, &half_plus, &tmp2);
-
-	/* V_cc = M_rgb*(M_sat*M_con*M_hue*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
-	 *	       ^                                                     */
-	mxv_mult(&tmp2, &m_rgb[vinc_enc][1], &tmp1);
-
-	/* V_cc = M_rgb*(M_sat*M_con*M_hue*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
-	 *						                 ^   */
-	vxv_add(&tmp1, &v_rgb[vinc_enc][1], &tmp2);
-
-	*offset = tmp1;
+	/* Vcc = M_rgb*(Mck*Msat*Mcon*Mhue*(Vycbcr-Vhalf)+Vbri+Vhalf)+Vrgb
+	 *            8    5    4    3    2       1      6    7      9  */
+	vxv_add(&tmp1, &v_ycbcr, &half_minus);	       /* [1] */
+	mxv_mult(&tmp2, m_hue, &tmp1);		       /* [2] */
+	mxv_mult(&tmp1, m_con, &tmp2);		       /* [3] */
+	mxv_mult(&tmp2, m_sat, &tmp1);		       /* [4] */
+	mxv_mult(&tmp1, m_ck, &tmp2);		       /* [5] */
+	vxv_add(&tmp2, v_bri, &tmp1);		       /* [6] */
+	vxv_add(&tmp1, &half_plus, &tmp2);	       /* [7] */
+	mxv_mult(&tmp2, &m_rgb[vinc_enc][1], &tmp1);   /* [8] */
+	vxv_add(offset, &v_rgb[vinc_enc][1], &tmp2);   /* [9] */
 }
 
 /* Color Correction coefficient matrix, offset vector and scaling register
