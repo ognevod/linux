@@ -235,6 +235,26 @@ const struct vector v_rgb[4][2] = {
 	}
 };
 
+#define TEMP_TABLE_STEP 200
+#define TEMP_TABLE_MIN 2000
+#define TEMP_TABLE_MAX 9000
+#define NUM_TABLE ((TEMP_TABLE_MAX - TEMP_TABLE_MIN) / TEMP_TABLE_STEP + 1)
+
+static const double t2rgb[NUM_TABLE][3] = {
+	{1.000, 0.234, 0.063}, {1.000, 0.281, 0.063}, {1.000, 0.327, 0.063},
+	{1.000, 0.371, 0.082}, {1.000, 0.413, 0.115}, {1.000, 0.454, 0.151},
+	{1.000, 0.494, 0.190}, {1.000, 0.531, 0.232}, {1.000, 0.567, 0.276},
+	{1.000, 0.602, 0.322}, {1.000, 0.635, 0.370}, {1.000, 0.666, 0.419},
+	{1.000, 0.696, 0.468}, {1.000, 0.724, 0.519}, {1.000, 0.752, 0.569},
+	{1.000, 0.778, 0.620}, {1.000, 0.802, 0.671}, {1.000, 0.826, 0.721},
+	{1.000, 0.848, 0.771}, {1.000, 0.870, 0.820}, {1.000, 0.890, 0.869},
+	{1.000, 0.909, 0.917}, {1.000, 0.928, 0.965}, {0.989, 0.935, 1.000},
+	{0.946, 0.910, 1.000}, {0.907, 0.888, 1.000}, {0.841, 0.848, 1.000},
+	{0.813, 0.831, 1.000}, {0.786, 0.815, 1.000}, {0.762, 0.800, 1.000},
+	{0.740, 0.785, 1.000}, {0.720, 0.772, 1.000}, {0.701, 0.760, 1.000},
+	{0.684, 0.749, 1.000}, {0.668, 0.738, 1.000}, {0.668, 0.738, 1.000}
+};
+
 void vinc_neon_calculate_gamma_curve(int value, struct vinc_gamma_curve *gamma)
 {
 	double gamma_dbl, cur_dbl;
@@ -295,12 +315,42 @@ void vinc_neon_calculate_m_hue(void *matrix, s32 val)
 	};
 }
 
-void vinc_neon_wb_stat(u32 red, u32 green, u32 blue, s32 *cptr[])
+static void t2rgb_interpolate(u32 t, double rgb[3])
 {
-	double Kr, Kb;
+	u32 i, t_index, t_max;
+	double delta[3];
+	double coeff_min[3], coeff_max[3];
 
-	Kr = (double)green / red;
-	Kb = (double)green / blue;
+	for (t_index = 1; t_index < NUM_TABLE; t_index++) {
+		t_max = TEMP_TABLE_MIN + TEMP_TABLE_STEP * t_index;
+		if ((t < t_max) || (t_max == TEMP_TABLE_MAX))
+			break;
+	}
+
+	for (i = 0; i < 3; i++) {
+		coeff_min[i] = t2rgb[t_index-1][i];
+		coeff_max[i] = t2rgb[t_index][i];
+		delta[i] = (coeff_max[i] - coeff_min[i]) / TEMP_TABLE_STEP;
+		rgb[i] = coeff_max[i] - delta[i] * (t_max - t);
+	}
+}
+
+void vinc_neon_wb_stat(u32 red, u32 green, u32 blue, u32 t, s32 *cptr[])
+{
+	double green_level = 1.0;
+	double rgb[3], Kr, Kg, Kb;
+
+	if (t) {
+		t2rgb_interpolate(t, rgb);
+		green_level = (rgb[1] / rgb[0]) / ((double)green / red);
+		rgb[1] /= green_level;
+		Kg = 1.0 / rgb[1];
+		Kr = (1.0 / rgb[0]) / Kg;
+		Kb = (1.0 / rgb[2]) / Kg;
+	} else {
+		Kr = (double)green / red;
+		Kb = (double)green / blue;
+	}
 
 	*cptr[0] = rint((Kr / (Kr + 1)) * 256 - 128);
 	*cptr[1] = rint((Kb / (Kb + 1)) * 256 - 128);

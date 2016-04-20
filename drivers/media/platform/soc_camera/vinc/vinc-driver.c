@@ -409,6 +409,7 @@ struct vinc_cluster_cc {
 	struct v4l2_ctrl *ck;
 	struct v4l2_ctrl *rb;
 	struct v4l2_ctrl *bb;
+	struct v4l2_ctrl *wbt;
 };
 
 struct vinc_cluster_ct {
@@ -1117,33 +1118,49 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		p_cc = cc->cc->p_cur.p;
 		/*TODO: is_new flags for other cc controls must be
 		added to std_is_new condition */
+
 		std_is_new = cc->dowb->is_new     | cc->brightness->is_new |
 			     cc->contrast->is_new | cc->saturation->is_new |
 			     cc->hue->is_new      | cc->ck->is_new |
-			     cc->rb->is_new	  | cc->bb->is_new;
+			     cc->rb->is_new	  | cc->bb->is_new |
+			     cc->wbt->is_new;
+
 		init = cc->enable->is_new & cc->cc->is_new &
 			std_is_new;
+
 		cluster_activate(priv, devnum, STREAM_PROC_CFG_CC_EN,
 				 ctrl->cluster);
-		if (cc->dowb->is_new && !init) {
+
+		if ((cc->dowb->is_new || cc->wbt->is_new) && !init) {
 			struct vinc_stat_add *add;
 			s32 *cptr[] = { &cc->rb->val, &cc->bb->val };
+			u32 temp = 0;
 
+			if (cc->wbt->is_new) {
+				temp = cc->wbt->val;
+				change_write_only(ctrl->cluster, 5, 0);
+			}
 			add = stream->cluster.stat.add[3]->p_cur.p;
+
 			kernel_neon_begin();
 			vinc_neon_wb_stat(add->sum_r, add->sum_g, add->sum_b,
-					  cptr);
+					  temp, cptr);
 			kernel_neon_end();
 			cc->rb->has_changed = 1;
 			cc->bb->has_changed = 1;
 		}
 
-		if (cc->dowb->is_new || cc->rb->is_new || cc->bb->is_new) {
+		if (cc->dowb->is_new || cc->rb->is_new || cc->bb->is_new ||
+			cc->wbt->is_new) {
 			kernel_neon_begin();
 			vinc_neon_calculate_m_wb(cc->rb->val, cc->bb->val,
 						 cc->dowb->priv);
 			kernel_neon_end();
 		}
+
+		if ((cc->dowb->is_new || cc->rb->is_new || cc->bb->is_new)
+			&& !init)
+			change_write_only(ctrl->cluster, 5, 1);
 
 		if (cc->brightness->is_new) {
 			kernel_neon_begin();
@@ -1489,6 +1506,17 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 		.max   = 1,
 		.step  = 1,
 		.def   = 0,
+		.flags = V4L2_CTRL_FLAG_UPDATE
+	},
+	{
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_WHITE_BALANCE_TEMPERATURE,
+		.name = "White balance temperature",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.min = 2000,
+		.max = 9000,
+		.step = 10,
+		.def = 6500,
 		.flags = V4L2_CTRL_FLAG_UPDATE
 	},
 	{
@@ -1926,6 +1954,8 @@ static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 	stream->cluster.cc.ck = v4l2_ctrl_find(hdl, V4L2_CID_COLOR_KILLER);
 	stream->cluster.cc.rb = v4l2_ctrl_find(hdl, V4L2_CID_RED_BALANCE);
 	stream->cluster.cc.bb = v4l2_ctrl_find(hdl, V4L2_CID_BLUE_BALANCE);
+	stream->cluster.cc.wbt = v4l2_ctrl_find(hdl,
+			V4L2_CID_WHITE_BALANCE_TEMPERATURE);
 	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_cc),
 			  &stream->cluster.cc.enable);
 
