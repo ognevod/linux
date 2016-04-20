@@ -291,6 +291,17 @@ void vinc_neon_calculate_m_con(void *matrix, s32 val)
 	};
 }
 
+void vinc_neon_calculate_m_sat(void *matrix, s32 val)
+{
+	struct matrix *sat = (struct matrix *)matrix;
+
+	*sat = (struct matrix) {
+		.coeff[0] = 1,
+		.coeff[4] = tan((double)val * PI / 512),
+		.coeff[8] = tan((double)val * PI / 512)
+	};
+}
+
 void vinc_neon_calculate_m_wb(u32 sum_r, u32 sum_g, u32 sum_b, void *matrix)
 {
 	struct matrix *wb = (struct matrix *)matrix;
@@ -367,20 +378,25 @@ static void cc_matrix_calc(struct matrix *coeff, struct ctrl_priv *ctrl_privs,
 
 	struct matrix *m_wb = (struct matrix *)ctrl_privs->dowb;
 	struct matrix *m_con = (struct matrix *)ctrl_privs->contrast;
+	struct matrix *m_sat = (struct matrix *)ctrl_privs->saturation;
 
-	/* M_cc = M_rgb*M_con*M_ycbcr*M_wb
-	 *                           ^    */
+	/* M_cc = M_rgb*M_sat*M_con*M_ycbcr*M_wb
+	 *                                 ^  */
 	mxm_mult(&tmp2, &m_ycbcr[vinc_enc], m_wb);
 
-	/* M_cc = M_rgb*M_con*M_ycbcr*M_wb
-	 *                   ^            */
+	/* M_cc = M_rgb*M_sat*M_con*M_ycbcr*M_wb
+	 *                         ^          */
 	mxm_mult(&tmp1, m_con, &tmp2);
 
-	/* M_cc = M_rgb*M_con*M_ycbcr*M_wb
-	 *	       ^                  */
-	mxm_mult(&tmp2, &m_rgb[vinc_enc][1], &tmp1);
+	/* M_cc = M_rgb*M_sat*M_con*M_ycbcr*M_wb
+	 *	             ^                */
+	mxm_mult(&tmp2, m_sat, &tmp1);
 
-	*coeff = tmp2;
+	/* M_cc = M_rgb*M_sat*M_con*M_ycbcr*M_wb
+	 *	       ^                      */
+	mxm_mult(&tmp1, &m_rgb[vinc_enc][1], &tmp2);
+
+	*coeff = tmp1;
 }
 
 /* Calculate CC offset vector according to control matrices and vectors */
@@ -401,29 +417,34 @@ static void cc_vector_calc(struct vector *offset, struct ctrl_priv *ctrl_privs,
 	};
 	struct vector *v_bri = (struct vector *)ctrl_privs->brightness;
 	struct matrix *m_con = (struct matrix *)ctrl_privs->contrast;
+	struct matrix *m_sat = (struct matrix *)ctrl_privs->saturation;
 
-	/* V_cc = M_rgb*(M_con*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
-	 *			       ^                           */
-	vxv_add(&tmp2, &v_ycbcr, &half_minus);
+	/* V_cc = M_rgb*(M_sat*M_con*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
+	 *			             ^                         */
+	vxv_add(&tmp1, &v_ycbcr, &half_minus);
 
-	/* V_cc = M_rgb*(M_con*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
-	 *		      ^                                    */
-	mxv_mult(&tmp1, m_con, &tmp2);
+	/* V_cc = M_rgb*(M_sat*M_con*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
+	 *		            ^                                  */
+	mxv_mult(&tmp2, m_con, &tmp1);
 
-	/* V_cc = M_rgb*(M_con*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
-	 *				       ^                   */
+	/* V_cc = M_rgb*(M_sat*M_con*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
+	 *		      ^                                        */
+	mxv_mult(&tmp1, m_sat, &tmp2);
+
+	/* V_cc = M_rgb*(M_sat*M_con*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
+	 *				             ^                 */
 	vxv_add(&tmp2, v_bri, &tmp1);
 
-	/* V_cc = M_rgb*(M_con*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
-	 *					     ^             */
+	/* V_cc = M_rgb*(M_sat*M_con*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
+	 *					           ^           */
 	vxv_add(&tmp1, &half_plus, &tmp2);
 
-	/* V_cc = M_rgb*(M_con*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
-	 *	       ^                                           */
+	/* V_cc = M_rgb*(M_sat*M_con*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
+	 *	       ^                                               */
 	mxv_mult(&tmp2, &m_rgb[vinc_enc][1], &tmp1);
 
-	/* V_cc = M_rgb*(M_con*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
-	 *						     ^     */
+	/* V_cc = M_rgb*(M_sat*M_con*(V_ycbcr-V_half)+V_bri+V_half)+V_rgb
+	 *						           ^   */
 	vxv_add(&tmp1, &v_rgb[vinc_enc][1], &tmp2);
 
 	*offset = tmp1;
