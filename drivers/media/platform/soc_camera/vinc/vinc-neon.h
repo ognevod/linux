@@ -31,6 +31,7 @@ struct ctrl_priv {
 	void *brightness;
 	void *contrast;
 	void *saturation;
+	void *hue;
 };
 
 void vinc_neon_calculate_v_bri(void *vector, s32 val);
@@ -38,6 +39,8 @@ void vinc_neon_calculate_v_bri(void *vector, s32 val);
 void vinc_neon_calculate_m_con(void *matrix, s32 val);
 
 void vinc_neon_calculate_m_sat(void *matrix, s32 val);
+
+void vinc_neon_calculate_m_hue(void *matrix, s32 val);
 
 void vinc_neon_calculate_m_wb(u32 sum_r, u32 sum_g, u32 sum_b, void *matrix);
 

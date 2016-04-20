@@ -27,6 +27,8 @@
 
 double __ieee754_pow(double x, double y);
 double __ieee754_sqrt(double x);
+double __kernel_sin(double x, double y, int iy);
+double __kernel_cos(double x, double y);
 double __kernel_tan(double x, double y, int iy);
 double rint(double x);
 double copysign(double x, double y);
@@ -34,6 +36,8 @@ double scalbn(double x, int n);
 double fabs(double x);
 double sqrt(double x);
 double pow(double x, double y);
+double cos(double x);
+double sin(double x);
 double tan(double x);
 double floor(double x);
 int __ieee754_rem_pio2(double x, double *y);
