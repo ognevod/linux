@@ -35,7 +35,6 @@ void vinc_neon_calculate_gamma_curve(int value,
 
 /* Calculate CC matrix and offset */
 void vinc_neon_calculate_cc(void *ctrl_privs[],
-		enum v4l2_ycbcr_encoding ycbcr_enc,
-		enum v4l2_quantization quantization, struct vinc_cc *cc);
+		enum v4l2_ycbcr_encoding ycbcr_enc, struct vinc_cc *cc);
 
 #endif /* VINC_NEON_H */

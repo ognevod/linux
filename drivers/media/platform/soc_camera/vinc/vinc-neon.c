@@ -349,7 +349,7 @@ static void vxv_add(struct vector *sum, const struct vector *v1,
 
 /*  Calculate CC coefficient matrix. Uses controls matrices and vectors */
 static void cc_matrix_calc(struct matrix *coeff, void *ctrl_privs[],
-				u8 vinc_enc, u8 vinc_qnt)
+				u8 vinc_enc)
 {
 	struct matrix tmp1;
 	struct matrix tmp2;
@@ -361,14 +361,14 @@ static void cc_matrix_calc(struct matrix *coeff, void *ctrl_privs[],
 	mxm_mult(&tmp2, &m_ycbcr[vinc_enc], wb);
 
 	/* YCbCr->RGB matrix multiplication */
-	mxm_mult(&tmp1, &m_rgb[vinc_enc][vinc_qnt], &tmp2);
+	mxm_mult(&tmp1, &m_rgb[vinc_enc][1], &tmp2);
 
 	*coeff = tmp1;
 }
 
 /* Calculate CC offset vector according to control matrices and vectors */
 static void cc_vector_calc(struct vector *offset, void *ctrl_privs[],
-				u8 vinc_enc, u8 vinc_qnt)
+				u8 vinc_enc)
 {
 	struct vector tmp1;
 	struct vector tmp2;
@@ -379,10 +379,10 @@ static void cc_vector_calc(struct vector *offset, void *ctrl_privs[],
 	vxv_add(&tmp2, &v_ycbcr, v_bri);
 
 	/* YCbCr->RGB matrix multiplication */
-	mxv_mult(&tmp1, &m_rgb[vinc_enc][vinc_qnt], &tmp2);
+	mxv_mult(&tmp1, &m_rgb[vinc_enc][1], &tmp2);
 
 	/* YCbCr->RGB vector addition */
-	vxv_add(&tmp2, &v_rgb[vinc_enc][vinc_qnt], &tmp1);
+	vxv_add(&tmp2, &v_rgb[vinc_enc][1], &tmp1);
 
 	*offset = tmp2;
 }
@@ -390,8 +390,7 @@ static void cc_vector_calc(struct vector *offset, void *ctrl_privs[],
 /* Color Correction coefficient matrix, offset vector and scaling register
  * calculation routine */
 void vinc_neon_calculate_cc(void *ctrl_privs[],
-		enum v4l2_ycbcr_encoding ycbcr_enc,
-		enum v4l2_quantization quantization, struct vinc_cc *cc)
+		enum v4l2_ycbcr_encoding ycbcr_enc, struct vinc_cc *cc)
 {
 	struct matrix coeff;
 	struct vector offset;
@@ -400,7 +399,6 @@ void vinc_neon_calculate_cc(void *ctrl_privs[],
 	u16 i;
 	double max_abs = 0;
 	u8 vinc_enc;
-	u8 vinc_qnt;
 
 	/* Select proper YCbCr<-> RGB coefficients and offsets according to
 	 * YCbCr encoding and quantization */
@@ -421,17 +419,8 @@ void vinc_neon_calculate_cc(void *ctrl_privs[],
 		break;
 	}
 
-	switch (quantization) {
-	case V4L2_QUANTIZATION_FULL_RANGE:
-		vinc_qnt = 1;
-		break;
-	default:   /* V4L2_QUANTIZATION_LIM_RANGE */
-		vinc_qnt = 0;
-		break;
-	}
-
-	cc_matrix_calc(&coeff, ctrl_privs, vinc_enc, vinc_qnt);
-	cc_vector_calc(&offset, ctrl_privs, vinc_enc, vinc_qnt);
+	cc_matrix_calc(&coeff, ctrl_privs, vinc_enc);
+	cc_vector_calc(&offset, ctrl_privs, vinc_enc);
 	/*  Scaling calculation */
 	for (i = 0; i < VINC_CC_COEFF_COUNT; i++)
 		if (fabs(coeff.coeff[i]) > max_abs)

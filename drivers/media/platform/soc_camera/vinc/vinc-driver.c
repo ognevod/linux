@@ -1119,7 +1119,6 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 					   cc->brightness->priv };
 			kernel_neon_begin();
 			vinc_neon_calculate_cc(ctrl_privs, stream->ycbcr_enc,
-					       stream->quantization,
 					       cc->cc->p_cur.p);
 			kernel_neon_end();
 
