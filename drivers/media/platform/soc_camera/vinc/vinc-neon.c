@@ -11,6 +11,8 @@
 #include "vinc-neon.h"
 #include "math/math.h"
 
+#define OFFSET_MAX 4096.0
+
 /* Matrices for RGB->YCbCr conversion depends on YCbCr ENCODING.
  * Output QUANTIZATION is always in FULL RANGE.
  * Table of coefficients:
@@ -234,6 +236,16 @@ const struct vector v_rgb[4][2] = {
 		.offset[2] = -3628.73555624785,
 	}
 };
+
+/*
+ * This function clips float value to [-OFFSET_MAX; OFFSET_MAX - 1]
+ * interval and converts it to u16 with fbits fractional bits.
+ */
+static u16 offset_float_to_u16(double offset, u8 fbits)
+{
+	offset = clamp(offset, -OFFSET_MAX, OFFSET_MAX - 1);
+	return (u16)((s16)(offset * (1 << fbits)));
+}
 
 #define TEMP_TABLE_STEP 200
 #define TEMP_TABLE_MIN 2000
@@ -531,5 +543,5 @@ void vinc_neon_calculate_cc(struct ctrl_priv *ctrl_privs,
 	for (i = 0; i < VINC_CC_COEFF_COUNT; i++)
 		cc->coeff[i] = COEFF_FLOAT_TO_U16(coeff.coeff[i], scaling);
 	for (i = 0; i < VINC_CC_OFFSET_COUNT; i++)
-		cc->offset[i] = (u16)((s16)offset.offset[i]);
+		cc->offset[i] = offset_float_to_u16(offset.offset[i], 0);
 }
