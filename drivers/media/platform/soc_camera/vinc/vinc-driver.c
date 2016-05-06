@@ -2561,10 +2561,10 @@ static void vinc_configure(struct vinc_dev *priv, struct soc_camera_device *icd)
 
 	zone = stream->cluster.stat.zone[3]->p_cur.p;
 	zone->enable = 1;
-	zone->x_lt = stream->crop1.c.left;
-	zone->y_lt = stream->crop1.c.top;
-	zone->x_rb = stream->crop1.c.left + stream->crop1.c.width - 1;
-	zone->y_rb = stream->crop1.c.top + stream->crop1.c.height - 1;
+	zone->x_lt = 0;
+	zone->y_lt = 0;
+	zone->x_rb = stream->crop2.c.width - 1;
+	zone->y_rb = stream->crop2.c.height - 1;
 	stream->cluster.stat.enable->val = 0x4;
 	proc_cfg = vinc_read(priv, STREAM_PROC_CFG(devnum));
 	proc_cfg |= STREAM_PROC_CFG_STT_EN(stream->cluster.stat.enable->val);
