@@ -476,6 +476,11 @@ struct vinc_stream {
 	u8 devnum;
 
 	struct work_struct stat_work;
+
+	struct {
+		struct vinc_stat_hist hist;
+		struct vinc_stat_add add;
+	} summary_stat;
 };
 
 struct vinc_dev {
@@ -1165,7 +1170,7 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 				temp = cc->wbt->val;
 				change_write_only(ctrl->cluster, 11, 0);
 			}
-			add = stream->cluster.stat.add[3]->p_cur.p;
+			add = &stream->summary_stat.add;
 
 			kernel_neon_begin();
 			vinc_neon_wb_stat(add->sum_r, add->sum_g, add->sum_b,
@@ -1956,7 +1961,7 @@ static void auto_stat_work(struct work_struct *work)
 	struct vinc_dev *priv = container_of(stream, struct vinc_dev,
 					     stream[devnum]);
 	struct vinc_cluster_cc *cc = &stream->cluster.cc;
-	struct vinc_stat_add *add = stream->cluster.stat.add[3]->p_cur.p;
+	struct vinc_stat_add *add = &stream->summary_stat.add;
 	struct ctrl_priv ctrl_privs = {
 		.dowb = cc->dowb->priv,
 		.brightness = cc->brightness->priv,
@@ -2858,6 +2863,34 @@ static void vinc_stat_tasklet(unsigned long data)
 	}
 	vinc_write(priv, STREAM_PROC_CLEAR(devnum),
 			STREAM_PROC_CLEAR_AF_CLR | STREAM_PROC_CLEAR_ADD_CLR);
+
+	/* Calculate summary statistics, used inside the driver (histogram and
+	sum) */
+	memset(&stream->summary_stat.add, 0, sizeof(struct vinc_stat_add));
+	memset(&stream->summary_stat.hist, 0, sizeof(struct vinc_stat_hist));
+
+	for (z = 0; z < 4; z++) {
+		zone = stream->cluster.stat.zone[z]->p_cur.p;
+		add = stream->cluster.stat.add[z]->p_cur.p;
+		hist = stream->cluster.stat.hist[z]->p_cur.p;
+		if (!zone->enable)
+			continue;
+		if (stat_en & STT_EN_ADD) {
+			stream->summary_stat.add.sum_r += add->sum_r;
+			stream->summary_stat.add.sum_g += add->sum_g;
+			stream->summary_stat.add.sum_b += add->sum_b;
+		}
+		if (stat_en & STT_EN_HIST) {
+			for (i = 0; i < VINC_STAT_HIST_COUNT; i++) {
+				stream->summary_stat.hist.red[i] +=
+					hist->red[i];
+				stream->summary_stat.hist.green[i] +=
+					hist->green[i];
+				stream->summary_stat.hist.blue[i] +=
+					hist->blue[i];
+			}
+		}
+	}
 
 	schedule_work(&stream->stat_work);
 }
