@@ -2822,8 +2822,6 @@ static void vinc_stat_tasklet(unsigned long data)
 					STREAM_PROC_STAT_LSOBEL(devnum));
 			af->rsobel = vinc_read(priv,
 					STREAM_PROC_STAT_RSOBEL(devnum));
-			vinc_write(priv, STREAM_PROC_CLEAR(devnum),
-				   STREAM_PROC_CLEAR_AF_CLR);
 		}
 		if (stat_en & STT_EN_ADD) {
 			add = stream->cluster.stat.add[z]->p_cur.p;
@@ -2856,10 +2854,10 @@ static void vinc_stat_tasklet(unsigned long data)
 			add->sum2_r = (add->sum2_r << 32) |
 				vinc_read(priv,
 					  STREAM_PROC_STAT_SUM2_R(devnum));
-			vinc_write(priv, STREAM_PROC_CLEAR(devnum),
-				   STREAM_PROC_CLEAR_ADD_CLR);
 		}
 	}
+	vinc_write(priv, STREAM_PROC_CLEAR(devnum),
+			STREAM_PROC_CLEAR_AF_CLR | STREAM_PROC_CLEAR_ADD_CLR);
 
 	schedule_work(&stream->stat_work);
 }
