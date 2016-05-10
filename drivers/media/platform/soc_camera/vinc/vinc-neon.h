@@ -47,6 +47,11 @@ struct ctrl_priv {
 	void *ck;
 };
 
+struct bc_stat {
+	u32 hist_brightness[256];
+	u32 cumulate[256];
+};
+
 void vinc_neon_calculate_v_bri(void *vector, s32 val);
 
 void vinc_neon_calculate_m_con(void *matrix, s32 val);
@@ -56,6 +61,9 @@ void vinc_neon_calculate_m_sat(void *matrix, s32 val);
 void vinc_neon_calculate_m_hue(void *matrix, s32 val);
 
 void vinc_neon_wb_stat(u32 red, u32 green, u32 blue, u32 t, s32 *rb, s32 *bb);
+
+void vinc_neon_bc_stat(struct vinc_stat_hist *p_hist, struct bc_stat *p_stat,
+		       s32 *bri, s32 *con);
 
 void vinc_neon_calculate_m_wb(u32 rb, u32 bb, void *matrix);
 

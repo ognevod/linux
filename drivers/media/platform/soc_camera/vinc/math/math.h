@@ -39,6 +39,7 @@ double pow(double x, double y);
 double cos(double x);
 double sin(double x);
 double tan(double x);
+double atan(double x);
 double floor(double x);
 int __ieee754_rem_pio2(double x, double *y);
 int __kernel_rem_pio2(double *x, double *y, int e0, int nx, int prec,
