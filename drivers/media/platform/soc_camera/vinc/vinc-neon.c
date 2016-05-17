@@ -320,10 +320,10 @@ void vinc_neon_calculate_m_hue(void *matrix, s32 val)
 
 	*hue = (struct matrix) {
 		.coeff[0] =  1,
-		.coeff[4] =  cos((double)val * PI / 512),
-		.coeff[5] = -sin((double)val * PI / 512),
-		.coeff[7] =  sin((double)val * PI / 512),
-		.coeff[8] =  cos((double)val * PI / 512)
+		.coeff[4] =  cos((double)val * PI / 128),
+		.coeff[5] = -sin((double)val * PI / 128),
+		.coeff[7] =  sin((double)val * PI / 128),
+		.coeff[8] =  cos((double)val * PI / 128)
 	};
 }
 
