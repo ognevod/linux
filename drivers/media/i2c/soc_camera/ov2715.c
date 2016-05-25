@@ -18,6 +18,7 @@
 #include <linux/delay.h>
 #include <linux/v4l2-mediabus.h>
 #include <linux/videodev2.h>
+#include <linux/log2.h>
 
 #include <media/soc_camera.h>
 #include <media/v4l2-clk.h>
@@ -38,6 +39,9 @@
 #define REG_PAD_OUTPUT_ENABLE1		0x3017
 #define REG_PAD_OUTPUT_ENABLE2		0x3018
 #define REG_PLL_CLOCK_SELECT		0x3103
+#define REG_AEC_PK_MANUAL		0x3503
+#define REG_AGC_ADJ_HIGH		0x350A
+#define REG_AGC_ADJ_LOW			0x350B
 #define REG_WINDOW_START_X_HIGH		0x3800
 #define REG_WINDOW_START_X_LOW		0x3801
 #define REG_WINDOW_START_Y_HIGH		0x3802
@@ -66,6 +70,9 @@
 #define BLANKING_EXTRA_WIDTH		500
 #define BLANKING_EXTRA_HEIGHT		20
 
+/* AEC PK MANUAL */
+#define REG_AEC_PK_MANUAL_AGC		0x02
+
 /*
  * the sensor's autoexposure is buggy when setting total_height low.
  * It tries to expose longer than 1 frame period without taking care of it
@@ -81,6 +88,11 @@ struct ov2715_color_format {
 struct ov2715_priv {
 	struct v4l2_subdev               subdev;
 	struct v4l2_ctrl_handler	 hdl;
+	struct {
+		/* gain cluster */
+		struct v4l2_ctrl *auto_gain;
+		struct v4l2_ctrl *gain;
+	};
 	struct v4l2_rect		 crop_rect;
 	struct v4l2_clk			 *clk;
 	const struct ov2715_color_format *cfmt;
@@ -339,6 +351,77 @@ static int ov2715_g_parm(struct v4l2_subdev *sd, struct v4l2_streamparm *param)
 	return 0;
 }
 
+static int ov2715_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct ov2715_priv *priv = container_of(ctrl->handler,
+						struct ov2715_priv, hdl);
+	struct v4l2_subdev *sd = &priv->subdev;
+	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	int ret, i;
+	u8 val, high = 1, low;
+
+	switch (ctrl->id) {
+	case V4L2_CID_AUTOGAIN:
+		ret = reg_read(client, REG_AGC_ADJ_LOW, &val);
+		if (ret)
+			return ret;
+		low = (val & 0x0f) + 0x10;
+		val = val >> 4;
+		for (i = 0; i < 4; i++) {
+			if (val & 0x01)
+				high *= 2;
+			val = val >> 1;
+		}
+		ret = reg_read(client, REG_AGC_ADJ_HIGH, &val);
+		if (ret)
+			return ret;
+		if (val & 0x01)
+			high *= 2;
+		priv->gain->val = ((high * low) >> 4) & 0xfe;
+		return 0;
+	}
+	return -EINVAL;
+
+}
+
+static int ov2715_s_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct ov2715_priv *priv = container_of(ctrl->handler,
+						struct ov2715_priv, hdl);
+	struct v4l2_subdev *sd = &priv->subdev;
+	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	int ret;
+	u8 val;
+
+	switch (ctrl->id) {
+	case V4L2_CID_AUTOGAIN: {
+		u8 p, high, low;
+
+		ret = reg_read(client, REG_AEC_PK_MANUAL, &val);
+		if (ret)
+			return ret;
+		val = ctrl->val ? val & ~REG_AEC_PK_MANUAL_AGC : val |
+					REG_AEC_PK_MANUAL_AGC;
+		ret = reg_write(client, REG_AEC_PK_MANUAL, val);
+		if (ret)
+			return ret;
+
+		if (ctrl->val)
+			return 0;
+		p = rounddown_pow_of_two((u8)priv->gain->val);
+		high = p - 1;
+		low = ((priv->gain->val << 4) / p) - 16;
+		ret = reg_write(client, REG_AGC_ADJ_HIGH, high >> 4);
+		if (ret)
+			return ret;
+		ret = reg_write(client, REG_AGC_ADJ_LOW,
+			((high & 0xf) << 4) | low);
+		return ret;
+	}
+	}
+	return -EINVAL;
+}
+
 static struct v4l2_subdev_video_ops ov2715_subdev_video_ops = {
 	.g_mbus_fmt	= ov2715_try_fmt,
 	.s_mbus_fmt	= ov2715_try_fmt,
@@ -386,6 +469,11 @@ static int ov2715_s_power(struct v4l2_subdev *sd, int on)
 	return ret;
 }
 
+static const struct v4l2_ctrl_ops ov2715_ctrl_ops = {
+	.s_ctrl = ov2715_s_ctrl,
+	.g_volatile_ctrl = ov2715_g_volatile_ctrl,
+};
+
 static struct v4l2_subdev_core_ops ov2715_subdev_core_ops = {
 	.s_power	= ov2715_s_power,
 };
@@ -418,9 +506,15 @@ static int ov2715_probe(struct i2c_client *client,
 
 	v4l2_i2c_subdev_init(&priv->subdev, client, &ov2715_subdev_ops);
 	v4l2_ctrl_handler_init(&priv->hdl, 0);
+	priv->auto_gain = v4l2_ctrl_new_std(&priv->hdl, &ov2715_ctrl_ops,
+		V4L2_CID_AUTOGAIN, 0, 1, 1, 1);
+	priv->gain = v4l2_ctrl_new_std(&priv->hdl, &ov2715_ctrl_ops,
+		V4L2_CID_GAIN, 2, 62, 2, 16);
 	priv->subdev.ctrl_handler = &priv->hdl;
 	if (priv->hdl.error)
 		return priv->hdl.error;
+	v4l2_ctrl_auto_cluster(2, &priv->auto_gain, 0, true);
+	v4l2_ctrl_handler_setup(&priv->hdl);
 	v4l2_async_register_subdev(&priv->subdev);
 
 	return 0;
@@ -431,6 +525,7 @@ static int ov2715_remove(struct i2c_client *client)
 	struct ov2715_priv *priv = to_ov2715(client);
 
 	v4l2_async_unregister_subdev(&priv->subdev);
+	v4l2_ctrl_handler_free(&priv->hdl);
 	return 0;
 }
 
