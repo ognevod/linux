@@ -81,6 +81,84 @@
  */
 #define BLANKING_MIN_HEIGHT		1000
 
+#define OV2715_TABLE_END		0
+#define OV2715_TABLE_WAIT_MS		1
+
+struct ov2715_reg {
+	u16 addr;
+	u8 val;
+};
+/* Register setting for 1920*1080@30fps */
+static struct ov2715_reg mode_1920x1080[] = {
+	{0x3103, 0x93},
+	{0x3008, 0x82},
+	{OV2715_TABLE_WAIT_MS, 20},
+	{0x3008, 0x42},
+	{0x3017, 0x7f},
+	{0x3018, 0xfc},
+	{0x3706, 0x61},
+	{0x3712, 0x0c},
+	{0x3630, 0x6d},
+	{0x3801, 0xb4},
+	{0x3621, 0x04},
+	{0x3604, 0x60},
+	{0x3603, 0xa7},
+	{0x3631, 0x26},
+	{0x3600, 0x04},
+	{0x3620, 0x37},
+	{0x3623, 0x00},
+	{0x3702, 0x9e},
+	{0x3703, 0x5c},
+	{0x3704, 0x40},
+	{0x370d, 0x0f},
+	{0x3713, 0x9f},
+	{0x3714, 0x4c},
+	{0x3710, 0x9e},
+	{0x3801, 0xc4},
+	{0x3605, 0x05},
+	{0x3606, 0x3f},
+	{0x302d, 0x90},
+	{0x370b, 0x40},
+	{0x380d, 0x74},
+	{0x5181, 0x20},
+	{0x518f, 0x00},
+	{0x4301, 0xff},
+	{0x4303, 0x00},
+	{0x3a00, 0x78},
+	{0x300f, 0x88},
+	{0x3011, 0x28},
+	{0x3a1a, 0x06},
+	{0x3a18, 0x00},
+	{0x3a19, 0x7a},
+	{0x3a13, 0x54},
+	{0x382e, 0x0f},
+	{0x381a, 0x1a},
+	{0x401d, 0x02},
+	{0x5688, 0x03},
+	{0x5684, 0x07},
+	{0x5685, 0xa0},
+	{0x5686, 0x04},
+	{0x5687, 0x43},
+	{0x3011, 0x0a},
+	{0x300f, 0x8a},
+	{0x3017, 0x00},
+	{0x3018, 0x00},
+	{0x300e, 0x04},
+	{0x4800, 0x24},
+	{0x4801, 0x0f},
+	{0x300f, 0xc3},
+	{OV2715_TABLE_WAIT_MS, 30},
+	{0x3a0f, 0x40},
+	{0x3a10, 0x38},
+	{0x3a1b, 0x48},
+	{0x3a1e, 0x30},
+	{0x3a11, 0x90},
+	{0x3a1f, 0x10},
+	{0x3008, 0x02},
+	{OV2715_TABLE_WAIT_MS, 20},
+	{},
+};
+
 struct ov2715_color_format {
 	u32 code;
 	enum v4l2_colorspace colorspace;
@@ -156,109 +234,10 @@ static int reg_write(struct i2c_client *client, u16 reg, u8 val)
 	return 0;
 }
 
-/*
- * convenience function to write 16 bit register values that are split up
- * into two consecutive high and low parts
- */
-static int reg_write16(struct i2c_client *client, u16 reg, u16 val16)
-{
-	int ret;
-
-	ret = reg_write(client, reg, val16 >> 8);
-	if (ret)
-		return ret;
-	return reg_write(client, reg + 1, val16 & 0x00ff);
-}
-
 static struct ov2715_priv *to_ov2715(const struct i2c_client *client)
 {
 	return container_of(i2c_get_clientdata(client),
 			struct ov2715_priv, subdev);
-}
-
-static int ov2715_reset(struct i2c_client *client)
-{
-	int ret;
-
-	ret = reg_write(client, REG_PLL_CLOCK_SELECT, 0x93);
-	if (ret)
-		return ret;
-
-	ret = reg_write(client, REG_SYS_CTRL0, 0x82);
-	if (ret)
-		return ret;
-
-	/* wait for sensor reset */
-	msleep(100);
-
-	ret = reg_write(client, REG_SYS_CTRL0, 0x02);
-	if (ret)
-		return ret;
-
-	/* wait for sensor back to normal condition after reset */
-	msleep(100);
-	return 0;
-}
-
-static int ov2715_set_resolution(struct v4l2_subdev *sd)
-{
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	struct ov2715_priv *priv = to_ov2715(client);
-	int width = priv->crop_rect.width;
-	int height = priv->crop_rect.height;
-	int total_width = priv->total_width;
-	int total_height = priv->total_height;
-	int ret = 0;
-
-	ret = reg_write16(client, REG_WINDOW_START_X_HIGH,
-			  priv->crop_rect.left);
-	if (!ret)
-		ret = reg_write16(client, REG_WINDOW_START_Y_HIGH,
-				  priv->crop_rect.top);
-
-	if (!ret)
-		ret = reg_write16(client, REG_WINDOW_WIDTH_HIGH, width);
-	if (!ret)
-		ret = reg_write16(client, REG_WINDOW_HEIGHT_HIGH, height);
-	if (ret)
-		return ret;
-	priv->crop_rect.width = width;
-	priv->crop_rect.height = height;
-
-
-	/* Total width = output size + blanking */
-	if (!ret)
-		ret = reg_write16(client, REG_OUT_TOTAL_WIDTH_HIGH,
-				  total_width);
-	if (!ret)
-		ret = reg_write16(client, REG_OUT_TOTAL_HEIGHT_HIGH,
-				  total_height);
-
-	/* Sets the window for AWB calculations */
-	if (!ret)
-		ret = reg_write16(client, REG_AVG_WINDOW_END_X_HIGH, width);
-	if (!ret)
-		ret = reg_write16(client, REG_AVG_WINDOW_END_Y_HIGH, height);
-
-	return ret;
-}
-
-static int ov2715_setup_mipi(struct i2c_client *client)
-{
-	int ret;
-
-	ret = reg_write(client, REG_PLL1_CTRL0, 0x8a);
-	if (!ret)
-		reg_write(client, REG_PAD_OUTPUT_ENABLE1, 0x00);
-	if (!ret)
-		reg_write(client, REG_PAD_OUTPUT_ENABLE2, 0x00);
-	if (!ret)
-		reg_write(client, REG_MIPI_CTRL00, 0x04);
-	if (!ret)
-		reg_write(client, REG_MIPI_CTRL0, 0x24);
-	if (!ret)
-		reg_write(client, REG_MIPI_CTRL1, 0x0f);
-	return ret;
 }
 
 static int ov2715_enum_fmt(struct v4l2_subdev *sd, unsigned int index,
@@ -437,10 +416,9 @@ static struct v4l2_subdev_video_ops ov2715_subdev_video_ops = {
 static int ov2715_s_power(struct v4l2_subdev *sd, int on)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	struct ov2715_priv *priv = to_ov2715(client);
 	int ret;
 	u8 reg_sys_ctrl0;
-	u8 pll_value;
+	const struct ov2715_reg *next;
 
 	dev_dbg(&client->dev, "%s: on=%d\n", __func__, on);
 	ret = reg_read(client, REG_SYS_CTRL0, &reg_sys_ctrl0);
@@ -450,23 +428,16 @@ static int ov2715_s_power(struct v4l2_subdev *sd, int on)
 		/* sleep mode */
 		return reg_write(client, REG_SYS_CTRL0, reg_sys_ctrl0 | 0x40);
 
-	/* wake up */
-	ret = reg_write(client, REG_SYS_CTRL0, reg_sys_ctrl0 & ~0x40);
-	if (!ret)
-		ret = ov2715_reset(client);
+	for (next = mode_1920x1080; next->addr != OV2715_TABLE_END; next++) {
+		if (next->addr == OV2715_TABLE_WAIT_MS) {
+			msleep(next->val);
+			continue;
+		}
+		ret = reg_write(client, next->addr, next->val);
+		if (ret)
+			return ret;
+	}
 
-	pll_value = (priv->total_width * priv->total_height * priv->fps * 3 +
-			(priv->xvclk >> 1)) / priv->xvclk;
-	if (!ret)
-		ret = reg_write(client, REG_PLL1_CTRL2, pll_value);
-
-	/* Disable night mode */
-	if (!ret)
-		ret = reg_write(client, REG_AEC_CONTROL, 0x78);
-	if (!ret)
-		ret = ov2715_set_resolution(sd);
-	if (!ret)
-		ret = ov2715_setup_mipi(client);
 	return ret;
 }
 
@@ -495,10 +466,12 @@ static int ov2715_probe(struct i2c_client *client,
 
 	priv->crop_rect.width = OV2715_DEFAULT_WIDTH;
 	priv->crop_rect.height = OV2715_DEFAULT_HEIGHT;
-	priv->crop_rect.left = 390;
-	priv->crop_rect.top = 32;
-	priv->total_width = 2416;
-	priv->total_height = 1213;
+
+	priv->crop_rect.left = 436;
+	priv->crop_rect.top = 10;
+	priv->total_width = 2420;
+	priv->total_height = 1104;
+
 	priv->fps = 30;
 	priv->cfmt = &ov2715_cfmts[0];
 
