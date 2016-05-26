@@ -28,6 +28,9 @@
 #include <linux/platform_device.h>
 #include <linux/platform_data/vpoutfb.h>
 #include <linux/spinlock.h>
+
+#include <uapi/linux/vpoutfb.h>
+
 #include "vpoutfb.h"
 #include "it66121.h"
 
@@ -302,6 +305,36 @@ static int vpoutfb_setcolreg(u_int regno, u_int red, u_int green, u_int blue,
 	return 0;
 }
 
+extern int ump_export_secure_id(unsigned long addr, unsigned long size,
+				void **pbuf, int buf);
+
+static int vpoutfb_ioctl(struct fb_info *info, unsigned int cmd,
+			 unsigned long arg)
+{
+	struct vpoutfb_par *par = info->par;
+	static int (*ump_callback)(unsigned long addr, unsigned long size,
+				   void **pbuf, int buf);
+
+	switch (cmd) {
+	case VPOUTFB_GET_MEMORY_ID:
+		if (!ump_callback)
+			ump_callback = symbol_request(ump_export_secure_id);
+
+		if (ump_callback)
+			return ump_callback(info->fix.smem_start,
+					    info->fix.smem_len,
+					    &par->mem_handle, arg);
+
+		dev_warn(info->dev, "IOCTL %04x is not supported\n", cmd);
+		dev_warn_once(info->dev,
+			      "Can not get ump_export_secure_id() symbol\n");
+		return -ENOTSUPP;
+	default:
+		dev_warn(info->dev, "IOCTL %04x is not supported\n", cmd);
+		return -ENOTSUPP;
+	}
+}
+
 static void vpoutfb_destroy(struct fb_info *info)
 {
 	struct vpoutfb_par *par;
@@ -324,6 +357,7 @@ static struct fb_ops vpoutfb_ops = {
 	.fb_fillrect	= sys_fillrect,
 	.fb_copyarea	= sys_copyarea,
 	.fb_imageblit	= sys_imageblit,
+	.fb_ioctl	= vpoutfb_ioctl,
 	.fb_destroy	= vpoutfb_destroy
 };
 
@@ -650,5 +684,7 @@ static struct platform_driver vpoutfb_driver = {
 module_platform_driver(vpoutfb_driver);
 
 MODULE_AUTHOR("Oleg Kitain <okitain@elvees.com>");
+MODULE_AUTHOR("Anton Leontiev <aleontiev@elvees.com>");
 MODULE_DESCRIPTION("Elvees VPOUT framebuffer driver");
 MODULE_LICENSE("GPL v2");
+MODULE_SOFTDEP("pre: ump");

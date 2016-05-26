@@ -19,6 +19,7 @@ struct vpoutfb_par {
 	void __iomem			*mem_virt;
 	dma_addr_t			mem_phys;
 	size_t				mem_size;
+	void				*mem_handle;
 	struct it66121_device_data	hdmidata;
 	struct vpoutfb_format		*color_fmt;
 	struct tasklet_struct		reset_tasklet;
