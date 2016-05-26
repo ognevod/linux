@@ -318,13 +318,13 @@ static void vpoutfb_destroy(struct fb_info *info)
 
 static struct fb_ops vpoutfb_ops = {
 	.owner		= THIS_MODULE,
-	.fb_destroy	= vpoutfb_destroy,
+	.fb_check_var	= vpoutfb_check_var,
+	.fb_set_par	= vpoutfb_set_par,
 	.fb_setcolreg	= vpoutfb_setcolreg,
 	.fb_fillrect	= sys_fillrect,
 	.fb_copyarea	= sys_copyarea,
 	.fb_imageblit	= sys_imageblit,
-	.fb_check_var	= vpoutfb_check_var,
-	.fb_set_par	= vpoutfb_set_par
+	.fb_destroy	= vpoutfb_destroy
 };
 
 static struct vpoutfb_format vpoutfb_formats[] = VPOUTFB_FORMATS;
