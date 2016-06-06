@@ -20,6 +20,7 @@
 #include <linux/videodev2.h>
 #include <linux/log2.h>
 #include <linux/bitops.h>
+#include <linux/time.h>
 
 #include <media/soc_camera.h>
 #include <media/v4l2-clk.h>
@@ -40,9 +41,14 @@
 #define REG_PAD_OUTPUT_ENABLE1		0x3017
 #define REG_PAD_OUTPUT_ENABLE2		0x3018
 #define REG_PLL_CLOCK_SELECT		0x3103
+#define REG_AEC_PK_HHIGH		0x3500
+#define REG_AEC_PK_HIGH			0x3501
+#define REG_AEC_PK_LOW			0x3502
 #define REG_AEC_PK_MANUAL		0x3503
 #define REG_AGC_ADJ_HIGH		0x350A
 #define REG_AGC_ADJ_LOW			0x350B
+#define REG_AEC_PK_VTS_HIGH		0x350C
+#define REG_AEC_PK_VTS_LOW		0x350D
 #define REG_WINDOW_START_X_HIGH		0x3800
 #define REG_WINDOW_START_X_LOW		0x3801
 #define REG_WINDOW_START_Y_HIGH		0x3802
@@ -60,6 +66,12 @@
 #define REG_OUT_TOTAL_HEIGHT_HIGH	0x380e
 #define REG_OUT_TOTAL_HEIGHT_LOW	0x380f
 #define REG_AEC_CONTROL			0x3a00
+#define REG_AEC_B50_STEP_HIGH		0x3a08
+#define REG_AEC_B50_STEP_LOW		0x3a09
+#define REG_AEC_B60_STEP_HIGH		0x3a0a
+#define REG_AEC_B60_STEP_LOW		0x3a0b
+#define REG_AEC_CONTROLD		0x3a0d
+#define REG_AEC_CONTROLE		0x3a0e
 #define REG_MIPI_CTRL0			0x4800
 #define REG_MIPI_CTRL1			0x4801
 #define REG_AVG_WINDOW_END_X_HIGH	0x5682
@@ -73,6 +85,11 @@
 
 /* AEC PK MANUAL */
 #define REG_AEC_PK_MANUAL_AGC		0x02
+#define REG_AEC_PK_MANUAL_AEC		0x01
+
+/* AEC CONTROL */
+#define REG_AEC_CONTROL_BAND_EN		0x20
+
 
 /*
  * the sensor's autoexposure is buggy when setting total_height low.
@@ -171,6 +188,12 @@ struct ov2715_priv {
 		/* gain cluster */
 		struct v4l2_ctrl *auto_gain;
 		struct v4l2_ctrl *gain;
+	};
+	struct {
+		/* exposure cluster */
+		struct v4l2_ctrl *auto_exp;
+		struct v4l2_ctrl *exp;
+		struct v4l2_ctrl *exp_abs;
 	};
 	struct v4l2_rect		 crop_rect;
 	struct v4l2_clk			 *clk;
@@ -331,6 +354,19 @@ static int ov2715_g_parm(struct v4l2_subdev *sd, struct v4l2_streamparm *param)
 	return 0;
 }
 
+/* The exposure value in registers is in units of line period / 16. */
+static u32 exposure_reg_to_100us(struct ov2715_priv *priv, u32 value)
+{
+	return value * (USEC_PER_SEC / 100) /
+			(priv->total_height * priv->fps) / 16;
+}
+
+static u32 exposure_100us_to_reg(struct ov2715_priv *priv, u32 value)
+{
+	return value * (priv->total_height * priv->fps) * 16 /
+			(USEC_PER_SEC / 100);
+}
+
 static int ov2715_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct ov2715_priv *priv = container_of(ctrl->handler,
@@ -355,9 +391,30 @@ static int ov2715_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
 			high++;
 		priv->gain->val = high | low;
 		return 0;
+	case V4L2_CID_EXPOSURE_AUTO: {
+		u32 exposure;
+
+		ret = reg_read(client, REG_AEC_PK_LOW, &val);
+		if (ret)
+			return ret;
+
+		exposure = val;
+		ret = reg_read(client, REG_AEC_PK_HIGH, &val);
+		if (ret)
+			return ret;
+
+		exposure |= val << 8;
+		ret = reg_read(client, REG_AEC_PK_HHIGH, &val);
+		if (ret)
+			return ret;
+
+		exposure |= val << 16;
+		priv->exp->val = exposure;
+		priv->exp_abs->val = exposure_reg_to_100us(priv, exposure);
+		return 0;
+	}
 	}
 	return -EINVAL;
-
 }
 
 static int ov2715_s_ctrl(struct v4l2_ctrl *ctrl)
@@ -396,6 +453,46 @@ static int ov2715_s_ctrl(struct v4l2_ctrl *ctrl)
 		high = (0xf << high) & 0xf0;
 		ret = reg_write(client, REG_AGC_ADJ_LOW, high | low);
 
+		return ret;
+	}
+	case V4L2_CID_EXPOSURE_AUTO: {
+		u32 exposure;
+
+		ret = reg_read(client, REG_AEC_PK_MANUAL, &val);
+		if (ret)
+			return ret;
+
+		val = (priv->auto_exp->val == V4L2_EXPOSURE_AUTO) ? val &
+			~REG_AEC_PK_MANUAL_AEC : val | REG_AEC_PK_MANUAL_AEC;
+
+		ret = reg_write(client, REG_AEC_PK_MANUAL, val);
+		if (ret)
+			return ret;
+		if (ctrl->val == V4L2_EXPOSURE_AUTO)
+			return 0;
+
+		if (priv->exp_abs->is_new) {
+			exposure = exposure_100us_to_reg(priv,
+							 priv->exp_abs->val);
+			*priv->exp->p_cur.p_s32 = exposure;
+		} else {
+			exposure = priv->exp->val;
+			*priv->exp_abs->p_cur.p_s32 =
+					exposure_reg_to_100us(priv, exposure);
+		}
+
+		val = (u8)(exposure & 0xff);
+		ret = reg_write(client, REG_AEC_PK_LOW, val);
+		if (ret)
+			return ret;
+
+		val = (u8)((exposure >> 8) & 0xff);
+		ret = reg_write(client, REG_AEC_PK_HIGH, val);
+		if (ret)
+			return ret;
+
+		val = (u8)((exposure >> 16) & 0xf);
+		ret = reg_write(client, REG_AEC_PK_HHIGH, val);
 		return ret;
 	}
 	}
@@ -484,10 +581,18 @@ static int ov2715_probe(struct i2c_client *client,
 		V4L2_CID_AUTOGAIN, 0, 1, 1, 1);
 	priv->gain = v4l2_ctrl_new_std(&priv->hdl, &ov2715_ctrl_ops,
 		V4L2_CID_GAIN, 0, 95, 1, 32);
+	priv->auto_exp = v4l2_ctrl_new_std_menu(&priv->hdl, &ov2715_ctrl_ops,
+		V4L2_CID_EXPOSURE_AUTO,
+		V4L2_EXPOSURE_MANUAL, 0, V4L2_EXPOSURE_AUTO);
+	priv->exp = v4l2_ctrl_new_std(&priv->hdl, &ov2715_ctrl_ops,
+		V4L2_CID_EXPOSURE, 1, 17600, 1, 17280);
+	priv->exp_abs = v4l2_ctrl_new_std(&priv->hdl, &ov2715_ctrl_ops,
+		V4L2_CID_EXPOSURE_ABSOLUTE, 1, 332, 1, 326);
 	priv->subdev.ctrl_handler = &priv->hdl;
 	if (priv->hdl.error)
 		return priv->hdl.error;
 	v4l2_ctrl_auto_cluster(2, &priv->auto_gain, 0, true);
+	v4l2_ctrl_auto_cluster(3, &priv->auto_exp, V4L2_EXPOSURE_MANUAL, true);
 	v4l2_ctrl_handler_setup(&priv->hdl);
 	v4l2_async_register_subdev(&priv->subdev);
 
