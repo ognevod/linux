@@ -33,6 +33,13 @@ struct vector {
 	double offset[VINC_CC_OFFSET_COUNT];
 };
 
+struct col_fx {
+	struct matrix m_fx_ycbcr;
+	struct matrix m_fx_rgb;
+	struct vector v_fx_ycbcr;
+	struct vector v_fx_rgb;
+};
+
 struct ctrl_priv {
 	void *dowb;
 	void *brightness;
@@ -40,6 +47,7 @@ struct ctrl_priv {
 	void *saturation;
 	void *hue;
 	void *ck;
+	void *fx;
 };
 
 struct bc_stat {
@@ -54,6 +62,8 @@ void vinc_neon_calculate_m_con(void *matrix, s32 val);
 void vinc_neon_calculate_m_sat(void *matrix, s32 val);
 
 void vinc_neon_calculate_m_hue(void *matrix, s32 val);
+
+void vinc_neon_calculate_fx(void *col_fx, s32 cbcr, s32 val);
 
 void vinc_neon_wb_stat(u32 red, u32 green, u32 blue, u32 t, s32 *rb, s32 *bb);
 

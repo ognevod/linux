@@ -432,6 +432,154 @@ void vinc_neon_calculate_m_ck(void *matrix, s32 val)
 	};
 }
 
+void vinc_neon_calculate_fx(void *col_fx, s32 cbcr, s32 val)
+{
+	struct col_fx *fx = (struct col_fx *)col_fx;
+
+	switch (val) {
+	case V4L2_COLORFX_BW:
+		fx->m_fx_rgb   = (struct matrix) {
+			.coeff[0] =  1,
+			.coeff[4] =  1,
+			.coeff[8] =  1
+		};
+		fx->m_fx_ycbcr = (struct matrix) {
+			.coeff[0] = 1
+		};
+		fx->v_fx_rgb   = (struct vector) {0};
+		fx->v_fx_ycbcr = (struct vector) {
+			.offset[1] = 2048,
+			.offset[2] = 2048
+		};
+		break;
+	case V4L2_COLORFX_SEPIA:
+		fx->m_fx_rgb = (struct matrix) {
+			.coeff[0] = 0.393,
+			.coeff[1] = 0.769,
+			.coeff[2] = 0.189,
+			.coeff[3] = 0.349,
+			.coeff[4] = 0.686,
+			.coeff[5] = 0.168,
+			.coeff[6] = 0.272,
+			.coeff[7] = 0.534,
+			.coeff[8] = 0.131
+		};
+		fx->m_fx_ycbcr = (struct matrix) {
+			.coeff[0] =  1,
+			.coeff[4] =  1,
+			.coeff[8] =  1
+		};
+		fx->v_fx_rgb   = (struct vector) {0};
+		fx->v_fx_ycbcr = (struct vector) {0};
+		break;
+	case V4L2_COLORFX_NEGATIVE:
+		fx->m_fx_rgb = (struct matrix) {
+			.coeff[0] = -1,
+			.coeff[4] = -1,
+			.coeff[8] = -1
+		};
+		fx->m_fx_ycbcr = (struct matrix) {
+			.coeff[0] = 1,
+			.coeff[4] = 1,
+			.coeff[8] = 1
+		};
+		fx->v_fx_rgb = (struct vector) {
+			.offset[0] = 4095,
+			.offset[1] = 4095,
+			.offset[2] = 4095
+		};
+		fx->v_fx_ycbcr = (struct vector) {0};
+		break;
+	case V4L2_COLORFX_VIVID:
+		fx->m_fx_rgb = (struct matrix) {
+			.coeff[0] = 1,
+			.coeff[4] = 1,
+			.coeff[8] = 1
+		};
+		fx->m_fx_ycbcr = (struct matrix) {
+			.coeff[0] = 1,
+			.coeff[4] = 1.3143,
+			.coeff[8] = 1.3143
+		};
+		fx->v_fx_rgb   = (struct vector) {0};
+		fx->v_fx_ycbcr = (struct vector) {
+			.offset[1] = -643.6864,
+			.offset[2] = -643.6864
+		};
+		break;
+	case V4L2_COLORFX_AQUA:
+		fx->m_fx_rgb = (struct matrix) {
+			.coeff[0] = 0.9,
+			.coeff[1] = 0.1,
+			.coeff[2] = 0.1,
+			.coeff[3] = 0.1,
+			.coeff[4] = 0.85,
+			.coeff[5] = 0.1,
+			.coeff[6] = 0.3,
+			.coeff[7] = 0.1,
+			.coeff[8] = 0.7
+		};
+		fx->m_fx_ycbcr = (struct matrix) {
+			.coeff[0] = 1,
+			.coeff[4] = 1,
+			.coeff[8] = 1
+		};
+		fx->v_fx_rgb   = (struct vector) {0};
+		fx->v_fx_ycbcr = (struct vector) {0};
+		break;
+	case V4L2_COLORFX_ANTIQUE:
+		fx->m_fx_rgb = (struct matrix) {
+			.coeff[0] = 0.85,
+			.coeff[1] = 0.1,
+			.coeff[2] = 0.3,
+			.coeff[3] = 0.1,
+			.coeff[4] = 0.45,
+			.coeff[5] = 0.5,
+			.coeff[6] = 0.1,
+			.coeff[7] = 0.3,
+			.coeff[8] = 0.5
+		};
+		fx->m_fx_ycbcr = (struct matrix) {
+			.coeff[0] = 1,
+			.coeff[4] = 1,
+			.coeff[8] = 1
+		};
+		fx->v_fx_rgb   = (struct vector) {0};
+		fx->v_fx_ycbcr = (struct vector) {0};
+		break;
+	case V4L2_COLORFX_SET_CBCR:
+		fx->m_fx_rgb = (struct matrix) {
+			.coeff[0] = 1,
+			.coeff[4] = 1,
+			.coeff[8] = 1
+		};
+		fx->m_fx_ycbcr = (struct matrix) {
+			.coeff[0] = 1
+		};
+		fx->v_fx_rgb   = (struct vector) {0};
+		fx->v_fx_ycbcr = (struct vector) {
+			/* implementation for 8 bit image */
+			.offset[1] = (cbcr & 0x0000FF00) >> 4,
+			.offset[2] = (cbcr & 0x000000FF) << 4
+		};
+		break;
+	default:
+		fx->m_fx_rgb = (struct matrix) {
+			.coeff[0] = 1,
+			.coeff[4] = 1,
+			.coeff[8] = 1
+		};
+		fx->m_fx_ycbcr = (struct matrix) {
+			.coeff[0] = 1,
+			.coeff[4] = 1,
+			.coeff[8] = 1
+		};
+		fx->v_fx_rgb   = (struct vector) {0};
+		fx->v_fx_ycbcr = (struct vector) {0};
+		break;
+	}
+}
+
 /*  Matrix and matrix multiplication
  *  m1 - left matrix, m2 - right matrix. Order of multiplication matters. */
 static void mxm_mult(struct matrix *prod, const struct matrix *m1,
@@ -495,21 +643,27 @@ static void cc_matrix_calc(struct matrix *coeff, struct ctrl_priv *ctrl_privs,
 	struct matrix tmp1;
 	struct matrix tmp2;
 
-	struct matrix *m_wb = (struct matrix *)ctrl_privs->dowb;
-	struct matrix *m_con = (struct matrix *)ctrl_privs->contrast;
-	struct matrix *m_sat = (struct matrix *)ctrl_privs->saturation;
-	struct matrix *m_hue = (struct matrix *)ctrl_privs->hue;
-	struct matrix *m_ck  = (struct matrix *)ctrl_privs->ck;
+	struct col_fx *fx = (struct col_fx *)ctrl_privs->fx;
 
-	/* M_cc = M_rgb * M_ck * M_sat * M_con * M_hue * M_ycbcr * M_wb
-	 *              6      5       4       3       2         1   */
+	struct matrix *m_wb       = (struct matrix *)ctrl_privs->dowb;
+	struct matrix *m_con      = (struct matrix *)ctrl_privs->contrast;
+	struct matrix *m_sat      = (struct matrix *)ctrl_privs->saturation;
+	struct matrix *m_hue      = (struct matrix *)ctrl_privs->hue;
+	struct matrix *m_ck       = (struct matrix *)ctrl_privs->ck;
+	struct matrix *m_fx_rgb   = &(fx->m_fx_rgb);
+	struct matrix *m_fx_ycbcr = &(fx->m_fx_ycbcr);
+
+	/* M_cc = M_fx_rgb*M_rgb*M_fx_ycbcr*M_ck*M_sat*M_con*M_hue*M_ycbcr*M_wb
+	 *                8     7          6    5     4     3     2       1  */
 	mxm_mult(&tmp1, &m_ycbcr[ycbcr_enc], m_wb);   /* [1] */
-	mxm_mult(&tmp2, m_hue, &tmp1);		     /* [2] */
-	mxm_mult(&tmp1, m_con, &tmp2);		     /* [3] */
-	mxm_mult(&tmp2, m_sat, &tmp1);		     /* [4] */
-	mxm_mult(&tmp1, m_ck, &tmp2);		     /* [5] */
-	mxm_mult(coeff, &m_rgb[ycbcr_enc][VINC_QUANTIZATION_FULL_RANGE],
-		 &tmp1);			     /* [6] */
+	mxm_mult(&tmp2, m_hue, &tmp1);		      /* [2] */
+	mxm_mult(&tmp1, m_con, &tmp2);		      /* [3] */
+	mxm_mult(&tmp2, m_sat, &tmp1);		      /* [4] */
+	mxm_mult(&tmp1, m_ck, &tmp2);		      /* [5] */
+	mxm_mult(&tmp2, m_fx_ycbcr, &tmp1);	      /* [6] */
+	mxm_mult(&tmp1, &m_rgb[ycbcr_enc][VINC_QUANTIZATION_FULL_RANGE],
+		 &tmp2);			      /* [7] */
+	mxm_mult(coeff, m_fx_rgb, &tmp1);	      /* [8] */
 }
 
 /* Calculate CC offset vector according to control matrices and vectors */
@@ -528,14 +682,23 @@ static void cc_vector_calc(struct vector *offset, struct ctrl_priv *ctrl_privs,
 		.offset[1] = -2048,
 		.offset[2] = -2048
 	};
-	struct vector *v_bri = (struct vector *)ctrl_privs->brightness;
-	struct matrix *m_con = (struct matrix *)ctrl_privs->contrast;
-	struct matrix *m_sat = (struct matrix *)ctrl_privs->saturation;
-	struct matrix *m_hue = (struct matrix *)ctrl_privs->hue;
-	struct matrix *m_ck  = (struct matrix *)ctrl_privs->ck;
+	struct col_fx *fx = (struct col_fx *)ctrl_privs->fx;
 
-	/* Vcc = M_rgb*(Mck*Msat*Mcon*Mhue*(Vycbcr-Vhalf)+Vbri+Vhalf)+Vrgb
-	 *            8    5    4    3    2       1      6    7      9  */
+	struct vector *v_bri      = (struct vector *)ctrl_privs->brightness;
+	struct matrix *m_con      = (struct matrix *)ctrl_privs->contrast;
+	struct matrix *m_sat      = (struct matrix *)ctrl_privs->saturation;
+	struct matrix *m_hue      = (struct matrix *)ctrl_privs->hue;
+	struct matrix *m_ck       = (struct matrix *)ctrl_privs->ck;
+	struct matrix *m_fx_rgb   = &(fx->m_fx_rgb);
+	struct matrix *m_fx_ycbcr = &(fx->m_fx_ycbcr);
+	struct vector *v_fx_rgb   = &(fx->v_fx_rgb);
+	struct vector *v_fx_ycbcr = &(fx->v_fx_ycbcr);
+
+	/* Vcc = Mfx_rgb * (Mrgb * (Mfx_ycbcr * (Mck * Msat * Mcon * Mhue *
+	 *               12      10           8      5      4      3      2
+	 *
+	 * * (Vycbcr - Vhalf) + Vbri + Vhalf) + Vfx_ycbcr) + Vrgb) + Vfx_rgb
+	 * 2         1        6      7        9            11      13	  */
 	vxv_add(&tmp1, &v_ycbcr, &half_minus);   /* [1] */
 	mxv_mult(&tmp2, m_hue, &tmp1);		 /* [2] */
 	mxv_mult(&tmp1, m_con, &tmp2);		 /* [3] */
@@ -543,10 +706,14 @@ static void cc_vector_calc(struct vector *offset, struct ctrl_priv *ctrl_privs,
 	mxv_mult(&tmp1, m_ck, &tmp2);		 /* [5] */
 	vxv_add(&tmp2, v_bri, &tmp1);		 /* [6] */
 	vxv_add(&tmp1, &half_plus, &tmp2);	 /* [7] */
+	mxv_mult(&tmp2, m_fx_ycbcr, &tmp1);	 /* [8] */
+	vxv_add(&tmp1, v_fx_ycbcr, &tmp2);	 /* [9] */
 	mxv_mult(&tmp2, &m_rgb[ycbcr_enc][VINC_QUANTIZATION_FULL_RANGE],
-		 &tmp1);			 /* [8] */
-	vxv_add(offset, &v_rgb[ycbcr_enc][VINC_QUANTIZATION_FULL_RANGE],
-		&tmp2);				 /* [9] */
+		 &tmp1);			 /* [10] */
+	vxv_add(&tmp1, &v_rgb[ycbcr_enc][VINC_QUANTIZATION_FULL_RANGE],
+		 &tmp2);			 /* [11] */
+	mxv_mult(&tmp2, m_fx_rgb, &tmp1);	 /* [12] */
+	vxv_add(offset, v_fx_rgb, &tmp2);	 /* [13] */
 }
 
 static inline bool check_row_overflow(struct matrix *const coeff,

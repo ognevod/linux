@@ -414,6 +414,8 @@ struct vinc_cluster_cc {
 	struct v4l2_ctrl *contrast;
 	struct v4l2_ctrl *saturation;
 	struct v4l2_ctrl *hue;
+	struct v4l2_ctrl *fx;
+	struct v4l2_ctrl *cbcr;
 	struct v4l2_ctrl *awb;
 	struct v4l2_ctrl *dowb;
 	struct v4l2_ctrl *rb;
@@ -1156,8 +1158,9 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 
 		std_is_new = cc->dowb->is_new     | cc->brightness->is_new |
 			     cc->contrast->is_new | cc->saturation->is_new |
-			     cc->hue->is_new      | cc->ck->is_new |
-			     cc->rb->is_new	  | cc->bb->is_new |
+			     cc->hue->is_new      | cc->ck->is_new         |
+			     cc->fx->is_new       | cc->cbcr->is_new       |
+			     cc->rb->is_new       | cc->bb->is_new         |
 			     cc->wbt->is_new;
 
 		init = cc->enable->is_new & cc->cc->is_new &
@@ -1178,7 +1181,7 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 
 			if (cc->wbt->is_new) {
 				temp = cc->wbt->val;
-				change_write_only(ctrl->cluster, 11,
+				change_write_only(ctrl->cluster, 13,
 						  wr_only_num, 0);
 			}
 			add = &stream->summary_stat.add;
@@ -1201,7 +1204,7 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 
 		if ((cc->dowb->is_new || cc->rb->is_new || cc->bb->is_new) &&
 		    !init && !cc->awb->cur.val) {
-			change_write_only(ctrl->cluster, 11, wr_only_num, 1);
+			change_write_only(ctrl->cluster, 13, wr_only_num, 1);
 			/* write only flag for wbt should not reset */
 			wr_only_num--;
 		}
@@ -1236,6 +1239,13 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		if (cc->ck->is_new) {
 			kernel_neon_begin();
 			vinc_neon_calculate_m_ck(cc->ck->priv, cc->ck->val);
+			kernel_neon_end();
+		}
+
+		if (cc->fx->is_new || cc->cbcr->is_new) {
+			kernel_neon_begin();
+			vinc_neon_calculate_fx(cc->fx->priv, cc->cbcr->val,
+					       cc->fx->val);
 			kernel_neon_end();
 		}
 
@@ -1467,6 +1477,25 @@ static const char * const vinc_test_pattern_menu[] = {
 	"Increment",
 };
 
+static const char * const vinc_color_effect_menu[] = {
+	"Color effect is disabled",
+	"Black and white",
+	"Sepia tone",
+	"Negative",
+	"Emboss",
+	"Sketch",
+	"Sky blue",
+	"Grass green",
+	"Skin whiten",
+	"Vivid colors",
+	"Cool tone",
+	"Frost color effect",
+	"Silhouette",
+	"Solarization",
+	"Old photo",
+	"Set Cb and Cr components"
+};
+
 static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops   = &ctrl_ops,
@@ -1565,6 +1594,29 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	},
 	{
 		.ops   = &ctrl_ops,
+		.id    = V4L2_CID_COLORFX,
+		.name  = "Color effects",
+		.type  = V4L2_CTRL_TYPE_MENU,
+		.min   = 0,
+		.max   = ARRAY_SIZE(vinc_color_effect_menu) - 1,
+		.step  = 0,
+		.def   = 0,
+		.menu_skip_mask = 0x39F0,
+		.qmenu = vinc_color_effect_menu
+	},
+	{
+		.ops   = &ctrl_ops,
+		.id    = V4L2_CID_COLORFX_CBCR,
+		.name  = "Cb Cr components",
+		.type  = V4L2_CTRL_TYPE_INTEGER,
+		.min   = 0,
+		.max   = 65535,
+		.step  = 1,
+		.def   = 0,
+		.flags = V4L2_CTRL_FLAG_UPDATE
+	},
+	{
+		.ops   = &ctrl_ops,
 		.id    = V4L2_CID_AUTOBRIGHTNESS,
 		.name  = "Brightness, Automatic",
 		.type  = V4L2_CTRL_TYPE_BOOLEAN,
@@ -1573,7 +1625,8 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 		.step  = 1,
 		.def   = 0,
 		.flags = V4L2_CTRL_FLAG_UPDATE
-	},	{
+	},
+	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_WHITE_BALANCE_TEMPERATURE,
 		.name = "White balance temperature",
@@ -2116,6 +2169,8 @@ static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 	stream->cluster.cc.dowb = v4l2_ctrl_find(hdl,
 			V4L2_CID_DO_WHITE_BALANCE);
 	stream->cluster.cc.ck = v4l2_ctrl_find(hdl, V4L2_CID_COLOR_KILLER);
+	stream->cluster.cc.fx = v4l2_ctrl_find(hdl, V4L2_CID_COLORFX);
+	stream->cluster.cc.cbcr = v4l2_ctrl_find(hdl, V4L2_CID_COLORFX_CBCR);
 	stream->cluster.cc.rb = v4l2_ctrl_find(hdl, V4L2_CID_RED_BALANCE);
 	stream->cluster.cc.bb = v4l2_ctrl_find(hdl, V4L2_CID_BLUE_BALANCE);
 	stream->cluster.cc.wbt = v4l2_ctrl_find(hdl,
@@ -2171,6 +2226,9 @@ static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 			GFP_KERNEL);
 	stream->cluster.cc.ck->priv = devm_kmalloc(
 			priv->ici.v4l2_dev.dev, sizeof(struct matrix),
+			GFP_KERNEL);
+	stream->cluster.cc.fx->priv = devm_kmalloc(
+			priv->ici.v4l2_dev.dev, sizeof(struct col_fx),
 			GFP_KERNEL);
 	stream->cluster.cc.dowb->priv = kzalloc(sizeof(struct matrix),
 						GFP_KERNEL);
