@@ -1055,12 +1055,11 @@ static void enable_block(struct vinc_dev *priv, u8 devnum, u32 block_mask,
 }
 
 static void change_write_only(struct v4l2_ctrl **cluster,
-			      u16 n_first, bool const write_only)
+			      u8 first, u8 last, bool const write_only)
 {
-	struct v4l2_ctrl *master = cluster[0];
-	int i;
+	u8 i;
 
-	for (i = n_first; i < master->ncontrols; i++)
+	for (i = first; i < last; i++)
 		if (write_only) {
 			cluster[i]->flags |= V4L2_CTRL_FLAG_WRITE_ONLY;
 			cluster[i]->flags |=
@@ -1120,10 +1119,12 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 			vinc_neon_calculate_gamma_curve(gamma->gamma->val,
 					      gamma->curve->p_cur.p);
 			kernel_neon_end();
-			change_write_only(ctrl->cluster, 1, 0);
+			change_write_only(ctrl->cluster, 1,
+					  gamma->enable->ncontrols, 0);
 			gamma->curve->flags |= V4L2_CTRL_FLAG_UPDATE;
 		} else if (gamma->curve->is_new) {
-			change_write_only(ctrl->cluster, 1, 1);
+			change_write_only(ctrl->cluster, 1,
+					  gamma->enable->ncontrols, 1);
 			gamma->curve->flags &= ~V4L2_CTRL_FLAG_UPDATE;
 			p_gamma = gamma->curve->p_new.p;
 		}
@@ -1144,8 +1145,10 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 	case V4L2_CID_CC_ENABLE: {
 		struct vinc_cc *p_cc;
 		bool activate;
+		u8 wr_only_num;
 
 		cc = (struct vinc_cluster_cc *)ctrl->cluster;
+		wr_only_num = cc->enable->ncontrols;
 		p_cc = cc->cc->p_cur.p;
 
 		/*TODO: is_new flags for other cc controls must be
@@ -1175,7 +1178,8 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 
 			if (cc->wbt->is_new) {
 				temp = cc->wbt->val;
-				change_write_only(ctrl->cluster, 11, 0);
+				change_write_only(ctrl->cluster, 11,
+						  wr_only_num, 0);
 			}
 			add = &stream->summary_stat.add;
 
@@ -1195,9 +1199,12 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 			kernel_neon_end();
 		}
 
-		if ((cc->dowb->is_new || cc->rb->is_new || cc->bb->is_new)
-			&& !init  && !cc->awb->cur.val)
-			change_write_only(ctrl->cluster, 11, 1);
+		if ((cc->dowb->is_new || cc->rb->is_new || cc->bb->is_new) &&
+		    !init && !cc->awb->cur.val) {
+			change_write_only(ctrl->cluster, 11, wr_only_num, 1);
+			/* write only flag for wbt should not reset */
+			wr_only_num--;
+		}
 
 		if (cc->brightness->is_new && !cc->ab->cur.val) {
 			kernel_neon_begin();
@@ -1249,12 +1256,12 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 			vinc_neon_calculate_cc(&ctrl_privs, stream->ycbcr_enc,
 					       cc->cc->p_cur.p);
 			kernel_neon_end();
-			change_write_only(ctrl->cluster, 2, 0);
+			change_write_only(ctrl->cluster, 2, wr_only_num, 0);
 			cc->cc->flags |= V4L2_CTRL_FLAG_UPDATE;
 		} else if (cc->cc->is_new && !cc->awb->cur.val &&
 			!cc->ab->cur.val) {
 			p_cc = cc->cc->p_new.p;
-			change_write_only(ctrl->cluster, 2, 1);
+			change_write_only(ctrl->cluster, 2, wr_only_num, 1);
 			cc->cc->flags &= ~V4L2_CTRL_FLAG_UPDATE;
 		}
 		set_cc_ct(priv, devnum, p_cc, 0);
