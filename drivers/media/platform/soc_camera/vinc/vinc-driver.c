@@ -382,6 +382,9 @@
 #define MAX_WIDTH_HEIGHT		4095
 #define MAX_COMP_VALUE			4095
 
+/* Historgam hardware bug correction */
+#define HISTOGRAM_BAD_THRESHOLD		800000
+
 #define CLUSTER_SIZE(c) (sizeof(c) / sizeof(struct v4l2_ctrl *))
 
 #define AWB_MEMBER_NUM 4
@@ -1969,6 +1972,20 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	},
 };
 
+static int check_histogram(u32 hist[], int index)
+{
+	if (hist[index] > HISTOGRAM_BAD_THRESHOLD) {
+		if (index == 0)
+			hist[index] = hist[index+1];
+		else if (index == 255)
+			hist[index] = hist[index-1];
+		else
+			hist[index] = (hist[index-1] + hist[index+1]) / 2;
+		return 1;
+	} else
+		return 0;
+}
+
 static void auto_stat_work(struct work_struct *work)
 {
 	struct vinc_stream *stream = container_of(work, struct vinc_stream,
@@ -1989,6 +2006,20 @@ static void auto_stat_work(struct work_struct *work)
 		.hue = cc->hue->priv,
 		.ck = cc->ck->priv
 	};
+	int i;
+
+	/* Workaround of hardware bug rf#2159: very big value in histogram */
+	for (i = 0; i < 256; i++) {
+		if (check_histogram(hist->red, i))
+			dev_warn(priv->ici.v4l2_dev.dev,
+				 "Red histogram hardware error\n");
+		if (check_histogram(hist->green, i))
+			dev_warn(priv->ici.v4l2_dev.dev,
+				 "Green histogram hardware error\n");
+		if (check_histogram(hist->blue, i))
+			dev_warn(priv->ici.v4l2_dev.dev,
+				 "Blue histogram hardware error\n");
+	}
 
 	if (cc->awb->val || cc->ab->val) {
 		kernel_neon_begin();
