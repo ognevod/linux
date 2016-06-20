@@ -1086,7 +1086,7 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 	const u8 devnum = icd->devnum;
 	struct vinc_stream * const stream = &priv->stream[devnum];
 	u32 proc_cfg, stream_ctr;
-	int i, init, std_is_new;
+	int rc, i, init, std_is_new;
 
 	switch (ctrl->id) {
 	case V4L2_CID_BAD_CORRECTION_ENABLE:
@@ -1253,9 +1253,14 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 				.ck = cc->ck->priv
 			};
 			kernel_neon_begin();
-			vinc_neon_calculate_cc(&ctrl_privs, stream->ycbcr_enc,
-					       cc->cc->p_cur.p);
+			rc = vinc_neon_calculate_cc(&ctrl_privs,
+						    stream->ycbcr_enc,
+						    cc->cc->p_cur.p);
 			kernel_neon_end();
+
+			if (rc < 0)
+				return rc;
+
 			change_write_only(ctrl->cluster, 2, wr_only_num, 0);
 			cc->cc->flags |= V4L2_CTRL_FLAG_UPDATE;
 		} else if (cc->cc->is_new && !cc->awb->cur.val &&
@@ -2013,7 +2018,7 @@ static void auto_stat_work(struct work_struct *work)
 		.hue = cc->hue->priv,
 		.ck = cc->ck->priv
 	};
-	int i;
+	int rc, i;
 
 	/* Workaround of hardware bug rf#2159: very big value in histogram */
 	for (i = 0; i < 256; i++) {
@@ -2032,24 +2037,37 @@ static void auto_stat_work(struct work_struct *work)
 		kernel_neon_begin();
 		if (cc->awb->val) {
 			vinc_neon_wb_stat(add->sum_r, add->sum_g, add->sum_b, 0,
-					  cc->rb->p_cur.p_s32,
-					  cc->bb->p_cur.p_s32);
-			vinc_neon_calculate_m_wb(*cc->rb->p_cur.p_s32,
-						 *cc->bb->p_cur.p_s32,
+					  &cc->rb->val, &cc->bb->val);
+			vinc_neon_calculate_m_wb(cc->rb->val, cc->bb->val,
 						 cc->dowb->priv);
 		}
 		if (cc->ab->val) {
 			vinc_neon_bc_stat(hist, stream->cluster.cc.ab->priv,
-					  cc->brightness->p_cur.p_s32,
-					  cc->contrast->p_cur.p_s32);
+					  &cc->brightness->val,
+					  &cc->contrast->val);
 			vinc_neon_calculate_v_bri(cc->brightness->priv,
-						  *cc->brightness->p_cur.p_s32);
+						  cc->brightness->val);
 			vinc_neon_calculate_m_con(cc->contrast->priv,
-						  *cc->contrast->p_cur.p_s32);
+						  cc->contrast->val);
 		}
-		vinc_neon_calculate_cc(&ctrl_privs, stream->ycbcr_enc,
-			       cc->cc->p_cur.p);
+
+		rc = vinc_neon_calculate_cc(&ctrl_privs, stream->ycbcr_enc,
+					    cc->cc->p_new.p);
+
 		kernel_neon_end();
+
+		if (rc < 0)
+			return;
+
+		cc->rb->cur.val = cc->rb->val;
+		cc->bb->cur.val = cc->bb->val;
+
+		cc->brightness->cur.val = cc->brightness->val;
+		cc->contrast->cur.val = cc->contrast->val;
+
+		memcpy(cc->cc->p_cur.p, cc->cc->p_new.p,
+		       sizeof(struct vinc_cc));
+
 		set_cc_ct(priv, devnum, cc->cc->p_cur.p, 0);
 	}
 }

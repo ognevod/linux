@@ -68,7 +68,8 @@ void vinc_neon_calculate_gamma_curve(int value,
 		struct vinc_gamma_curve *gamma_ptr);
 
 /* Calculate CC matrix and offset */
-void vinc_neon_calculate_cc(struct ctrl_priv *ctrl_privs,
-		enum vinc_ycbcr_encoding ycbcr_enc, struct vinc_cc *cc);
+int vinc_neon_calculate_cc(struct ctrl_priv *ctrl_privs,
+			   enum vinc_ycbcr_encoding ycbcr_enc,
+			   struct vinc_cc *cc);
 
 #endif /* VINC_NEON_H */

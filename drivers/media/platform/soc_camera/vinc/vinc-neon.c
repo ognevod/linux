@@ -13,6 +13,8 @@
 
 #define OFFSET_MAX 4096.0
 
+#define is_in_range(val, min, max) ((val) >= (min) && (val) <= (max))
+
 /* Matrices for RGB->YCbCr conversion depends on YCbCr ENCODING.
  * Output QUANTIZATION is always in FULL RANGE.
  * Table of coefficients:
@@ -547,10 +549,39 @@ static void cc_vector_calc(struct vector *offset, struct ctrl_priv *ctrl_privs,
 		&tmp2);				 /* [9] */
 }
 
+static inline bool check_row_overflow(struct matrix *const coeff,
+				      struct vector *const offset,
+				      int const row)
+{
+	return coeff->coeff[row * 3] +
+	       coeff->coeff[row * 3 + 1] +
+	       coeff->coeff[row * 3 + 2] +
+	       offset->offset[row] / OFFSET_MAX >= 16;
+}
+
+/**
+ * check_cc_overflow() - checks coefficient matrix and offset vector for
+ *                        possibility of overflow (see rf#1954)
+ * @coeff: coefficient matrix
+ * @offset: offset vector
+ *
+ * Return: true if overflow bug is possible, false otherwise.
+ */
+static bool check_cc_overflow(struct matrix *coeff, struct vector *offset)
+{
+	return check_row_overflow(coeff, offset, 0) ||
+	       check_row_overflow(coeff, offset, 1) ||
+	       check_row_overflow(coeff, offset, 2) ||
+	       !is_in_range(offset->offset[0], -OFFSET_MAX, OFFSET_MAX - 1) ||
+	       !is_in_range(offset->offset[1], -OFFSET_MAX, OFFSET_MAX - 1) ||
+	       !is_in_range(offset->offset[2], -OFFSET_MAX, OFFSET_MAX - 1);
+}
+
 /* Color Correction coefficient matrix, offset vector and scaling register
  * calculation routine */
-void vinc_neon_calculate_cc(struct ctrl_priv *ctrl_privs,
-		enum vinc_ycbcr_encoding ycbcr_enc, struct vinc_cc *cc)
+int vinc_neon_calculate_cc(struct ctrl_priv *ctrl_privs,
+			   enum vinc_ycbcr_encoding ycbcr_enc,
+			   struct vinc_cc *cc)
 {
 	struct matrix coeff;
 	struct vector offset;
@@ -561,6 +592,10 @@ void vinc_neon_calculate_cc(struct ctrl_priv *ctrl_privs,
 
 	cc_matrix_calc(&coeff, ctrl_privs, ycbcr_enc);
 	cc_vector_calc(&offset, ctrl_privs, ycbcr_enc);
+
+	if (check_cc_overflow(&coeff, &offset))
+		return -ERANGE;
+
 	/*  Scaling calculation */
 	for (i = 0; i < VINC_CC_COEFF_COUNT; i++)
 		if (fabs(coeff.coeff[i]) > max_abs)
@@ -584,4 +619,6 @@ void vinc_neon_calculate_cc(struct ctrl_priv *ctrl_privs,
 		cc->coeff[i] = float_to_u16(coeff.coeff[i], 15 - scaling);
 	for (i = 0; i < VINC_CC_OFFSET_COUNT; i++)
 		cc->offset[i] = float_to_u16(offset.offset[i], 0);
+
+	return 0;
 }
