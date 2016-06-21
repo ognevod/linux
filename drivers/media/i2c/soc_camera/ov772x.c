@@ -393,6 +393,11 @@ struct ov772x_win_size {
 struct ov772x_priv {
 	struct v4l2_subdev                subdev;
 	struct v4l2_ctrl_handler	  hdl;
+	struct {
+		/* gain cluster */
+		struct v4l2_ctrl *auto_gain;
+		struct v4l2_ctrl *gain;
+	};
 	struct soc_camera_subdev_desc	  ssdd_dt;
 	struct v4l2_clk			 *clk;
 	struct ov772x_camera_info        *info;
@@ -600,6 +605,30 @@ static int ov772x_s_stream(struct v4l2_subdev *sd, int enable)
 	return 0;
 }
 
+static int ov772x_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct ov772x_priv *priv = container_of(ctrl->handler,
+						struct ov772x_priv, hdl);
+	struct v4l2_subdev *sd = &priv->subdev;
+	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	int ret;
+	u8 val, high, low;
+
+	switch (ctrl->id) {
+	case V4L2_CID_AUTOGAIN:
+		val = ov772x_read(client, GAIN);
+		if (val < 0)
+			return ret;
+		low = val & 0x0f;
+		high = hweight8(val & 0xf0) << 4;
+
+		priv->gain->val = high | low;
+
+		return 0;
+	}
+	return -EINVAL;
+}
+
 static int ov772x_s_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct ov772x_priv *priv = container_of(ctrl->handler,
@@ -641,6 +670,24 @@ static int ov772x_s_ctrl(struct v4l2_ctrl *ctrl)
 		if (!ret)
 			priv->band_filter = ctrl->val;
 		return ret;
+	case V4L2_CID_AUTOGAIN: {
+		u8 high, low;
+
+		val = ctrl->val ? AGC_ON : 0;
+		ret = ov772x_mask_set(client, COM8, AGC_ON, val);
+		if (ret)
+			return ret;
+
+		if (ctrl->val)
+			return 0;
+
+		low = priv->gain->val & 0x0f;
+		high = priv->gain->val >> 4;
+		high = (0x0f << high) & 0xf0;
+
+		ret = ov772x_write(client, GAIN, high | low);
+		return ret;
+	}
 	}
 
 	return -EINVAL;
@@ -1008,6 +1055,7 @@ done:
 
 static const struct v4l2_ctrl_ops ov772x_ctrl_ops = {
 	.s_ctrl = ov772x_s_ctrl,
+	.g_volatile_ctrl = ov772x_g_volatile_ctrl,
 };
 
 static struct v4l2_subdev_core_ops ov772x_subdev_core_ops = {
@@ -1142,9 +1190,14 @@ static int ov772x_probe(struct i2c_client *client,
 			V4L2_CID_HFLIP, 0, 1, 1, 0);
 	v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
 			V4L2_CID_BAND_STOP_FILTER, 0, 256, 1, 0);
+	priv->auto_gain = v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
+					    V4L2_CID_AUTOGAIN, 0, 1, 1, 1);
+	priv->gain = v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
+				       V4L2_CID_GAIN, 0, 79, 1, 16);
 	priv->subdev.ctrl_handler = &priv->hdl;
 	if (priv->hdl.error)
 		return priv->hdl.error;
+	v4l2_ctrl_auto_cluster(2, &priv->auto_gain, 0, true);
 
 	priv->clk = v4l2_clk_get(&client->dev, "mclk");
 	if (IS_ERR(priv->clk)) {
