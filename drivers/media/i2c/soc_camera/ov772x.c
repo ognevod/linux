@@ -23,6 +23,7 @@
 #include <linux/delay.h>
 #include <linux/v4l2-mediabus.h>
 #include <linux/videodev2.h>
+#include <linux/time.h>
 
 #include <media/ov772x.h>
 #include <media/soc_camera.h>
@@ -328,6 +329,7 @@
 /* EXHCH */
 #define EXHCH_VSIZE_SHIFT	2	/* VOUTSIZE LSB */
 #define EXHCH_HSIZE_SHIFT	0	/* HOUTSIZE 2 LSBs */
+#define EXHCH_DUMMY_SHIFT	4	/* Dummy pixels 4 MSBs */
 
 /* DSP_CTRL1 */
 #define FIFO_ON         0x80	/* FIFO enable/disable selection */
@@ -388,6 +390,8 @@ struct ov772x_win_size {
 	char                     *name;
 	unsigned char             com7_bit;
 	struct v4l2_rect	  rect;
+	u16			  horizontal_blank;
+	u16			  vertical_blank;
 };
 
 struct ov772x_priv {
@@ -398,6 +402,12 @@ struct ov772x_priv {
 		struct v4l2_ctrl *auto_gain;
 		struct v4l2_ctrl *gain;
 	};
+	struct {
+		/* exposure cluster */
+		struct v4l2_ctrl *auto_exp;
+		struct v4l2_ctrl *exp;
+		struct v4l2_ctrl *exp_abs;
+	};
 	struct soc_camera_subdev_desc	  ssdd_dt;
 	struct v4l2_clk			 *clk;
 	struct ov772x_camera_info        *info;
@@ -407,6 +417,10 @@ struct ov772x_priv {
 	unsigned short                    flag_hflip:1;
 	/* band_filter = COM8[5] ? 256 - BDBASE : 0 */
 	unsigned short                    band_filter;
+
+	int total_width;
+	int total_height;
+	int fps;
 };
 
 /*
@@ -498,6 +512,8 @@ static const struct ov772x_win_size ov772x_win_sizes[] = {
 			.width = VGA_WIDTH,
 			.height = VGA_HEIGHT,
 		},
+		.horizontal_blank = 144,
+		.vertical_blank = 30,
 	}, {
 		.name     = "QVGA",
 		.com7_bit = SLCT_QVGA,
@@ -507,6 +523,8 @@ static const struct ov772x_win_size ov772x_win_sizes[] = {
 			.width = QVGA_WIDTH,
 			.height = QVGA_HEIGHT,
 		},
+		.horizontal_blank = 256,
+		.vertical_blank = 38,
 	},
 };
 
@@ -605,6 +623,17 @@ static int ov772x_s_stream(struct v4l2_subdev *sd, int enable)
 	return 0;
 }
 
+/* The exposure value in registers is in units of line period */
+static u32 exposure_reg_to_100us(struct ov772x_priv *priv, u32 value)
+{
+	return value * (USEC_PER_SEC / 100) / (priv->total_height * priv->fps);
+}
+
+static u32 exposure_100us_to_reg(struct ov772x_priv *priv, u32 value)
+{
+	return value * (priv->total_height * priv->fps) / (USEC_PER_SEC / 100);
+}
+
 static int ov772x_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct ov772x_priv *priv = container_of(ctrl->handler,
@@ -625,6 +654,23 @@ static int ov772x_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
 		priv->gain->val = high | low;
 
 		return 0;
+	case V4L2_CID_EXPOSURE_AUTO: {
+		u32 exposure;
+
+		val = ov772x_read(client, AEC);
+		if (val < 0)
+			return ret;
+		exposure = val;
+		val = ov772x_read(client, AECH);
+		if (val < 0)
+			return ret;
+		exposure |= val << 8;
+		priv->exp->val = exposure;
+		priv->exp_abs->val = exposure_reg_to_100us(priv, exposure);
+
+		return 0;
+
+	}
 	}
 	return -EINVAL;
 }
@@ -687,6 +733,36 @@ static int ov772x_s_ctrl(struct v4l2_ctrl *ctrl)
 
 		ret = ov772x_write(client, GAIN, high | low);
 		return ret;
+	}
+	case V4L2_CID_EXPOSURE_AUTO: {
+		u32 exposure;
+
+		val = (!ctrl->val) ? AEC_ON : 0;
+		ret = ov772x_mask_set(client, COM8, AEC_ON, val);
+		if (ret)
+			return ret;
+
+		if (ctrl->val == V4L2_EXPOSURE_AUTO)
+			return 0;
+
+		if (priv->exp_abs->is_new) {
+			exposure = exposure_100us_to_reg(priv,
+							 priv->exp_abs->val);
+			*priv->exp->p_cur.p_s32 = exposure;
+		} else {
+			exposure = priv->exp->val;
+			*priv->exp_abs->p_cur.p_s32 =
+					exposure_reg_to_100us(priv, exposure);
+		}
+		val = (u8)(exposure & 0xff);
+		ret = ov772x_write(client, AEC, val);
+		if (ret)
+			return ret;
+
+		val = (u8)((exposure >> 8) & 0xff);
+		ret = ov772x_write(client, AECH, val);
+		return ret;
+
 	}
 	}
 
@@ -773,18 +849,38 @@ static void ov772x_select_params(const struct v4l2_mbus_framefmt *mf,
 	*win = ov772x_select_win(mf->width, mf->height);
 }
 
+static u32 ov772x_get_intclk(u32 inpclk, u8 rc)
+{
+	u8 x_pll, div_pll;
+	u32 intclk;
+
+	x_pll = 4;   /* Multiplyer by 4 */
+	div_pll = (rc + 1) * 2; /* Divider by 4 */
+
+	intclk = (inpclk * x_pll) / div_pll;
+	return intclk;
+}
+
 static int ov772x_set_params(struct ov772x_priv *priv,
 			     const struct ov772x_color_format *cfmt,
 			     const struct ov772x_win_size *win)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&priv->subdev);
 	int ret;
-	u8  val;
+	u8  val, rc;
+	int dummy_pixels, dummy_rows;
+	u32 inpclk, intclk, pixclk;
 
 	/*
 	 * reset hardware
 	 */
 	ov772x_reset(client);
+
+	/* Set PLL */
+	inpclk = v4l2_clk_get_rate(priv->clk);
+	rc = 1;
+	ov772x_write(client, CLKRC, rc);
+	intclk = ov772x_get_intclk(inpclk, rc);
 
 	/*
 	 * Edge Ctrl
@@ -833,6 +929,10 @@ static int ov772x_set_params(struct ov772x_priv *priv,
 			goto ov772x_set_fmt_error;
 	}
 
+	/* TODO: add dummy settings calculation from inpclk frequency */
+	dummy_pixels = 0;
+	dummy_rows = 43;
+
 	/* Format and window size */
 	ret = ov772x_write(client, HSTART, win->rect.left >> 2);
 	if (ret < 0)
@@ -861,9 +961,31 @@ static int ov772x_set_params(struct ov772x_priv *priv,
 		goto ov772x_set_fmt_error;
 	ret = ov772x_write(client, EXHCH,
 			   ((win->rect.height & 1) << EXHCH_VSIZE_SHIFT) |
-			   ((win->rect.width & 3) << EXHCH_HSIZE_SHIFT));
+			   ((win->rect.width & 3) << EXHCH_HSIZE_SHIFT) |
+			   (((dummy_pixels >> 8) & 0xf) << EXHCH_DUMMY_SHIFT));
 	if (ret < 0)
 		goto ov772x_set_fmt_error;
+	ret = ov772x_write(client, EXHCL, dummy_pixels & 0xff);
+	if (ret < 0)
+		goto ov772x_set_fmt_error;
+	ret = ov772x_write(client, DM_LNL, dummy_rows & 0xff);
+	if (ret < 0)
+		goto ov772x_set_fmt_error;
+	ret = ov772x_write(client, DM_LNH, (dummy_rows >> 8) & 0xff);
+	if (ret < 0)
+		goto ov772x_set_fmt_error;
+
+	if (cfmt->com7 == OFMT_BRAW)
+		pixclk = intclk / 2;
+	else
+		pixclk = intclk;
+
+	priv->total_width = win->rect.width + win->horizontal_blank +
+			    dummy_pixels;
+	priv->total_height = win->rect.height + win->vertical_blank +
+			    dummy_rows;
+	priv->fps = DIV_ROUND_CLOSEST(pixclk, priv->total_width *
+				      priv->total_height);
 
 	/*
 	 * set DSP_CTRL3
@@ -1194,10 +1316,19 @@ static int ov772x_probe(struct i2c_client *client,
 					    V4L2_CID_AUTOGAIN, 0, 1, 1, 1);
 	priv->gain = v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
 				       V4L2_CID_GAIN, 0, 79, 1, 16);
+	priv->auto_exp = v4l2_ctrl_new_std_menu(&priv->hdl, &ov772x_ctrl_ops,
+			V4L2_CID_EXPOSURE_AUTO, V4L2_EXPOSURE_MANUAL, 0,
+			V4L2_EXPOSURE_AUTO);
+	priv->exp = v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
+			V4L2_CID_EXPOSURE, 1, 510, 1, 480);
+	priv->exp_abs = v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
+			V4L2_CID_EXPOSURE_ABSOLUTE, 1, 166, 1, 156);
+
 	priv->subdev.ctrl_handler = &priv->hdl;
 	if (priv->hdl.error)
 		return priv->hdl.error;
 	v4l2_ctrl_auto_cluster(2, &priv->auto_gain, 0, true);
+	v4l2_ctrl_auto_cluster(3, &priv->auto_exp, V4L2_EXPOSURE_MANUAL, true);
 
 	priv->clk = v4l2_clk_get(&client->dev, "mclk");
 	if (IS_ERR(priv->clk)) {
