@@ -237,14 +237,22 @@ const struct vector v_rgb[4][2] = {
 	}
 };
 
-/*
- * This function clips float value to [-OFFSET_MAX; OFFSET_MAX - 1]
- * interval and converts it to u16 with fbits fractional bits.
+/**
+ * float_to_u16() - converts floating point value to fixed-point representation
+ * @value: floating point value to convert
+ * @fbits: number of fractional bits
+ *
+ * Return: fixed-point representation of a floating point value
  */
-static u16 offset_float_to_u16(double offset, u8 fbits)
+static u16 float_to_u16(double value, u8 fbits)
 {
-	offset = clamp(offset, -OFFSET_MAX, OFFSET_MAX - 1);
-	return (u16)((s16)(offset * (1 << fbits)));
+	/* (u16)(s16) is a portable way to convert negative floating point
+	 * number to unsigned integer. For more info see C99 spec 6.3.1.4.
+	 *
+	 * I'm using scalbn() instead of ldexp(). In our math library it is
+	 * indicated that they are the same. In general they are different only
+	 * when FLT_RADIX != 2 (which is false for any modern architecture). */
+	return (u16)(s16)rint(scalbn(value, fbits));
 }
 
 #define TEMP_TABLE_STEP 200
@@ -573,7 +581,7 @@ void vinc_neon_calculate_cc(struct ctrl_priv *ctrl_privs,
 	/* Vector, matrix and scaling write to CC cache */
 	cc->scaling = scaling;
 	for (i = 0; i < VINC_CC_COEFF_COUNT; i++)
-		cc->coeff[i] = COEFF_FLOAT_TO_U16(coeff.coeff[i], scaling);
+		cc->coeff[i] = float_to_u16(coeff.coeff[i], 15 - scaling);
 	for (i = 0; i < VINC_CC_OFFSET_COUNT; i++)
-		cc->offset[i] = offset_float_to_u16(offset.offset[i], 0);
+		cc->offset[i] = float_to_u16(offset.offset[i], 0);
 }

@@ -2578,6 +2578,13 @@ static void vinc_configure_bgr(struct vinc_dev *priv,
 		   STREAM_DMA_PIXEL_FMT_FORMAT(FORMAT_BGR));
 }
 
+/*
+ * TODO: This macro is here to support vinc_configure_m420(). When it will be
+ * converted to use functions from vinc-neon.c, the macro must be removed.
+ */
+#define COEFF_FLOAT_TO_U16(coeff, scaling) ((u16)((s16)((coeff) *  \
+		(1 << (15 - (scaling))) + ((coeff) < 0 ? -0.5 : 0.5))))
+
 static void vinc_configure_m420(struct vinc_dev *priv,
 				struct soc_camera_device *icd)
 {

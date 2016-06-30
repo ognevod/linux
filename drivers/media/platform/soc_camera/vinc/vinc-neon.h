@@ -13,9 +13,6 @@
 #include <linux/vinc.h>
 #include <media/v4l2-ctrls.h>
 
-#define COEFF_FLOAT_TO_U16(coeff, scaling) ((u16)((s16)((coeff) *  \
-			(1 << (15 - (scaling))) + ((coeff) < 0 ? -0.5 : 0.5))))
-
 enum vinc_ycbcr_encoding {
 	VINC_YCBCR_ENC_601            = 0,
 	VINC_YCBCR_ENC_709            = 1,
