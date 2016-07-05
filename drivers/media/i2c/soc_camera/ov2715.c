@@ -19,6 +19,7 @@
 #include <linux/v4l2-mediabus.h>
 #include <linux/videodev2.h>
 #include <linux/log2.h>
+#include <linux/bitops.h>
 
 #include <media/soc_camera.h>
 #include <media/v4l2-clk.h>
@@ -357,7 +358,7 @@ static int ov2715_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
 						struct ov2715_priv, hdl);
 	struct v4l2_subdev *sd = &priv->subdev;
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	int ret, i;
+	int ret;
 	u8 val, high = 1, low;
 
 	switch (ctrl->id) {
@@ -365,19 +366,15 @@ static int ov2715_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
 		ret = reg_read(client, REG_AGC_ADJ_LOW, &val);
 		if (ret)
 			return ret;
-		low = (val & 0x0f) + 0x10;
-		val = val >> 4;
-		for (i = 0; i < 4; i++) {
-			if (val & 0x01)
-				high *= 2;
-			val = val >> 1;
-		}
+		low = val & 0x0f;
+		high = hweight8(val & 0xf0) << 4;
 		ret = reg_read(client, REG_AGC_ADJ_HIGH, &val);
 		if (ret)
 			return ret;
+
 		if (val & 0x01)
-			high *= 2;
-		priv->gain->val = ((high * low) >> 4) & 0xfe;
+			high++;
+		priv->gain->val = high | low;
 		return 0;
 	}
 	return -EINVAL;
@@ -395,7 +392,7 @@ static int ov2715_s_ctrl(struct v4l2_ctrl *ctrl)
 
 	switch (ctrl->id) {
 	case V4L2_CID_AUTOGAIN: {
-		u8 p, high, low;
+		u8 low, high;
 
 		ret = reg_read(client, REG_AEC_PK_MANUAL, &val);
 		if (ret)
@@ -408,14 +405,18 @@ static int ov2715_s_ctrl(struct v4l2_ctrl *ctrl)
 
 		if (ctrl->val)
 			return 0;
-		p = rounddown_pow_of_two((u8)priv->gain->val);
-		high = p - 1;
-		low = ((priv->gain->val << 4) / p) - 16;
-		ret = reg_write(client, REG_AGC_ADJ_HIGH, high >> 4);
+
+		ret = reg_write(client, REG_AGC_ADJ_HIGH, priv->gain->val > 79);
 		if (ret)
 			return ret;
-		ret = reg_write(client, REG_AGC_ADJ_LOW,
-			((high & 0xf) << 4) | low);
+
+		low  = priv->gain->val & 0x0f;
+		high = priv->gain->val >> 4;
+		if (high > 4)
+			high--;
+		high = (0xf << high) & 0xf0;
+		ret = reg_write(client, REG_AGC_ADJ_LOW, high | low);
+
 		return ret;
 	}
 	}
@@ -509,7 +510,7 @@ static int ov2715_probe(struct i2c_client *client,
 	priv->auto_gain = v4l2_ctrl_new_std(&priv->hdl, &ov2715_ctrl_ops,
 		V4L2_CID_AUTOGAIN, 0, 1, 1, 1);
 	priv->gain = v4l2_ctrl_new_std(&priv->hdl, &ov2715_ctrl_ops,
-		V4L2_CID_GAIN, 2, 62, 2, 16);
+		V4L2_CID_GAIN, 0, 95, 1, 32);
 	priv->subdev.ctrl_handler = &priv->hdl;
 	if (priv->hdl.error)
 		return priv->hdl.error;
