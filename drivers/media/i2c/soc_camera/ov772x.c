@@ -68,7 +68,7 @@
 #define LAEC        0x1F /* Fine AEC value */
 #define COM11       0x20 /* Common control 11 */
 #define BDBASE      0x22 /* Banding filter Minimum AEC value */
-#define DBSTEP      0x23 /* Banding filter Maximum Setp */
+#define BDMSTEP     0x23 /* Banding filter Maximum Setp */
 #define AEW         0x24 /* AGC/AEC - Stable operating region (upper limit) */
 #define AEB         0x25 /* AGC/AEC - Stable operating region (lower limit) */
 #define VPT         0x26 /* AGC/AEC Fast mode operating region */
@@ -743,8 +743,46 @@ static int ov772x_s_ctrl(struct v4l2_ctrl *ctrl)
 		return ret;
 
 	}
-	}
+	case V4L2_CID_POWER_LINE_FREQUENCY: {
+		u32 light_freq, step;
 
+		val = (ctrl->val) ? BNDF_ON_OFF : 0;
+		ret = ov772x_mask_set(client, COM8, BNDF_ON_OFF, val);
+		if (ret)
+			return ret;
+
+		switch (ctrl->val) {
+		case V4L2_CID_POWER_LINE_FREQUENCY_50HZ:
+			light_freq = 50;
+			break;
+		case V4L2_CID_POWER_LINE_FREQUENCY_60HZ:
+			light_freq = 60;
+			break;
+		case V4L2_CID_POWER_LINE_FREQUENCY_DISABLED:
+			return 0;
+		default:
+			return -EINVAL;
+		}
+
+		step = (priv->total_height * priv->fps) / (light_freq * 2);
+		if (step > 255)
+			return -EINVAL;
+		/* Write minimum step value to "Banding Filter Minimum AEC
+		 * Value" field of BDBase register
+		 */
+		ret = ov772x_write(client, BDBASE, (u8)step);
+		if (ret)
+			return ret;
+
+		val = ((light_freq * 2) / priv->fps) - 1;
+		/* Write maximim exposure value to "Banding Filter Maximum Step"
+		 * field of BDMStep register
+		 */
+		ret = ov772x_write(client, BDMSTEP, val);
+
+		return ret;
+	}
+	}
 	return -EINVAL;
 }
 
@@ -1288,6 +1326,10 @@ static int ov772x_probe(struct i2c_client *client,
 			V4L2_CID_EXPOSURE, 1, 510, 1, 480);
 	priv->exp_abs = v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
 			V4L2_CID_EXPOSURE_ABSOLUTE, 1, 166, 1, 156);
+	v4l2_ctrl_new_std_menu(&priv->hdl, &ov772x_ctrl_ops,
+		V4L2_CID_POWER_LINE_FREQUENCY,
+		V4L2_CID_POWER_LINE_FREQUENCY_60HZ, 0,
+		V4L2_CID_POWER_LINE_FREQUENCY_DISABLED);
 
 	priv->subdev.ctrl_handler = &priv->hdl;
 	if (priv->hdl.error)
