@@ -415,8 +415,6 @@ struct ov772x_priv {
 	const struct ov772x_win_size     *win;
 	unsigned short                    flag_vflip:1;
 	unsigned short                    flag_hflip:1;
-	/* band_filter = COM8[5] ? 256 - BDBASE : 0 */
-	unsigned short                    band_filter;
 
 	int total_width;
 	int total_height;
@@ -697,25 +695,6 @@ static int ov772x_s_ctrl(struct v4l2_ctrl *ctrl)
 		if (priv->info->flags & OV772X_FLAG_HFLIP)
 			val ^= HFLIP_IMG;
 		return ov772x_mask_set(client, COM3, HFLIP_IMG, val);
-	case V4L2_CID_BAND_STOP_FILTER:
-		if (!ctrl->val) {
-			/* Switch the filter off, it is on now */
-			ret = ov772x_mask_set(client, BDBASE, 0xff, 0xff);
-			if (!ret)
-				ret = ov772x_mask_set(client, COM8,
-						      BNDF_ON_OFF, 0);
-		} else {
-			/* Switch the filter on, set AEC low limit */
-			val = 256 - ctrl->val;
-			ret = ov772x_mask_set(client, COM8,
-					      BNDF_ON_OFF, BNDF_ON_OFF);
-			if (!ret)
-				ret = ov772x_mask_set(client, BDBASE,
-						      0xff, val);
-		}
-		if (!ret)
-			priv->band_filter = ctrl->val;
-		return ret;
 	case V4L2_CID_AUTOGAIN: {
 		u8 high, low;
 
@@ -1028,18 +1007,6 @@ static int ov772x_set_params(struct ov772x_priv *priv,
 	if (ret < 0)
 		goto ov772x_set_fmt_error;
 
-	/*
-	 * set COM8
-	 */
-	if (priv->band_filter) {
-		ret = ov772x_mask_set(client, COM8, BNDF_ON_OFF, 1);
-		if (!ret)
-			ret = ov772x_mask_set(client, BDBASE,
-					      0xff, 256 - priv->band_filter);
-		if (ret < 0)
-			goto ov772x_set_fmt_error;
-	}
-
 	return ret;
 
 ov772x_set_fmt_error:
@@ -1310,8 +1277,6 @@ static int ov772x_probe(struct i2c_client *client,
 			V4L2_CID_VFLIP, 0, 1, 1, 0);
 	v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
 			V4L2_CID_HFLIP, 0, 1, 1, 0);
-	v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
-			V4L2_CID_BAND_STOP_FILTER, 0, 256, 1, 0);
 	priv->auto_gain = v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
 					    V4L2_CID_AUTOGAIN, 0, 1, 1, 1);
 	priv->gain = v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
