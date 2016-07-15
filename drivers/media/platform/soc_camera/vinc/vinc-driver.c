@@ -2384,17 +2384,10 @@ static int __vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f,
 					  pix->colorspace);
 	pix->quantization = V4L2_QUANTIZATION_FULL_RANGE;
 
-	if (mbus_fmt->width != width || mbus_fmt->height != height) {
-		/* If userspace request HD resolution then we will use
-		 * this resolution, even if sensor does not support it */
-		pix->width = min_t(u32, min_t(u32, 1280, mbus_fmt->width),
-				   MAX_WIDTH_HEIGHT);
-		pix->height = min_t(u32, min_t(u32, 720, mbus_fmt->height),
-				    MAX_WIDTH_HEIGHT);
-	} else {
-		pix->width = mbus_fmt->width;
-		pix->height = mbus_fmt->height;
-	}
+	pix->width = min_t(u32, min_t(u32, pix->width, mbus_fmt->width),
+			   MAX_WIDTH_HEIGHT);
+	pix->height = min_t(u32, min_t(u32, pix->height, mbus_fmt->height),
+			    MAX_WIDTH_HEIGHT);
 
 	if (pix->bytesperline > 0xFFF8)
 		pix->bytesperline = 0xFFF8;
