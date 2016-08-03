@@ -475,6 +475,8 @@ struct vinc_stream {
 	struct v4l2_crop crop2;
 	u32 fdecim;
 
+	struct ctrl_priv ctrl_privs;
+
 	enum vinc_ycbcr_encoding ycbcr_enc;
 	enum vinc_quantization quantization;
 
@@ -1254,16 +1256,8 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 			cancel_work_sync(&stream->stat_work);
 
 		if (std_is_new) {
-			struct ctrl_priv ctrl_privs = {
-				.dowb = cc->dowb->priv,
-				.brightness = cc->brightness->priv,
-				.contrast = cc->contrast->priv,
-				.saturation = cc->saturation->priv,
-				.hue = cc->hue->priv,
-				.ck = cc->ck->priv
-			};
 			kernel_neon_begin();
-			rc = vinc_neon_calculate_cc(&ctrl_privs,
+			rc = vinc_neon_calculate_cc(&stream->ctrl_privs,
 						    stream->ycbcr_enc,
 						    cc->cc->p_cur.p);
 			kernel_neon_end();
@@ -2063,14 +2057,6 @@ static void auto_stat_work(struct work_struct *work)
 	struct vinc_stat_add *add = &stream->summary_stat.add;
 	struct vinc_stat_hist *hist = &stream->summary_stat.hist;
 
-	struct ctrl_priv ctrl_privs = {
-		.dowb = cc->dowb->priv,
-		.brightness = cc->brightness->priv,
-		.contrast = cc->contrast->priv,
-		.saturation = cc->saturation->priv,
-		.hue = cc->hue->priv,
-		.ck = cc->ck->priv
-	};
 	int rc, i;
 
 	/* Workaround of hardware bug rf#2159: very big value in histogram */
@@ -2104,7 +2090,8 @@ static void auto_stat_work(struct work_struct *work)
 						  cc->contrast->val);
 		}
 
-		rc = vinc_neon_calculate_cc(&ctrl_privs, stream->ycbcr_enc,
+		rc = vinc_neon_calculate_cc(&stream->ctrl_privs,
+					    stream->ycbcr_enc,
 					    cc->cc->p_new.p);
 
 		kernel_neon_end();
@@ -2235,6 +2222,14 @@ static int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 	stream->cluster.cc.ab->priv = devm_kmalloc(priv->ici.v4l2_dev.dev,
 						   sizeof(struct bc_stat),
 						   GFP_KERNEL);
+
+	stream->ctrl_privs.dowb       = stream->cluster.cc.dowb->priv;
+	stream->ctrl_privs.brightness = stream->cluster.cc.brightness->priv;
+	stream->ctrl_privs.contrast   = stream->cluster.cc.contrast->priv;
+	stream->ctrl_privs.saturation = stream->cluster.cc.saturation->priv;
+	stream->ctrl_privs.hue        = stream->cluster.cc.hue->priv;
+	stream->ctrl_privs.ck         = stream->cluster.cc.ck->priv;
+	stream->ctrl_privs.fx         = stream->cluster.cc.fx->priv;
 
 	INIT_WORK(&priv->stream[0].stat_work, auto_stat_work);
 	INIT_WORK(&priv->stream[1].stat_work, auto_stat_work);
