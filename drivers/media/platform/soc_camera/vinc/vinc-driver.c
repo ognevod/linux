@@ -125,6 +125,18 @@ static int vinc_buf_prepare(struct vb2_buffer *vb)
 	return 0;
 }
 
+static void vinc_stream_enable(struct vinc_dev *priv, u8 devnum, bool enable)
+{
+	u32 stream_ctr = vinc_read(priv, STREAM_CTR);
+
+	if (enable)
+		stream_ctr |= STREAM_CTR_STREAM_ENABLE(devnum);
+	else
+		stream_ctr &= ~STREAM_CTR_STREAM_ENABLE(devnum);
+
+	vinc_write(priv, STREAM_CTR, stream_ctr);
+}
+
 static void vinc_start_capture(struct vinc_dev *priv,
 			       struct soc_camera_device *icd)
 {
@@ -135,8 +147,9 @@ static void vinc_start_capture(struct vinc_dev *priv,
 
 	wr_ctr &= ~DMA_WR_CTR_DMA_EN;
 	vinc_write(priv, STREAM_DMA_WR_CTR(devnum, 0), wr_ctr);
-	if (!stream->active)
-		return;
+	if (stream->started)
+		vinc_stream_enable(priv, devnum, true);
+
 	phys_addr_top = vb2_dma_contig_plane_dma_addr(stream->active, 0);
 	switch (icd->current_fmt->host_fmt->fourcc) {
 	case V4L2_PIX_FMT_BGR32:
@@ -251,6 +264,7 @@ static int vinc_start_streaming(struct vb2_queue *q, unsigned int count)
 
 	stream->sequence = 0;
 	spin_lock_irq(&stream->lock);
+	stream->started = true;
 	if (stream->active)
 		vinc_start_capture(priv, icd);
 	spin_unlock_irq(&stream->lock);
@@ -268,12 +282,10 @@ static void vinc_stop_streaming(struct vb2_queue *q)
 	const u8 devnum = icd->devnum;
 	struct vinc_stream * const stream = &priv->stream[devnum];
 	u32 csi2_port_sys_ctr;
-	u32 stream_ctr = vinc_read(priv, STREAM_CTR);
 
 	dev_dbg(icd->parent, "Stop streaming\n");
 
-	stream_ctr &= ~STREAM_CTR_STREAM_ENABLE(devnum);
-	vinc_write(priv, STREAM_CTR, stream_ctr);
+	vinc_stream_enable(priv, devnum, false);
 
 	vinc_write(priv, STREAM_DMA_WR_CTR(devnum, 0), 0x0);
 	csi2_port_sys_ctr = vinc_read(priv, CSI2_PORT_SYS_CTR(devnum));
@@ -284,6 +296,7 @@ static void vinc_stop_streaming(struct vb2_queue *q)
 	spin_lock_irq(&stream->lock);
 
 	stream->active = NULL;
+	stream->started = false;
 
 	list_for_each_entry_safe(buf, tmp,
 				 &stream->capture, queue) {
@@ -847,13 +860,16 @@ static void vinc_next_buffer(struct vinc_stream *stream,
 	spin_lock(&stream->lock);
 	list_del_init(&to_vinc_vb(vb)->queue);
 
-	if (!list_empty(&stream->capture))
+	if (!list_empty(&stream->capture)) {
 		stream->active = &list_entry(stream->capture.next,
 					     struct vinc_buffer, queue)->vb;
-	else
+		vinc_start_capture(priv, priv->ici.icds[stream->devnum]);
+	} else {
 		stream->active = NULL;
+		vinc_stream_enable(priv, stream->devnum, false);
+		stream->stat_odd = true;
+	}
 
-	vinc_start_capture(priv, priv->ici.icds[stream->devnum]);
 	v4l2_get_timestamp(&vb->v4l2_buf.timestamp);
 
 	vb->v4l2_buf.sequence = stream->sequence++;

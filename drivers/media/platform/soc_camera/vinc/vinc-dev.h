@@ -453,6 +453,7 @@ struct vinc_stream {
 	struct list_head capture;
 	struct vb2_buffer *active;
 	struct vb2_alloc_ctx *alloc_ctx;
+	bool started;
 
 	struct completion complete;
 
