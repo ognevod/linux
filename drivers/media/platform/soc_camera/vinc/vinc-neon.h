@@ -13,17 +13,7 @@
 #include <linux/vinc.h>
 #include <media/v4l2-ctrls.h>
 
-enum vinc_ycbcr_encoding {
-	VINC_YCBCR_ENC_601            = 0,
-	VINC_YCBCR_ENC_709            = 1,
-	VINC_YCBCR_ENC_BT2020         = 2,
-	VINC_YCBCR_ENC_SYCC           = 3
-};
-
-enum vinc_quantization {
-	VINC_QUANTIZATION_LIM_RANGE   = 0,
-	VINC_QUANTIZATION_FULL_RANGE  = 1
-};
+#include "vinc-dev.h"
 
 struct matrix {
 	double coeff[VINC_CC_COEFF_COUNT];
@@ -38,16 +28,6 @@ struct col_fx {
 	struct matrix m_fx_rgb;
 	struct vector v_fx_ycbcr;
 	struct vector v_fx_rgb;
-};
-
-struct ctrl_priv {
-	void *dowb;
-	void *brightness;
-	void *contrast;
-	void *saturation;
-	void *hue;
-	void *ck;
-	void *fx;
 };
 
 struct bc_stat {
