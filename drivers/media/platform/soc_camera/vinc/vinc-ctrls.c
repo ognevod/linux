@@ -172,9 +172,10 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 	struct vinc_cluster_dr *dr;
 	struct vinc_cluster_stat *stat;
 	const u8 devnum = icd->devnum;
+	struct v4l2_subdev *sd = soc_camera_to_subdev(icd);
 	struct vinc_stream * const stream = &priv->stream[devnum];
 	u32 proc_cfg, stream_ctr;
-	int rc, i, init, std_is_new;
+	int rc, i, init, std_is_new, ret;
 
 	switch (ctrl->id) {
 	case V4L2_CID_BAD_CORRECTION_ENABLE:
@@ -432,6 +433,16 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
 		vinc_write(priv, STREAM_CTR, stream_ctr);
 		break;
+	case V4L2_CID_SENSOR_EXPOSURE_AUTO: {
+		struct  v4l2_control exp = {
+			.id = V4L2_CID_EXPOSURE_AUTO,
+			.value = (ctrl->val) ? V4L2_EXPOSURE_AUTO :
+					       V4L2_EXPOSURE_MANUAL
+		};
+
+		ret = v4l2_subdev_s_ctrl(sd, &exp);
+		return ret;
+	}
 	default:
 		return -EINVAL;
 	}
@@ -530,6 +541,7 @@ static int vinc_try_ctrl(struct v4l2_ctrl *ctrl)
 	case V4L2_CID_DR_ENABLE:
 	case V4L2_CID_CC_ENABLE:
 	case V4L2_CID_TEST_PATTERN:
+	case V4L2_CID_SENSOR_EXPOSURE_AUTO:
 		return 0;
 	default:
 		return -EINVAL;
@@ -1114,6 +1126,17 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 		.def = 0,
 		.qmenu = vinc_test_pattern_menu
 	},
+	{
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_SENSOR_EXPOSURE_AUTO,
+		.name = "Sensor autoexposure enable",
+		.type = V4L2_CTRL_TYPE_BOOLEAN,
+		.min = 0,
+		.max = 1,
+		.step = 1,
+		.def = 1,
+		.flags = 0
+	},
 };
 
 static void auto_stat_work(struct work_struct *work)
@@ -1375,6 +1398,7 @@ int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 			  &stream->cluster.stat.enable);
 
 	stream->test_pattern = v4l2_ctrl_find(hdl, V4L2_CID_TEST_PATTERN);
+	stream->sensor_ae = v4l2_ctrl_find(hdl, V4L2_CID_SENSOR_EXPOSURE_AUTO);
 
 	stream->cluster.cc.brightness->priv = devm_kmalloc(
 			priv->ici.v4l2_dev.dev,
