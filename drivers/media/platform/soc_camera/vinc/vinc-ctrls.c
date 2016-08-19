@@ -452,6 +452,15 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		ret = v4l2_subdev_s_ctrl(sd, &gain);
 		return ret;
 	}
+	case V4L2_CID_SENSOR_AUTO_WHITE_BALANCE: {
+		struct v4l2_control awb = {
+			.id = V4L2_CID_AUTO_WHITE_BALANCE,
+			.value = ctrl->val
+		};
+
+		ret = v4l2_subdev_s_ctrl(sd, &awb);
+		return ret;
+	}
 	default:
 		return -EINVAL;
 	}
@@ -552,6 +561,7 @@ static int vinc_try_ctrl(struct v4l2_ctrl *ctrl)
 	case V4L2_CID_TEST_PATTERN:
 	case V4L2_CID_SENSOR_EXPOSURE_AUTO:
 	case V4L2_CID_SENSOR_AUTOGAIN:
+	case V4L2_CID_SENSOR_AUTO_WHITE_BALANCE:
 		return 0;
 	default:
 		return -EINVAL;
@@ -1158,6 +1168,17 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 		.def = 1,
 		.flags = 0
 	},
+	{
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_SENSOR_AUTO_WHITE_BALANCE,
+		.name = "Sensor auto white balance enable",
+		.type = V4L2_CTRL_TYPE_BOOLEAN,
+		.min = 0,
+		.max = 1,
+		.step = 1,
+		.def = 1,
+		.flags = 0
+	},
 };
 
 static void auto_stat_work(struct work_struct *work)
@@ -1421,7 +1442,8 @@ int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 	stream->test_pattern = v4l2_ctrl_find(hdl, V4L2_CID_TEST_PATTERN);
 	stream->sensor_ae = v4l2_ctrl_find(hdl, V4L2_CID_SENSOR_EXPOSURE_AUTO);
 	stream->sensor_ag = v4l2_ctrl_find(hdl, V4L2_CID_SENSOR_AUTOGAIN);
-
+	stream->sensor_awb = v4l2_ctrl_find(hdl,
+					    V4L2_CID_SENSOR_AUTO_WHITE_BALANCE);
 	stream->cluster.cc.brightness->priv = devm_kmalloc(
 			priv->ici.v4l2_dev.dev,
 			sizeof(struct vector), GFP_KERNEL);
