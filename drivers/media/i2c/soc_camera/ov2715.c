@@ -74,6 +74,7 @@
 #define REG_AEC_CONTROLE		0x3a0e
 #define REG_MIPI_CTRL0			0x4800
 #define REG_MIPI_CTRL1			0x4801
+#define REG_ISP_CONTROL1		0x5001
 #define REG_AVG_WINDOW_END_X_HIGH	0x5682
 #define REG_AVG_WINDOW_END_X_LOW	0x5683
 #define REG_AVG_WINDOW_END_Y_HIGH	0x5686
@@ -89,6 +90,9 @@
 
 /* AEC CONTROL */
 #define REG_AEC_CONTROL_BAND_EN		0x20
+
+/* ISP CONTROL1 */
+#define REG_ISP_CONTROL1_AWB_EN		0x01
 
 
 /*
@@ -195,6 +199,7 @@ struct ov2715_priv {
 		struct v4l2_ctrl *exp;
 		struct v4l2_ctrl *exp_abs;
 	};
+	struct v4l2_ctrl		 *awb;
 	struct v4l2_rect		 crop_rect;
 	struct v4l2_clk			 *clk;
 	const struct ov2715_color_format *cfmt;
@@ -495,6 +500,16 @@ static int ov2715_s_ctrl(struct v4l2_ctrl *ctrl)
 		ret = reg_write(client, REG_AEC_PK_HHIGH, val);
 		return ret;
 	}
+	case V4L2_CID_AUTO_WHITE_BALANCE:
+		ret = reg_read(client, REG_ISP_CONTROL1, &val);
+		if (ret)
+			return ret;
+
+		val = (ctrl->val) ? val | REG_ISP_CONTROL1_AWB_EN :
+				    val & ~REG_ISP_CONTROL1_AWB_EN;
+
+		ret = reg_write(client, REG_ISP_CONTROL1, val);
+		return ret;
 	}
 	return -EINVAL;
 }
@@ -588,6 +603,9 @@ static int ov2715_probe(struct i2c_client *client,
 		V4L2_CID_EXPOSURE, 1, 17600, 1, 17280);
 	priv->exp_abs = v4l2_ctrl_new_std(&priv->hdl, &ov2715_ctrl_ops,
 		V4L2_CID_EXPOSURE_ABSOLUTE, 1, 332, 1, 326);
+	priv->awb = v4l2_ctrl_new_std(&priv->hdl, &ov2715_ctrl_ops,
+		V4L2_CID_AUTO_WHITE_BALANCE, 0, 1, 1, 1);
+	priv->awb->is_private = 1;
 	priv->subdev.ctrl_handler = &priv->hdl;
 	if (priv->hdl.error)
 		return priv->hdl.error;
