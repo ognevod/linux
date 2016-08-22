@@ -1116,20 +1116,6 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	},
 };
 
-static int check_histogram(u32 hist[], int index)
-{
-	if (hist[index] > HISTOGRAM_BAD_THRESHOLD) {
-		if (index == 0)
-			hist[index] = hist[index+1];
-		else if (index == 255)
-			hist[index] = hist[index-1];
-		else
-			hist[index] = (hist[index-1] + hist[index+1]) / 2;
-		return 1;
-	} else
-		return 0;
-}
-
 static void auto_stat_work(struct work_struct *work)
 {
 	struct vinc_stream *stream = container_of(work, struct vinc_stream,
@@ -1143,19 +1129,6 @@ static void auto_stat_work(struct work_struct *work)
 	struct vinc_stat_hist *hist = &stream->summary_stat.hist;
 
 	int rc, i;
-
-	/* Workaround of hardware bug rf#2159: very big value in histogram */
-	for (i = 0; i < 256; i++) {
-		if (check_histogram(hist->red, i))
-			dev_warn(priv->ici.v4l2_dev.dev,
-				 "Red histogram hardware error\n");
-		if (check_histogram(hist->green, i))
-			dev_warn(priv->ici.v4l2_dev.dev,
-				 "Green histogram hardware error\n");
-		if (check_histogram(hist->blue, i))
-			dev_warn(priv->ici.v4l2_dev.dev,
-				 "Blue histogram hardware error\n");
-	}
 
 	if (cc->awb->val || cc->ab->val) {
 		kernel_neon_begin();

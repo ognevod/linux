@@ -256,7 +256,11 @@ void vinc_configure(struct vinc_dev *priv, struct soc_camera_device *icd)
 	zone->enable = 1;
 	zone->x_lt = 0;
 	zone->y_lt = 0;
-	zone->x_rb = stream->crop2.c.width - 1;
+	/* Workaround of hardware bug rf#2159: very big value in histogram.
+	 * For correct histogram calculation we need to exclude right column or
+	 * bottom row from statistics zone.
+	 */
+	zone->x_rb = stream->crop2.c.width - 2;
 	zone->y_rb = stream->crop2.c.height - 1;
 	proc_cfg = vinc_read(priv, STREAM_PROC_CFG(devnum));
 	proc_cfg |= STREAM_PROC_CFG_STT_EN(stream->cluster.stat.enable->val);
