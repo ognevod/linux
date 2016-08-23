@@ -408,6 +408,7 @@ struct ov772x_priv {
 		struct v4l2_ctrl *exp;
 		struct v4l2_ctrl *exp_abs;
 	};
+	struct v4l2_ctrl *awb;
 	struct soc_camera_subdev_desc	  ssdd_dt;
 	struct v4l2_clk			 *clk;
 	struct ov772x_camera_info        *info;
@@ -780,6 +781,19 @@ static int ov772x_s_ctrl(struct v4l2_ctrl *ctrl)
 		 */
 		ret = ov772x_write(client, BDMSTEP, val);
 
+		return ret;
+	}
+	case V4L2_CID_AUTO_WHITE_BALANCE: {
+	  u8 qq;
+		val = (ctrl->val) ? AWB_ON : 0;
+		ret = ov772x_mask_set(client, COM8, AWB_ON, val);
+
+		/* Set color gains to default values */
+		if (!ctrl->val) {
+			ov772x_write(client, BLUE, 0x40);
+			ov772x_write(client, GREEN, 0x40);
+			ov772x_write(client, RED, 0x40);
+		}
 		return ret;
 	}
 	}
@@ -1330,7 +1344,9 @@ static int ov772x_probe(struct i2c_client *client,
 		V4L2_CID_POWER_LINE_FREQUENCY,
 		V4L2_CID_POWER_LINE_FREQUENCY_60HZ, 0,
 		V4L2_CID_POWER_LINE_FREQUENCY_DISABLED);
-
+	priv->awb = v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
+				      V4L2_CID_AUTO_WHITE_BALANCE, 0, 1, 1, 1);
+	priv->awb->is_private = 1;
 	priv->subdev.ctrl_handler = &priv->hdl;
 	if (priv->hdl.error)
 		return priv->hdl.error;
