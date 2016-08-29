@@ -463,7 +463,7 @@ struct vinc_stream {
 
 	struct vinc_cluster cluster;
 	struct v4l2_ctrl *test_pattern;
-	int stat_odd:1;
+	bool stat_odd;
 
 	struct v4l2_crop crop1;
 	struct v4l2_crop crop2;

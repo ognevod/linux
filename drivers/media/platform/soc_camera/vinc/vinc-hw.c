@@ -44,7 +44,7 @@ void vinc_stat_start(struct vinc_stream *stream)
 	struct vinc_dev *priv = container_of(stream, struct vinc_dev,
 					     stream[stream->devnum]);
 
-	stream->stat_odd = 0;
+	stream->stat_odd = true;
 	vinc_write(priv, STREAM_PROC_CLEAR(0),
 		   STREAM_PROC_CLEAR_THR_CLR);
 }

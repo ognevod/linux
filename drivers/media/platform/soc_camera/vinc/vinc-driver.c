@@ -874,7 +874,7 @@ static void vinc_eof_handler(struct vinc_stream *stream)
 		 * (or protect ourselves from this situation). */
 		if (stream->stat_odd)
 			tasklet_schedule(&stream->stat_tasklet);
-		stream->stat_odd = ~stream->stat_odd;
+		stream->stat_odd = !stream->stat_odd;
 	}
 	if (stream->active) {
 		dev_dbg(priv->ici.v4l2_dev.dev, "Frame end\n");
