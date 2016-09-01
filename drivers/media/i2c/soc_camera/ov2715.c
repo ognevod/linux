@@ -49,6 +49,7 @@
 #define REG_AGC_ADJ_LOW			0x350B
 #define REG_AEC_PK_VTS_HIGH		0x350C
 #define REG_AEC_PK_VTS_LOW		0x350D
+#define REG_ANA_ARRAY01			0x3621
 #define REG_WINDOW_START_X_HIGH		0x3800
 #define REG_WINDOW_START_X_LOW		0x3801
 #define REG_WINDOW_START_Y_HIGH		0x3802
@@ -65,6 +66,7 @@
 #define REG_OUT_TOTAL_WIDTH_LOW		0x380d
 #define REG_OUT_TOTAL_HEIGHT_HIGH	0x380e
 #define REG_OUT_TOTAL_HEIGHT_LOW	0x380f
+#define REG_TIMING_CONTROL18		0x3818
 #define REG_AEC_CONTROL			0x3a00
 #define REG_AEC_B50_STEP_HIGH		0x3a08
 #define REG_AEC_B50_STEP_LOW		0x3a09
@@ -94,6 +96,15 @@
 /* ISP CONTROL1 */
 #define REG_ISP_CONTROL1_AWB_EN		0x01
 
+
+/* ANA ARRAY 01 */
+/* This field is absent in datasheet, but is used in OmniVision
+ * response to our question about mirror/flip
+ */
+#define REG_ANA_ARRAY01_HMIRROR         0x10
+
+/* Tmimng control 18 */
+#define REG_TIMING_CONTROL18_HMIRROR    0x40
 
 /*
  * the sensor's autoexposure is buggy when setting total_height low.
@@ -510,6 +521,29 @@ static int ov2715_s_ctrl(struct v4l2_ctrl *ctrl)
 
 		ret = reg_write(client, REG_ISP_CONTROL1, val);
 		return ret;
+
+	case V4L2_CID_HFLIP: {
+		u8 en;
+
+		ret = reg_read(client, REG_ANA_ARRAY01, &en);
+		if (ret)
+			return ret;
+		ret = reg_read(client, REG_TIMING_CONTROL18, &val);
+		if (ret)
+			return ret;
+		if (ctrl->val) {
+			en |= REG_ANA_ARRAY01_HMIRROR;
+			val |= REG_TIMING_CONTROL18_HMIRROR;
+		} else {
+			en &= ~REG_ANA_ARRAY01_HMIRROR;
+			val &= ~REG_TIMING_CONTROL18_HMIRROR;
+		}
+		ret = reg_write(client, REG_ANA_ARRAY01, en);
+		if (ret)
+			return ret;
+		ret = reg_write(client, REG_TIMING_CONTROL18, val);
+		return ret;
+	}
 	}
 	return -EINVAL;
 }
@@ -549,6 +583,15 @@ static int ov2715_s_power(struct v4l2_subdev *sd, int on)
 		if (ret)
 			return ret;
 	}
+
+	/* Enable horizontal mirror */
+	/* This register is absent in datasheet, but is used in OmniVision
+	 * response to our question about mirror/flip
+	 */
+	if (!ret)
+		ret = reg_write(client, 0x3811, 0x06);
+	if (!ret)
+		ret = reg_write(client, REG_ANA_ARRAY01, 0x04);
 
 	return ret;
 }
@@ -606,6 +649,8 @@ static int ov2715_probe(struct i2c_client *client,
 	priv->awb = v4l2_ctrl_new_std(&priv->hdl, &ov2715_ctrl_ops,
 		V4L2_CID_AUTO_WHITE_BALANCE, 0, 1, 1, 1);
 	priv->awb->is_private = 1;
+	v4l2_ctrl_new_std(&priv->hdl, &ov2715_ctrl_ops,
+			  V4L2_CID_HFLIP, 0, 1, 1, 0);
 	priv->subdev.ctrl_handler = &priv->hdl;
 	if (priv->hdl.error)
 		return priv->hdl.error;
