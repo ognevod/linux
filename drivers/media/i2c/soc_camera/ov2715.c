@@ -105,6 +105,7 @@
 
 /* Tmimng control 18 */
 #define REG_TIMING_CONTROL18_HMIRROR    0x40
+#define REG_TIMING_CONTROL18_VFLIP	0x20
 
 /*
  * the sensor's autoexposure is buggy when setting total_height low.
@@ -544,6 +545,29 @@ static int ov2715_s_ctrl(struct v4l2_ctrl *ctrl)
 		ret = reg_write(client, REG_TIMING_CONTROL18, val);
 		return ret;
 	}
+	case V4L2_CID_VFLIP: {
+		u8 en;
+
+		ret = reg_read(client, REG_TIMING_CONTROL18, &val);
+		if (ret)
+			return ret;
+		if (ctrl->val) {
+			en = 0x05;
+			val |= REG_TIMING_CONTROL18_VFLIP;
+		} else {
+			en = 0x06;
+			val &= ~REG_TIMING_CONTROL18_VFLIP;
+		}
+		/* This register is absent in datasheet, but is used in
+		 * OmniVision response to our question about mirror/flip
+		 */
+		ret = reg_write(client, 0x3811, en);
+		if (ret)
+			return ret;
+
+		ret = reg_write(client, REG_TIMING_CONTROL18, val);
+		return ret;
+	}
 	}
 	return -EINVAL;
 }
@@ -651,6 +675,8 @@ static int ov2715_probe(struct i2c_client *client,
 	priv->awb->is_private = 1;
 	v4l2_ctrl_new_std(&priv->hdl, &ov2715_ctrl_ops,
 			  V4L2_CID_HFLIP, 0, 1, 1, 0);
+	v4l2_ctrl_new_std(&priv->hdl, &ov2715_ctrl_ops,
+			  V4L2_CID_VFLIP, 0, 1, 1, 0);
 	priv->subdev.ctrl_handler = &priv->hdl;
 	if (priv->hdl.error)
 		return priv->hdl.error;
