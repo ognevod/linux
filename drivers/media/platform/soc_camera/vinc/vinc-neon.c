@@ -11,7 +11,7 @@
 #include "vinc-neon.h"
 #include "math/math.h"
 
-#define OFFSET_MAX 4096.0
+#define CC_OFFSET_MAX 4096.0
 
 #define is_in_range(val, min, max) ((val) >= (min) && (val) <= (max))
 
@@ -723,7 +723,7 @@ static inline bool check_row_overflow(struct matrix *const coeff,
 	return coeff->coeff[row * 3] +
 	       coeff->coeff[row * 3 + 1] +
 	       coeff->coeff[row * 3 + 2] +
-	       offset->offset[row] / OFFSET_MAX >= 16;
+	       offset->offset[row] / CC_OFFSET_MAX >= 16;
 }
 
 /**
@@ -739,9 +739,12 @@ static bool check_cc_overflow(struct matrix *coeff, struct vector *offset)
 	return check_row_overflow(coeff, offset, 0) ||
 	       check_row_overflow(coeff, offset, 1) ||
 	       check_row_overflow(coeff, offset, 2) ||
-	       !is_in_range(offset->offset[0], -OFFSET_MAX, OFFSET_MAX - 1) ||
-	       !is_in_range(offset->offset[1], -OFFSET_MAX, OFFSET_MAX - 1) ||
-	       !is_in_range(offset->offset[2], -OFFSET_MAX, OFFSET_MAX - 1);
+	       !is_in_range(offset->offset[0], -CC_OFFSET_MAX,
+			    CC_OFFSET_MAX - 1) ||
+	       !is_in_range(offset->offset[1], -CC_OFFSET_MAX,
+			    CC_OFFSET_MAX - 1) ||
+	       !is_in_range(offset->offset[2], -CC_OFFSET_MAX,
+			    CC_OFFSET_MAX - 1);
 }
 
 /* Color Correction coefficient matrix, offset vector and scaling register
