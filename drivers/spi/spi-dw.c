@@ -316,7 +316,8 @@ static int dw_spi_transfer_one(struct spi_master *master,
 			speed = transfer->speed_hz;
 
 			/* clk_div doesn't support odd number */
-			clk_div = (dws->max_freq / speed + 1) & 0xfffe;
+			clk_div = roundup(DIV_ROUND_UP(dws->max_freq,
+						       speed), 2);
 
 			chip->speed_hz = speed;
 			chip->clk_div = clk_div;
