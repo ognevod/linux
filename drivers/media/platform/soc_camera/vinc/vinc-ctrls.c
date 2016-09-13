@@ -1322,6 +1322,13 @@ void vinc_stat_tasklet(unsigned long data)
 	vinc_write(priv, STREAM_PROC_CLEAR(devnum),
 			STREAM_PROC_CLEAR_AF_CLR | STREAM_PROC_CLEAR_ADD_CLR);
 
+	spin_lock(&stream->lock);
+	if (!stream->active) {
+		vinc_stream_enable(priv, devnum, false);
+		stream->stat_odd = true;
+	}
+	spin_unlock(&stream->lock);
+
 	/* Calculate summary statistics, used inside the driver (histogram and
 	 * sum)
 	 */

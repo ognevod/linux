@@ -853,9 +853,20 @@ static void vinc_next_buffer(struct vinc_stream *stream,
 					     struct vinc_buffer, queue)->vb;
 		vinc_start_capture(priv, priv->ici.icds[stream->devnum]);
 	} else {
+		u32 wr_ctr = vinc_read(priv,
+				       STREAM_DMA_WR_CTR(stream->devnum, 0));
+
 		stream->active = NULL;
-		vinc_stream_enable(priv, stream->devnum, false);
-		stream->stat_odd = true;
+
+		/* Without active buffer stream will be disabled in tasklet.
+		 * If tasklet is not scheduled then disable stream here.
+		 */
+		if (stream->stat_odd) {
+			vinc_stream_enable(priv, stream->devnum, false);
+			stream->stat_odd = true;
+		}
+		wr_ctr &= ~DMA_WR_CTR_DMA_EN;
+		vinc_write(priv, STREAM_DMA_WR_CTR(stream->devnum, 0), wr_ctr);
 	}
 
 	v4l2_get_timestamp(&vb->v4l2_buf.timestamp);
