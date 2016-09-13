@@ -20,6 +20,18 @@ u32 vinc_read(struct vinc_dev *priv, unsigned long reg_offs)
 	return ioread32(priv->base + reg_offs);
 }
 
+void vinc_stream_enable(struct vinc_dev *priv, u8 devnum, bool enable)
+{
+	u32 stream_ctr = vinc_read(priv, STREAM_CTR);
+
+	if (enable)
+		stream_ctr |= STREAM_CTR_STREAM_ENABLE(devnum);
+	else
+		stream_ctr &= ~STREAM_CTR_STREAM_ENABLE(devnum);
+
+	vinc_write(priv, STREAM_CTR, stream_ctr);
+}
+
 void set_cc_ct(struct vinc_dev *priv, u8 devnum, struct vinc_cc *cc,
 	       int is_ct)
 {

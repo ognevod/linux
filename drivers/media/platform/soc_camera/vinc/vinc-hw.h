@@ -22,6 +22,8 @@ void vinc_write(struct vinc_dev *priv,
 
 u32 vinc_read(struct vinc_dev *priv, unsigned long reg_offs);
 
+void vinc_stream_enable(struct vinc_dev *priv, u8 devnum, bool enable);
+
 void vinc_configure_input(struct vinc_stream *stream);
 
 void vinc_configure(struct vinc_dev *priv, struct soc_camera_device *icd);

@@ -125,18 +125,6 @@ static int vinc_buf_prepare(struct vb2_buffer *vb)
 	return 0;
 }
 
-static void vinc_stream_enable(struct vinc_dev *priv, u8 devnum, bool enable)
-{
-	u32 stream_ctr = vinc_read(priv, STREAM_CTR);
-
-	if (enable)
-		stream_ctr |= STREAM_CTR_STREAM_ENABLE(devnum);
-	else
-		stream_ctr &= ~STREAM_CTR_STREAM_ENABLE(devnum);
-
-	vinc_write(priv, STREAM_CTR, stream_ctr);
-}
-
 static void vinc_start_capture(struct vinc_dev *priv,
 			       struct soc_camera_device *icd)
 {
