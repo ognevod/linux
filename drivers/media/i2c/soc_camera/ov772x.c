@@ -783,8 +783,7 @@ static int ov772x_s_ctrl(struct v4l2_ctrl *ctrl)
 
 		return ret;
 	}
-	case V4L2_CID_AUTO_WHITE_BALANCE: {
-	  u8 qq;
+	case V4L2_CID_AUTO_WHITE_BALANCE:
 		val = (ctrl->val) ? AWB_ON : 0;
 		ret = ov772x_mask_set(client, COM8, AWB_ON, val);
 
@@ -795,7 +794,6 @@ static int ov772x_s_ctrl(struct v4l2_ctrl *ctrl)
 			ov772x_write(client, RED, 0x40);
 		}
 		return ret;
-	}
 	}
 	return -EINVAL;
 }
