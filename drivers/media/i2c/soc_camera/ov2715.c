@@ -212,6 +212,8 @@ struct ov2715_priv {
 		struct v4l2_ctrl *exp_abs;
 	};
 	struct v4l2_ctrl		 *awb;
+	struct v4l2_ctrl		 *hflip;
+	struct v4l2_ctrl		 *vflip;
 	struct v4l2_rect		 crop_rect;
 	struct v4l2_clk			 *clk;
 	const struct ov2715_color_format *cfmt;
@@ -324,6 +326,87 @@ static const struct ov2715_color_format
 			return &ov2715_cfmts[i];
 
 	return NULL;
+}
+
+static int set_gain(struct i2c_client *client, s32 gain)
+{
+	u8 low, high, ret;
+
+	ret = reg_write(client, REG_AGC_ADJ_HIGH, gain > 79);
+	if (ret)
+		return ret;
+
+	low  = gain & 0x0f;
+	high = gain >> 4;
+	if (high > 4)
+		high--;
+	high = (0xf << high) & 0xf0;
+	return reg_write(client, REG_AGC_ADJ_LOW, high | low);
+}
+
+static int set_exposure(struct i2c_client *client, s32 exposure)
+{
+	u8 val, ret;
+
+	val = (u8)(exposure & 0xff);
+	ret = reg_write(client, REG_AEC_PK_LOW, val);
+	if (ret)
+		return ret;
+
+	val = (u8)((exposure >> 8) & 0xff);
+	ret = reg_write(client, REG_AEC_PK_HIGH, val);
+	if (ret)
+		return ret;
+
+	val = (u8)((exposure >> 16) & 0xf);
+	return reg_write(client, REG_AEC_PK_HHIGH, val);
+}
+
+static int set_hflip(struct i2c_client *client, u32 hflip)
+{
+	u8 en, val, ret;
+
+	ret = reg_read(client, REG_ANA_ARRAY01, &en);
+	if (ret)
+		return ret;
+	ret = reg_read(client, REG_TIMING_CONTROL18, &val);
+	if (ret)
+		return ret;
+	if (hflip) {
+		en |= REG_ANA_ARRAY01_HMIRROR;
+		val |= REG_TIMING_CONTROL18_HMIRROR;
+	} else {
+		en &= ~REG_ANA_ARRAY01_HMIRROR;
+		val &= ~REG_TIMING_CONTROL18_HMIRROR;
+	}
+	ret = reg_write(client, REG_ANA_ARRAY01, en);
+	if (ret)
+		return ret;
+	return reg_write(client, REG_TIMING_CONTROL18, val);
+}
+
+static int set_vflip(struct i2c_client *client, u32 vflip)
+{
+	u8 en, val, ret;
+
+	ret = reg_read(client, REG_TIMING_CONTROL18, &val);
+	if (ret)
+		return ret;
+	if (vflip) {
+		en = 0x05;
+		val |= REG_TIMING_CONTROL18_VFLIP;
+	} else {
+		en = 0x06;
+		val &= ~REG_TIMING_CONTROL18_VFLIP;
+	}
+	/* This register is absent in datasheet, but is used in
+	 * OmniVision response to our question about mirror/flip
+	 */
+	ret = reg_write(client, 0x3811, en);
+	if (ret)
+		return ret;
+
+	return reg_write(client, REG_TIMING_CONTROL18, val);
 }
 
 static int ov2715_try_fmt(struct v4l2_subdev *sd,
@@ -444,9 +527,7 @@ static int ov2715_s_ctrl(struct v4l2_ctrl *ctrl)
 	u8 val;
 
 	switch (ctrl->id) {
-	case V4L2_CID_AUTOGAIN: {
-		u8 low, high;
-
+	case V4L2_CID_AUTOGAIN:
 		ret = reg_read(client, REG_AEC_PK_MANUAL, &val);
 		if (ret)
 			return ret;
@@ -459,19 +540,7 @@ static int ov2715_s_ctrl(struct v4l2_ctrl *ctrl)
 		if (ctrl->val)
 			return 0;
 
-		ret = reg_write(client, REG_AGC_ADJ_HIGH, priv->gain->val > 79);
-		if (ret)
-			return ret;
-
-		low  = priv->gain->val & 0x0f;
-		high = priv->gain->val >> 4;
-		if (high > 4)
-			high--;
-		high = (0xf << high) & 0xf0;
-		ret = reg_write(client, REG_AGC_ADJ_LOW, high | low);
-
-		return ret;
-	}
+		return set_gain(client, priv->gain->val);
 	case V4L2_CID_EXPOSURE_AUTO: {
 		u32 exposure;
 
@@ -498,19 +567,7 @@ static int ov2715_s_ctrl(struct v4l2_ctrl *ctrl)
 					exposure_reg_to_100us(priv, exposure);
 		}
 
-		val = (u8)(exposure & 0xff);
-		ret = reg_write(client, REG_AEC_PK_LOW, val);
-		if (ret)
-			return ret;
-
-		val = (u8)((exposure >> 8) & 0xff);
-		ret = reg_write(client, REG_AEC_PK_HIGH, val);
-		if (ret)
-			return ret;
-
-		val = (u8)((exposure >> 16) & 0xf);
-		ret = reg_write(client, REG_AEC_PK_HHIGH, val);
-		return ret;
+		return set_exposure(client, exposure);
 	}
 	case V4L2_CID_AUTO_WHITE_BALANCE:
 		ret = reg_read(client, REG_ISP_CONTROL1, &val);
@@ -523,51 +580,11 @@ static int ov2715_s_ctrl(struct v4l2_ctrl *ctrl)
 		ret = reg_write(client, REG_ISP_CONTROL1, val);
 		return ret;
 
-	case V4L2_CID_HFLIP: {
-		u8 en;
+	case V4L2_CID_HFLIP:
+		return set_hflip(client, ctrl->val);
 
-		ret = reg_read(client, REG_ANA_ARRAY01, &en);
-		if (ret)
-			return ret;
-		ret = reg_read(client, REG_TIMING_CONTROL18, &val);
-		if (ret)
-			return ret;
-		if (ctrl->val) {
-			en |= REG_ANA_ARRAY01_HMIRROR;
-			val |= REG_TIMING_CONTROL18_HMIRROR;
-		} else {
-			en &= ~REG_ANA_ARRAY01_HMIRROR;
-			val &= ~REG_TIMING_CONTROL18_HMIRROR;
-		}
-		ret = reg_write(client, REG_ANA_ARRAY01, en);
-		if (ret)
-			return ret;
-		ret = reg_write(client, REG_TIMING_CONTROL18, val);
-		return ret;
-	}
-	case V4L2_CID_VFLIP: {
-		u8 en;
-
-		ret = reg_read(client, REG_TIMING_CONTROL18, &val);
-		if (ret)
-			return ret;
-		if (ctrl->val) {
-			en = 0x05;
-			val |= REG_TIMING_CONTROL18_VFLIP;
-		} else {
-			en = 0x06;
-			val &= ~REG_TIMING_CONTROL18_VFLIP;
-		}
-		/* This register is absent in datasheet, but is used in
-		 * OmniVision response to our question about mirror/flip
-		 */
-		ret = reg_write(client, 0x3811, en);
-		if (ret)
-			return ret;
-
-		ret = reg_write(client, REG_TIMING_CONTROL18, val);
-		return ret;
-	}
+	case V4L2_CID_VFLIP:
+		return set_vflip(client, ctrl->val);
 	}
 	return -EINVAL;
 }
@@ -586,8 +603,9 @@ static struct v4l2_subdev_video_ops ov2715_subdev_video_ops = {
 static int ov2715_s_power(struct v4l2_subdev *sd, int on)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	struct ov2715_priv *priv = to_ov2715(client);
 	int ret;
-	u8 reg_sys_ctrl0;
+	u8 reg_sys_ctrl0, val;
 	const struct ov2715_reg *next;
 
 	dev_dbg(&client->dev, "%s: on=%d\n", __func__, on);
@@ -617,7 +635,45 @@ static int ov2715_s_power(struct v4l2_subdev *sd, int on)
 	if (!ret)
 		ret = reg_write(client, REG_ANA_ARRAY01, 0x04);
 
-	return ret;
+		/* Set AEC_PK_MANUAL */
+	ret = reg_read(client, REG_AEC_PK_MANUAL, &val);
+	if (ret)
+		return ret;
+	val = (priv->auto_gain->cur.val) ? val & ~REG_AEC_PK_MANUAL_AGC :
+			val | REG_AEC_PK_MANUAL_AGC;
+	val = (priv->auto_exp->cur.val == V4L2_EXPOSURE_AUTO) ? val &
+			~REG_AEC_PK_MANUAL_AEC : val | REG_AEC_PK_MANUAL_AEC;
+	ret = reg_write(client, REG_AEC_PK_MANUAL, val);
+	if (ret)
+		return ret;
+
+	/* Set gain */
+	ret = set_gain(client, priv->gain->cur.val);
+	if (ret < 0)
+		return ret;
+
+	/* Set exposure */
+	ret = set_exposure(client, priv->exp->cur.val);
+	if (ret < 0)
+		return ret;
+
+	/* Set REG_ISP_CONTROL1 */
+	ret = reg_read(client, REG_ISP_CONTROL1, &val);
+	if (ret)
+		return ret;
+	val = (priv->awb->cur.val) ? val | REG_ISP_CONTROL1_AWB_EN :
+			val & ~REG_ISP_CONTROL1_AWB_EN;
+	ret = reg_write(client, REG_ISP_CONTROL1, val);
+	if (ret < 0)
+		return ret;
+
+	/* Set horizontal flip */
+	ret = set_hflip(client, priv->hflip->cur.val);
+	if (ret < 0)
+		return ret;
+
+	/* Set vertical flip */
+	return set_vflip(client, priv->vflip->cur.val);
 }
 
 static const struct v4l2_ctrl_ops ov2715_ctrl_ops = {
@@ -673,10 +729,10 @@ static int ov2715_probe(struct i2c_client *client,
 	priv->awb = v4l2_ctrl_new_std(&priv->hdl, &ov2715_ctrl_ops,
 		V4L2_CID_AUTO_WHITE_BALANCE, 0, 1, 1, 1);
 	priv->awb->is_private = 1;
-	v4l2_ctrl_new_std(&priv->hdl, &ov2715_ctrl_ops,
-			  V4L2_CID_HFLIP, 0, 1, 1, 0);
-	v4l2_ctrl_new_std(&priv->hdl, &ov2715_ctrl_ops,
-			  V4L2_CID_VFLIP, 0, 1, 1, 0);
+	priv->hflip = v4l2_ctrl_new_std(&priv->hdl, &ov2715_ctrl_ops,
+					V4L2_CID_HFLIP, 0, 1, 1, 0);
+	priv->vflip = v4l2_ctrl_new_std(&priv->hdl, &ov2715_ctrl_ops,
+					V4L2_CID_VFLIP, 0, 1, 1, 0);
 	priv->subdev.ctrl_handler = &priv->hdl;
 	if (priv->hdl.error)
 		return priv->hdl.error;
