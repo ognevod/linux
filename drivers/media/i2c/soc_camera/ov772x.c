@@ -292,6 +292,8 @@
 #define OFMT_BRAW       0x03	/* 11 : Bayer RAW */
 
 /* COM8 */
+#define AG_AE_MASK	(AGC_ON | AEC_ON)
+
 #define FAST_ALGO       0x80	/* Enable fast AGC/AEC algorithm */
 				/* AEC Setp size limit */
 #define UNLMT_STEP      0x40	/*   0 : Step size is limited */
@@ -674,6 +676,30 @@ static int ov772x_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
 	return -EINVAL;
 }
 
+static int set_gain(struct i2c_client *client, u32 gain)
+{
+	u8 high, low;
+
+	low = gain & 0x0f;
+	high = gain >> 4;
+	high = (0x0f << high) & 0xf0;
+
+	return ov772x_write(client, GAIN, high | low);
+}
+
+static int set_exposure(struct i2c_client *client, u32 exposure)
+{
+	u8 val, ret;
+
+	val = (u8)(exposure & 0xff);
+	ret = ov772x_write(client, AEC, val);
+	if (ret)
+		return ret;
+
+	val = (u8)((exposure >> 8) & 0xff);
+	return ov772x_write(client, AECH, val);
+}
+
 static int ov772x_s_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct ov772x_priv *priv = container_of(ctrl->handler,
@@ -696,9 +722,7 @@ static int ov772x_s_ctrl(struct v4l2_ctrl *ctrl)
 		if (priv->info->flags & OV772X_FLAG_HFLIP)
 			val ^= HFLIP_IMG;
 		return ov772x_mask_set(client, COM3, HFLIP_IMG, val);
-	case V4L2_CID_AUTOGAIN: {
-		u8 high, low;
-
+	case V4L2_CID_AUTOGAIN:
 		val = ctrl->val ? AGC_ON : 0;
 		ret = ov772x_mask_set(client, COM8, AGC_ON, val);
 		if (ret)
@@ -707,13 +731,7 @@ static int ov772x_s_ctrl(struct v4l2_ctrl *ctrl)
 		if (ctrl->val)
 			return 0;
 
-		low = priv->gain->val & 0x0f;
-		high = priv->gain->val >> 4;
-		high = (0x0f << high) & 0xf0;
-
-		ret = ov772x_write(client, GAIN, high | low);
-		return ret;
-	}
+		return set_gain(client, priv->gain->val);
 	case V4L2_CID_EXPOSURE_AUTO: {
 		u32 exposure;
 
@@ -734,15 +752,8 @@ static int ov772x_s_ctrl(struct v4l2_ctrl *ctrl)
 			*priv->exp_abs->p_cur.p_s32 =
 					exposure_reg_to_100us(priv, exposure);
 		}
-		val = (u8)(exposure & 0xff);
-		ret = ov772x_write(client, AEC, val);
-		if (ret)
-			return ret;
 
-		val = (u8)((exposure >> 8) & 0xff);
-		ret = ov772x_write(client, AECH, val);
-		return ret;
-
+		return set_exposure(client, exposure);
 	}
 	case V4L2_CID_POWER_LINE_FREQUENCY: {
 		u32 light_freq, step;
@@ -1054,6 +1065,28 @@ static int ov772x_set_params(struct ov772x_priv *priv,
 
 	/* COM7: Sensor resolution and output format control. */
 	ret = ov772x_write(client, COM7, win->com7_bit | cfmt->com7);
+	if (ret < 0)
+		goto ov772x_set_fmt_error;
+
+	/*
+	 * set COM8
+	 */
+	val = (priv->auto_exp->cur.val) ? 0 : AEC_ON;
+	if (priv->auto_gain->cur.val)
+		val |= AGC_ON;
+	if (priv->awb->cur.val)
+		val |= AWB_ON;
+	ret = ov772x_mask_set(client, COM8, AG_AE_MASK | AWB_ON, val);
+	if (ret < 0)
+		goto ov772x_set_fmt_error;
+
+	/* Set gain */
+	ret = set_gain(client, priv->gain->cur.val);
+	if (ret < 0)
+		goto ov772x_set_fmt_error;
+
+	/* Set exposure */
+	ret = set_exposure(client, priv->exp->cur.val);
 	if (ret < 0)
 		goto ov772x_set_fmt_error;
 
