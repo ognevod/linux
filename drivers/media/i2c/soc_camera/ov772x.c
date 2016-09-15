@@ -910,6 +910,7 @@ static int ov772x_set_params(struct ov772x_priv *priv,
 	u8  val, rc;
 	int dummy_pixels, dummy_rows;
 	u32 inpclk, intclk, pixclk;
+	u32 max_exp, def_exp;
 
 	/*
 	 * reset hardware
@@ -1026,6 +1027,13 @@ static int ov772x_set_params(struct ov772x_priv *priv,
 			    dummy_rows;
 	priv->fps = DIV_ROUND_CLOSEST(pixclk, priv->total_width *
 				      priv->total_height);
+
+	/* Modify exposure_absolute max/def values with image size/fps */
+	max_exp = exposure_reg_to_100us(priv, priv->total_height);
+	def_exp = exposure_reg_to_100us(priv, win->rect.height);
+	ret = v4l2_ctrl_modify_range(priv->exp_abs, 1, max_exp, 1, def_exp);
+	if (ret < 0)
+		goto ov772x_set_fmt_error;
 
 	/*
 	 * set DSP_CTRL3
