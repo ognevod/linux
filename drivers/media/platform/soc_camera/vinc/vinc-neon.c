@@ -792,3 +792,80 @@ int vinc_neon_calculate_cc(struct ctrl_priv *ctrl_privs,
 
 	return 0;
 }
+
+static u32 gain_to_ctrl(double *gain)
+{
+	u32 gain_int, gain_round, ctrl;
+	u8 power;
+	double frac;
+
+	gain_int = (u32)(*gain);
+	power = ilog2(gain_int);
+	gain_round = rounddown_pow_of_two(gain_int);
+
+	frac = (double)(*gain - gain_round);
+	ctrl = power * 16 + ((frac * 16) / gain_round);
+	return ctrl;
+}
+
+static double ctrl_to_gain(u32 ctrl)
+{
+	double tmp, gain;
+	u32 value;
+	u8 power;
+
+	power = ctrl / 16;
+	tmp = (double)(ctrl % 16) / 16;
+	value = pow(2, power);
+
+	gain = (double)value * (tmp + 1);
+	return gain;
+}
+
+u32 vinc_neon_calculate_luma_avg(struct vinc_stat_add *add,
+				  enum vinc_ycbcr_encoding ycbcr_enc,
+				  struct vinc_stat_zone *zone)
+{
+	double luma_average;
+
+	luma_average = (m_ycbcr[ycbcr_enc].coeff[0] * add->sum_r +
+			m_ycbcr[ycbcr_enc].coeff[1] * add->sum_g +
+			m_ycbcr[ycbcr_enc].coeff[2] * add->sum_b) /
+			((zone->x_rb + 1) * (zone->y_rb + 1));
+	return rint(luma_average);
+}
+
+void vinc_neon_calculate_gain_exp(u32 luma, u32 cur_gain, u32 cur_exp,
+				  u32 *gain, u32 *exp)
+{
+	const double th = 110.0, smoothness = 0.5;
+	const u32 max_exp = 33000, max_gain = 30;
+	double adjustment = 1.0f;
+	double cur_gain_dbl, gain_dbl, exp_dbl, brightness, desired_brightness;
+
+	adjustment = th / luma;
+
+	adjustment = clamp(adjustment, 1.0 / 16, 4.0);
+
+	cur_gain_dbl = ctrl_to_gain(cur_gain);
+	brightness = cur_exp * cur_gain_dbl;
+	desired_brightness = brightness * adjustment;
+	desired_brightness = brightness * smoothness + desired_brightness *
+			     (1 - smoothness);
+
+	if (desired_brightness > max_exp) {
+		exp_dbl = max_exp;
+		gain_dbl = desired_brightness / max_exp;
+
+	} else {
+		exp_dbl = desired_brightness;
+		gain_dbl = 1.0f;
+	}
+	if (gain_dbl > max_gain) {
+		exp_dbl = desired_brightness/max_gain;
+		gain_dbl = max_gain;
+	}
+
+	*exp = rint(exp_dbl);
+	*gain = gain_to_ctrl(&gain_dbl);
+}

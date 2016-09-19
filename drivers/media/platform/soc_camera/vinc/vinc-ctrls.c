@@ -337,7 +337,8 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		}
 
 		if ((cc->awb->is_new || cc->ab->is_new) && !cc->awb->val &&
-			!cc->ab->val)
+			!cc->ab->val && stream->ae->cur.val ==
+			V4L2_EXPOSURE_MANUAL)
 			cancel_work_sync(&stream->stat_work);
 
 		if (std_is_new) {
@@ -461,6 +462,12 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		ret = v4l2_subdev_s_ctrl(sd, &awb);
 		return ret;
 	}
+	case V4L2_CID_EXPOSURE_AUTO:
+		if (ctrl->is_new && ctrl->val == V4L2_EXPOSURE_MANUAL &&
+		    !stream->cluster.cc.awb->cur.val &&
+		    !stream->cluster.cc.ab->cur.val)
+			cancel_work_sync(&stream->stat_work);
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -562,6 +569,7 @@ static int vinc_try_ctrl(struct v4l2_ctrl *ctrl)
 	case V4L2_CID_SENSOR_EXPOSURE_AUTO:
 	case V4L2_CID_SENSOR_AUTOGAIN:
 	case V4L2_CID_SENSOR_AUTO_WHITE_BALANCE:
+	case V4L2_CID_EXPOSURE_AUTO:
 		return 0;
 	default:
 		return -EINVAL;
@@ -605,6 +613,11 @@ static const char * const vinc_color_effect_menu[] = {
 	"Solarization",
 	"Old photo",
 	"Set Cb and Cr components"
+};
+
+static const char * const vinc_exposure_auto_menu[] = {
+	"Auto Mode",
+	"Manual Mode",
 };
 
 static struct v4l2_ctrl_config ctrl_cfg[] = {
@@ -758,6 +771,17 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 		.step = 1,
 		.def = 0,
 		.flags = V4L2_CTRL_FLAG_UPDATE
+	},
+	{
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_EXPOSURE_AUTO,
+		.name = "Auto Exposure",
+		.type = V4L2_CTRL_TYPE_MENU,
+		.min = V4L2_EXPOSURE_AUTO,
+		.max = ARRAY_SIZE(vinc_exposure_auto_menu) - 1,
+		.step = 0,
+		.def = V4L2_EXPOSURE_MANUAL,
+		.qmenu = vinc_exposure_auto_menu,
 	},
 	{
 		.ops = &ctrl_ops,
@@ -1181,10 +1205,53 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	},
 };
 
+static int auto_exp_step(struct v4l2_subdev *sd, struct vinc_stream *stream,
+			 struct vinc_stat_add *add, struct vinc_stat_zone *zone,
+			 u32 value)
+{
+	struct v4l2_control cur_gain, cur_exp;
+	u32 luma, gain, exp;
+	int rc;
+
+	if (value == V4L2_EXPOSURE_MANUAL)
+		return 0;
+
+	cur_gain.id = V4L2_CID_GAIN;
+	cur_exp.id = V4L2_CID_EXPOSURE_ABSOLUTE;
+	rc = v4l2_subdev_g_ctrl(sd, &cur_gain);
+	if (rc < 0)
+		return rc;
+	rc = v4l2_subdev_g_ctrl(sd, &cur_exp);
+	if (rc < 0)
+		return rc;
+	kernel_neon_begin();
+	luma = vinc_neon_calculate_luma_avg(add, stream->ycbcr_enc, zone);
+	vinc_neon_calculate_gain_exp(luma, cur_gain.value, cur_exp.value * 100,
+				     &gain, &exp);
+	kernel_neon_end();
+	if (cur_gain.value != gain) {
+		cur_gain.value = gain;
+		rc = v4l2_subdev_s_ctrl(sd, &cur_gain);
+		if (rc < 0)
+			return rc;
+	}
+	exp = exp / 100;
+	if (cur_exp.value != exp) {
+		cur_exp.value = exp;
+		v4l2_subdev_s_ctrl(sd, &cur_exp);
+		if (rc < 0)
+			return rc;
+	}
+	return 0;
+}
+
 static void auto_stat_work(struct work_struct *work)
 {
 	struct vinc_stream *stream = container_of(work, struct vinc_stream,
 						  stat_work);
+	struct soc_camera_device *icd = container_of(stream->ae->handler,
+			struct soc_camera_device, ctrl_handler);
+	struct v4l2_subdev *sd = soc_camera_to_subdev(icd);
 	const u8 devnum = stream->devnum;
 	struct vinc_dev *priv = container_of(stream, struct vinc_dev,
 					     stream[devnum]);
@@ -1192,8 +1259,9 @@ static void auto_stat_work(struct work_struct *work)
 
 	struct vinc_stat_add *add = &stream->summary_stat.add;
 	struct vinc_stat_hist *hist = &stream->summary_stat.hist;
+	struct vinc_stat_zone *zone = stream->cluster.stat.zone[3]->p_cur.p;
 
-	int rc, i;
+	int rc;
 
 	if (cc->awb->val || cc->ab->val) {
 		kernel_neon_begin();
@@ -1233,6 +1301,12 @@ static void auto_stat_work(struct work_struct *work)
 
 		set_cc_ct(priv, devnum, cc->cc->p_cur.p, 0);
 	}
+
+	rc = auto_exp_step(sd, stream, add, zone, stream->ae->val);
+	if (rc < 0)
+		dev_dbg(priv->ici.v4l2_dev.dev,
+			"Sensor control get/set error\n");
+	return;
 }
 
 void vinc_stat_tasklet(unsigned long data)
@@ -1451,6 +1525,7 @@ int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 	stream->sensor_ag = v4l2_ctrl_find(hdl, V4L2_CID_SENSOR_AUTOGAIN);
 	stream->sensor_awb = v4l2_ctrl_find(hdl,
 					    V4L2_CID_SENSOR_AUTO_WHITE_BALANCE);
+	stream->ae = v4l2_ctrl_find(hdl, V4L2_CID_EXPOSURE_AUTO);
 	stream->cluster.cc.brightness->priv = devm_kmalloc(
 			priv->ici.v4l2_dev.dev,
 			sizeof(struct vector), GFP_KERNEL);

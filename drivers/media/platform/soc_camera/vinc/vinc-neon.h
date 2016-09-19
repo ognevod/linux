@@ -62,4 +62,12 @@ int vinc_neon_calculate_cc(struct ctrl_priv *ctrl_privs,
 			   enum vinc_ycbcr_encoding ycbcr_enc,
 			   struct vinc_cc *cc);
 
+/* Calculate gain and exposure values */
+u32 vinc_neon_calculate_luma_avg(struct vinc_stat_add *add,
+				  enum vinc_ycbcr_encoding ycbcr_enc,
+				  struct vinc_stat_zone *zone);
+
+void vinc_neon_calculate_gain_exp(u32 luma, u32 cur_gain, u32 cur_exp,
+				  u32 *gain, u32 *exp);
+
 #endif /* VINC_NEON_H */

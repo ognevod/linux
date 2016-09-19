@@ -467,6 +467,7 @@ struct vinc_stream {
 	struct v4l2_ctrl *sensor_ae;
 	struct v4l2_ctrl *sensor_ag;
 	struct v4l2_ctrl *sensor_awb;
+	struct v4l2_ctrl *ae;
 	bool stat_odd;
 
 	struct v4l2_crop crop1;
