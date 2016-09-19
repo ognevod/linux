@@ -1375,6 +1375,7 @@ static int ov772x_probe(struct i2c_client *client,
 	priv->auto_exp = v4l2_ctrl_new_std_menu(&priv->hdl, &ov772x_ctrl_ops,
 			V4L2_CID_EXPOSURE_AUTO, V4L2_EXPOSURE_MANUAL, 0,
 			V4L2_EXPOSURE_AUTO);
+	priv->auto_exp->is_private = 1;
 	priv->exp = v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
 			V4L2_CID_EXPOSURE, 1, 510, 1, 480);
 	priv->exp_abs = v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
