@@ -415,6 +415,12 @@ struct vinc_cluster_stat {
 	struct v4l2_ctrl *add[4];
 };
 
+struct vinc_cluster_exposure {
+	struct v4l2_ctrl *ae;
+	struct v4l2_ctrl *sensor_ae;
+	struct v4l2_ctrl *sensor_ag;
+};
+
 struct vinc_cluster {
 	struct vinc_cluster_bp bp;
 	struct vinc_cluster_gamma gamma;
@@ -422,6 +428,7 @@ struct vinc_cluster {
 	struct vinc_cluster_ct ct;
 	struct vinc_cluster_dr dr;
 	struct vinc_cluster_stat stat;
+	struct vinc_cluster_exposure exp;
 };
 
 struct ctrl_priv {
@@ -464,10 +471,7 @@ struct vinc_stream {
 
 	struct vinc_cluster cluster;
 	struct v4l2_ctrl *test_pattern;
-	struct v4l2_ctrl *sensor_ae;
-	struct v4l2_ctrl *sensor_ag;
 	struct v4l2_ctrl *sensor_awb;
-	struct v4l2_ctrl *ae;
 	bool stat_odd;
 
 	struct v4l2_crop crop1;
