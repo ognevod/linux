@@ -159,6 +159,24 @@ static void change_write_only(struct v4l2_ctrl **cluster,
 		}
 }
 
+static void activate_sensor_exp_gain(struct v4l2_ctrl_handler *hdl, u8 first,
+				     u8 last, bool const activate)
+{
+	struct v4l2_ctrl *s_exp[3];
+	int i;
+
+	s_exp[0] = v4l2_ctrl_find(hdl, V4L2_CID_EXPOSURE);
+	s_exp[1] = v4l2_ctrl_find(hdl, V4L2_CID_EXPOSURE_ABSOLUTE);
+	s_exp[2] = v4l2_ctrl_find(hdl, V4L2_CID_GAIN);
+	for (i = first; i <= last; i++) {
+		if (!activate) {
+			s_exp[i]->flags |= V4L2_CTRL_FLAG_INACTIVE;
+		} else {
+			s_exp[i]->flags &= ~V4L2_CTRL_FLAG_INACTIVE;
+		}
+	}
+}
+
 static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct soc_camera_device *icd = container_of(ctrl->handler,
@@ -471,7 +489,8 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 			if (ret < 0)
 				return ret;
 
-			if (exposure->ae->val ==  V4L2_EXPOSURE_MANUAL &&
+			activate_sensor_exp_gain(sd->ctrl_handler, 0, 2, 0);
+			if (exposure->ae->val == V4L2_EXPOSURE_MANUAL &&
 			    !(stream->cluster.cc.awb->cur.val) &&
 			    !(stream->cluster.cc.ab->cur.val))
 				cancel_work_sync(&stream->stat_work);
@@ -484,12 +503,16 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 				ret = v4l2_subdev_s_ctrl(sd, &exp);
 				if (ret < 0)
 					return ret;
+				activate_sensor_exp_gain(sd->ctrl_handler, 0,
+							 1, 1);
 			}
 			if (exposure->sensor_ag->is_new) {
 				gain.value = exposure->sensor_ag->val;
 				ret = v4l2_subdev_s_ctrl(sd, &gain);
 				if (ret < 0)
 					return ret;
+				activate_sensor_exp_gain(sd->ctrl_handler, 2,
+							 2, 1);
 			}
 		}
 		break;
