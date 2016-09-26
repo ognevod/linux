@@ -493,6 +493,8 @@ struct vinc_stream {
 		struct vinc_stat_hist hist;
 		struct vinc_stat_add add;
 	} summary_stat;
+	/* Set during driver loading, reset during first s_ctrl() call */
+	int first_load;
 };
 
 struct vinc_dev {

@@ -222,31 +222,39 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 
 		gamma = (struct vinc_cluster_gamma *)ctrl->cluster;
 		p_gamma = gamma->curve->p_cur.p;
-		if (gamma->gamma->is_new) {
-			kernel_neon_begin();
-			vinc_neon_calculate_gamma_curve(gamma->gamma->val,
-					      gamma->curve->p_cur.p);
-			kernel_neon_end();
-			change_write_only(ctrl->cluster, 1,
-					  gamma->enable->ncontrols, 0);
-			gamma->curve->flags |= V4L2_CTRL_FLAG_UPDATE;
-		} else if (gamma->curve->is_new) {
-			change_write_only(ctrl->cluster, 1,
-					  gamma->enable->ncontrols, 1);
-			gamma->curve->flags &= ~V4L2_CTRL_FLAG_UPDATE;
-			p_gamma = gamma->curve->p_new.p;
-		}
+		init = gamma->enable->is_new && gamma->gamma->is_new &&
+		       gamma->curve->is_new && !stream->first_load;
+		if (!init) {
+			if (gamma->gamma->is_new) {
+				kernel_neon_begin();
+				vinc_neon_calculate_gamma_curve(
+					gamma->gamma->val,
+					gamma->curve->p_cur.p);
+				kernel_neon_end();
+				change_write_only(ctrl->cluster, 1,
+						  gamma->enable->ncontrols, 0);
+				gamma->curve->flags |= V4L2_CTRL_FLAG_UPDATE;
+			} else if (gamma->curve->is_new) {
+				change_write_only(ctrl->cluster, 1,
+						  gamma->enable->ncontrols, 1);
+				gamma->curve->flags &= ~V4L2_CTRL_FLAG_UPDATE;
+				p_gamma = gamma->curve->p_new.p;
+			}
 
-		if (gamma->enable->is_new)
-			cluster_activate_only(ctrl->cluster);
+			if (gamma->enable->is_new)
+				cluster_activate_only(ctrl->cluster);
 
-		if (gamma->enable->val && (gamma->gamma->val != 16 ||
-			gamma->gamma->flags & V4L2_CTRL_FLAG_WRITE_ONLY)) {
-			enable_block(priv, devnum, STREAM_PROC_CFG_GC_EN, true);
-			set_gc_curve(priv, devnum, p_gamma);
-		} else {
-			enable_block(priv, devnum, STREAM_PROC_CFG_GC_EN,
-				     false);
+			if (gamma->enable->val && (gamma->gamma->val != 16 ||
+				gamma->gamma->flags &
+				V4L2_CTRL_FLAG_WRITE_ONLY)) {
+				enable_block(priv, devnum,
+					     STREAM_PROC_CFG_GC_EN, true);
+				set_gc_curve(priv, devnum, p_gamma);
+			} else {
+				enable_block(priv, devnum,
+					     STREAM_PROC_CFG_GC_EN, false);
+			}
+			stream->first_load = 0;
 		}
 		break;
 	}
@@ -1502,7 +1510,7 @@ int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 			return hdl->error;
 		}
 	}
-
+	stream->first_load = 1;
 	stream->cluster.bp.enable = v4l2_ctrl_find(hdl,
 			V4L2_CID_BAD_CORRECTION_ENABLE);
 	stream->cluster.bp.pix = v4l2_ctrl_find(hdl, V4L2_CID_BAD_PIXELS);
