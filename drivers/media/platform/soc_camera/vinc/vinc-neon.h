@@ -47,8 +47,7 @@ void vinc_neon_calculate_fx(void *col_fx, s32 cbcr, s32 val);
 
 void vinc_neon_wb_stat(u32 red, u32 green, u32 blue, u32 t, s32 *rb, s32 *bb);
 
-void vinc_neon_bc_stat(struct vinc_stat_hist *p_hist, struct bc_stat *p_stat,
-		       s32 *bri, s32 *con);
+void vinc_neon_bc_stat(struct bc_stat *p_stat, s32 *bri, s32 *con);
 
 void vinc_neon_calculate_m_wb(u32 rb, u32 bb, void *matrix);
 

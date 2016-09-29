@@ -177,6 +177,22 @@ static void activate_sensor_exp_gain(struct v4l2_ctrl_handler *hdl, u8 first,
 	}
 }
 
+static void vinc_calculate_cdf(struct vinc_stat_hist *p_hist,
+			       struct bc_stat *p_stat)
+{
+	int i;
+
+	for (i = 0; i < 256; i++) {
+		p_stat->hist_brightness[i] = p_hist->red[i] + p_hist->green[i] +
+					p_hist->blue[i];
+		if (i == 0)
+			p_stat->cumulate[i] = p_stat->hist_brightness[i];
+		else
+			p_stat->cumulate[i] = p_stat->cumulate[i-1] +
+					p_stat->hist_brightness[i];
+	}
+}
+
 static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct soc_camera_device *icd = container_of(ctrl->handler,
@@ -1330,7 +1346,8 @@ static void auto_stat_work(struct work_struct *work)
 						 cc->dowb->priv);
 		}
 		if (cc->ab->val) {
-			vinc_neon_bc_stat(hist, stream->cluster.cc.ab->priv,
+			vinc_calculate_cdf(hist, stream->cluster.cc.ab->priv);
+			vinc_neon_bc_stat(stream->cluster.cc.ab->priv,
 					  &cc->brightness->val,
 					  &cc->contrast->val);
 			vinc_neon_calculate_v_bri(cc->brightness->priv,
