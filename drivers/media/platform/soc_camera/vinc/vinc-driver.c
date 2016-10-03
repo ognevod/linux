@@ -306,6 +306,27 @@ static struct vb2_ops vinc_videobuf_ops = {
 	.stop_streaming		= vinc_stop_streaming,
 };
 
+static int vinc_add(struct soc_camera_device *icd)
+{
+	struct v4l2_subdev *sd = soc_camera_to_subdev(icd);
+	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
+	struct vinc_dev *priv = ici->priv;
+	struct v4l2_queryctrl query;
+	int rc;
+
+	query.id = V4L2_CID_GAIN;
+	rc = v4l2_subdev_queryctrl(sd, &query);
+	if (rc < 0)
+		return rc;
+	priv->max_gain = query.maximum;
+	query.id = V4L2_CID_EXPOSURE_ABSOLUTE;
+	rc = v4l2_subdev_queryctrl(sd, &query);
+	priv->max_exp = query.maximum;
+	if (rc < 0)
+		return rc;
+	return 0;
+}
+
 static int vinc_get_formats(struct soc_camera_device *icd, unsigned int idx,
 			    struct soc_camera_format_xlate *xlate)
 {
@@ -807,6 +828,7 @@ static int vinc_set_parm(struct soc_camera_device *icd,
 
 static struct soc_camera_host_ops vinc_host_ops = {
 	.owner		= THIS_MODULE,
+	.add		= vinc_add,
 	.get_formats	= vinc_get_formats,
 	.set_fmt	= vinc_set_fmt,
 	.try_fmt	= vinc_try_fmt,
@@ -817,7 +839,6 @@ static struct soc_camera_host_ops vinc_host_ops = {
 	.get_parm       = vinc_get_parm,
 	.set_parm       = vinc_set_parm,
 };
-
 
 static irqreturn_t vinc_irq_vio(int irq, void *data)
 {

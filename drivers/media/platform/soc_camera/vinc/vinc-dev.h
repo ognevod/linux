@@ -512,6 +512,9 @@ struct vinc_dev {
 	struct clk *pclk;
 	struct clk *aclk;
 	struct clk *sclk;
+
+	u32 max_gain;
+	u32 max_exp;
 };
 
 #endif /* VINC_DEV_H */

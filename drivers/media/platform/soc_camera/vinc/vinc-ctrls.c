@@ -1312,9 +1312,9 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	},
 };
 
-static int auto_exp_step(struct v4l2_subdev *sd, struct vinc_stream *stream,
-			 struct vinc_stat_add *add, struct vinc_stat_zone *zone,
-			 u32 value)
+static int auto_exp_step(struct v4l2_subdev *sd, struct vinc_dev *priv,
+			 struct vinc_stream *stream, struct vinc_stat_add *add,
+			 struct vinc_stat_zone *zone, u32 value)
 {
 	struct v4l2_control cur_gain, cur_exp;
 	u32 luma, gain, exp;
@@ -1331,10 +1331,12 @@ static int auto_exp_step(struct v4l2_subdev *sd, struct vinc_stream *stream,
 	rc = v4l2_subdev_g_ctrl(sd, &cur_exp);
 	if (rc < 0)
 		return rc;
+
 	kernel_neon_begin();
 	luma = vinc_neon_calculate_luma_avg(add, stream->ycbcr_enc, zone);
 	vinc_neon_calculate_gain_exp(luma, cur_gain.value, cur_exp.value * 100,
-				     &gain, &exp);
+				     priv->max_gain, priv->max_exp * 100, &gain,
+					&exp);
 	kernel_neon_end();
 	if (cur_gain.value != gain) {
 		cur_gain.value = gain;
@@ -1430,7 +1432,8 @@ static void auto_stat_work(struct work_struct *work)
 		set_gc_curve(priv, devnum, gamma->curve->p_cur.p);
 	}
 
-	rc = auto_exp_step(sd, stream, add, zone, stream->cluster.exp.ae->val);
+	rc = auto_exp_step(sd, priv, stream, add, zone,
+			   stream->cluster.exp.ae->val);
 	if (rc < 0)
 		dev_dbg(priv->ici.v4l2_dev.dev,
 			"Sensor control get/set error\n");
