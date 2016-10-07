@@ -398,8 +398,8 @@ void vinc_neon_wb_stat(u32 red, u32 green, u32 blue, u32 t, s32 *rb, s32 *bb)
 
 void vinc_neon_bc_stat(struct bc_stat *p_stat, s32 *bri, s32 *con)
 {
-	u32 max, min;
-	double alpha, clip_hist_percent = 0;
+	u32 max, min, clip_hist_percent = 0;
+	double alpha;
 
 
 	clip_hist_percent = p_stat->cumulate[255] / 100;
