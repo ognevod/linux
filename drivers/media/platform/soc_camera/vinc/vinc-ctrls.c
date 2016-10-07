@@ -333,7 +333,7 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 
 			if (cc->wbt->is_new) {
 				temp = cc->wbt->val;
-				change_write_only(ctrl->cluster, 13,
+				change_write_only(ctrl->cluster, 14,
 						  wr_only_num, 0);
 			}
 			add = &stream->summary_stat.add;
@@ -356,7 +356,7 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 
 		if ((cc->dowb->is_new || cc->rb->is_new || cc->bb->is_new) &&
 		    !init && !cc->awb->cur.val) {
-			change_write_only(ctrl->cluster, 13, wr_only_num, 1);
+			change_write_only(ctrl->cluster, 14, wr_only_num, 1);
 			/* write only flag for wbt should not reset */
 			wr_only_num--;
 		}
