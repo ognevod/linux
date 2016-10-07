@@ -321,11 +321,13 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		cluster_activate(priv, devnum, STREAM_PROC_CFG_CC_EN,
 				 ctrl->cluster);
 		activate = (cc->awb->val | cc->ab->val) ? 0 : 1;
-		cluster_activate_auto(activate, &cc->cc, 1);
-		cluster_activate_auto(!cc->awb->val, &cc->dowb, AWB_MEMBER_NUM);
-		cluster_activate_auto(!cc->ab->val, &cc->brightness,
-				      ABR_MEMBER_NUM);
-
+		if (cc->enable->val) {
+			cluster_activate_auto(activate, &cc->cc, 1);
+			cluster_activate_auto(!cc->awb->val, &cc->dowb,
+					      AWB_MEMBER_NUM);
+			cluster_activate_auto(!cc->ab->val, &cc->brightness,
+					      ABR_MEMBER_NUM);
+		}
 		if ((cc->dowb->is_new || cc->wbt->is_new) && !init &&
 					!cc->awb->cur.val) {
 			struct vinc_stat_add *add;
@@ -406,6 +408,15 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 			V4L2_EXPOSURE_MANUAL &&
 			!stream->cluster.gamma.bklight->cur.val)
 			cancel_work_sync(&stream->stat_work);
+
+		if (cc->awb->is_new || cc->ab->is_new) {
+			if (cc->awb->val || cc->awb->val) {
+				change_write_only(ctrl->cluster, 2, wr_only_num,
+							  0);
+				cc->cc->flags &= ~V4L2_CTRL_FLAG_UPDATE;
+			} else
+				cc->cc->flags |= V4L2_CTRL_FLAG_UPDATE;
+		}
 
 		if (std_is_new) {
 			kernel_neon_begin();
