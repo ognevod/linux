@@ -375,6 +375,7 @@ struct vinc_cluster_gamma {
 	struct v4l2_ctrl *enable;
 	struct v4l2_ctrl *curve;
 	struct v4l2_ctrl *gamma;
+	struct v4l2_ctrl *bklight;
 };
 
 struct vinc_cluster_cc {

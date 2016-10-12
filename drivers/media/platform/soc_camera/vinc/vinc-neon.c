@@ -277,18 +277,36 @@ static const double t2rgb[NUM_TABLE][3] = {
 	{0.684, 0.749, 1.000}, {0.668, 0.738, 1.000}, {0.668, 0.738, 1.000}
 };
 
-void vinc_neon_calculate_gamma_curve(int value, struct vinc_gamma_curve *gamma)
+void vinc_neon_calculate_he(struct bc_stat *p_stat, u32 n, u16 h, u16 w,
+			    u32 *conv)
+{
+	int i;
+	const double nmax = 10.;
+	double conv_he, n_dbl = (double)n / nmax;
+
+	for (i = 0; i < 256; i++) {
+		conv_he = (p_stat->cumulate[i] * 255) / (h * w * 3);
+		conv[i] = rint((1 - n_dbl) * i + n_dbl * conv_he);
+	}
+}
+
+void vinc_neon_calculate_gamma_curve(int value, u32 *conv, u8 bklight,
+				     struct vinc_gamma_curve *gamma)
 {
 	double gamma_dbl, cur_dbl;
-	int i, cur;
+	u32 lut_inp;
+	int i, j, cur;
 
 	gamma_dbl = (value / 32.0) / (1 - value / 32.0);
-	for (i = 0; i < 4096; i++) {
-		cur_dbl = 4095 * (pow(i / 4095.0, gamma_dbl));
-		cur = (int) rint(cur_dbl);
-		gamma->red[i]   = cur;
-		gamma->green[i] = cur;
-		gamma->blue[i]  = cur;
+	for (i = 0; i < 256; i++) {
+		for (j = 0; j < 16; j++) {
+			lut_inp = (bklight) ? conv[i] * 16 : i*16 + j;
+			cur_dbl = 4095 * (pow(lut_inp / 4095.0, gamma_dbl));
+			cur = (int) rint(cur_dbl);
+			gamma->red[i*16 + j]   = cur;
+			gamma->green[i*16 + j] = cur;
+			gamma->blue[i*16 + j]  = cur;
+		}
 	}
 }
 

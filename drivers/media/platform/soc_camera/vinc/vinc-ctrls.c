@@ -241,36 +241,58 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		init = gamma->enable->is_new && gamma->gamma->is_new &&
 		       gamma->curve->is_new && !stream->first_load;
 		if (!init) {
-			if (gamma->gamma->is_new) {
+			if ((gamma->gamma->is_new || gamma->bklight->is_new) &&
+			    !gamma->bklight->val) {
 				kernel_neon_begin();
 				vinc_neon_calculate_gamma_curve(
 					gamma->gamma->val,
+					stream->cluster.gamma.bklight->priv, 0,
 					gamma->curve->p_cur.p);
 				kernel_neon_end();
-				change_write_only(ctrl->cluster, 1,
-						  gamma->enable->ncontrols, 0);
+				change_write_only(ctrl->cluster, 2, 3, 0);
 				gamma->curve->flags |= V4L2_CTRL_FLAG_UPDATE;
-			} else if (gamma->curve->is_new) {
-				change_write_only(ctrl->cluster, 1,
-						  gamma->enable->ncontrols, 1);
+			} else if (gamma->curve->is_new &&
+				  !gamma->bklight->val) {
+				change_write_only(ctrl->cluster, 2, 3, 1);
 				gamma->curve->flags &= ~V4L2_CTRL_FLAG_UPDATE;
 				p_gamma = gamma->curve->p_new.p;
 			}
-
+			if (gamma->bklight->is_new) {
+				if (gamma->bklight->val) {
+					change_write_only(ctrl->cluster, 2, 3,
+							  0);
+					gamma->curve->flags &=
+						~V4L2_CTRL_FLAG_UPDATE;
+				} else
+					gamma->curve->flags |=
+						V4L2_CTRL_FLAG_UPDATE;
+			}
 			if (gamma->enable->is_new)
 				cluster_activate_only(ctrl->cluster);
-
+			cluster_activate_auto(!gamma->bklight->val,
+					      &gamma->curve, 1);
 			if (gamma->enable->val && (gamma->gamma->val != 16 ||
 				gamma->gamma->flags &
-				V4L2_CTRL_FLAG_WRITE_ONLY)) {
+				V4L2_CTRL_FLAG_WRITE_ONLY ||
+				gamma->bklight->val)) {
 				enable_block(priv, devnum,
 					     STREAM_PROC_CFG_GC_EN, true);
-				set_gc_curve(priv, devnum, p_gamma);
+				if (!gamma->bklight->val)
+					set_gc_curve(priv, devnum, p_gamma);
 			} else {
-				enable_block(priv, devnum,
-					     STREAM_PROC_CFG_GC_EN, false);
+				if (!gamma->bklight->val)
+					enable_block(priv, devnum,
+						     STREAM_PROC_CFG_GC_EN,
+						     false);
 			}
 			stream->first_load = 0;
+		}
+
+		if (!init && gamma->bklight->is_new && !gamma->bklight->val) {
+			if (!(stream->cluster.cc.awb->cur.val) &&
+			    !(stream->cluster.cc.ab->cur.val) &&
+			    stream->cluster.exp.ae->cur.val)
+				cancel_work_sync(&stream->stat_work);
 		}
 		break;
 	}
@@ -381,7 +403,8 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 
 		if ((cc->awb->is_new || cc->ab->is_new) && !cc->awb->val &&
 			!cc->ab->val && stream->cluster.exp.ae->cur.val ==
-			V4L2_EXPOSURE_MANUAL)
+			V4L2_EXPOSURE_MANUAL &&
+			!stream->cluster.gamma.bklight->cur.val)
 			cancel_work_sync(&stream->stat_work);
 
 		if (std_is_new) {
@@ -763,6 +786,17 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 		.type = V4L2_CTRL_TYPE_INTEGER,
 		.min = -112,
 		.max = 112,
+		.step = 1,
+		.def = 0,
+		.flags = V4L2_CTRL_FLAG_UPDATE
+	},
+	{
+		.ops = &ctrl_ops,
+		.id = V4L2_CID_BACKLIGHT_COMPENSATION,
+		.name = "Backlight compensation",
+		.type = V4L2_CTRL_TYPE_INTEGER,
+		.min = 0,
+		.max = 10,
 		.step = 1,
 		.def = 0,
 		.flags = V4L2_CTRL_FLAG_UPDATE
@@ -1330,12 +1364,16 @@ static void auto_stat_work(struct work_struct *work)
 	struct vinc_dev *priv = container_of(stream, struct vinc_dev,
 					     stream[devnum]);
 	struct vinc_cluster_cc *cc = &stream->cluster.cc;
+	struct vinc_cluster_gamma *gamma = &stream->cluster.gamma;
 
 	struct vinc_stat_add *add = &stream->summary_stat.add;
 	struct vinc_stat_hist *hist = &stream->summary_stat.hist;
 	struct vinc_stat_zone *zone = stream->cluster.stat.zone[3]->p_cur.p;
 
 	int rc;
+
+	if (cc->ab->val || gamma->bklight->val)
+		vinc_calculate_cdf(hist, stream->cluster.cc.ab->priv);
 
 	if (cc->awb->val || cc->ab->val) {
 		kernel_neon_begin();
@@ -1375,6 +1413,21 @@ static void auto_stat_work(struct work_struct *work)
 		       sizeof(struct vinc_cc));
 
 		set_cc_ct(priv, devnum, cc->cc->p_cur.p, 0);
+	}
+	if (gamma->enable->val && gamma->bklight->val) {
+		u16 h, w;
+
+		h = zone->y_rb - zone->y_lt + 1;
+		w = zone->x_rb - zone->x_lt + 1;
+		kernel_neon_begin();
+		vinc_neon_calculate_he(cc->ab->priv, gamma->bklight->cur.val,
+				       h, w, gamma->bklight->priv);
+		vinc_neon_calculate_gamma_curve(gamma->gamma->cur.val,
+						gamma->bklight->priv,
+						gamma->bklight->cur.val,
+						gamma->curve->p_cur.p);
+		kernel_neon_end();
+		set_gc_curve(priv, devnum, gamma->curve->p_cur.p);
 	}
 
 	rc = auto_exp_step(sd, stream, add, zone, stream->cluster.exp.ae->val);
@@ -1540,6 +1593,8 @@ int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 			V4L2_CID_GAMMA_CURVE_ENABLE);
 	stream->cluster.gamma.curve = v4l2_ctrl_find(hdl, V4L2_CID_GAMMA_CURVE);
 	stream->cluster.gamma.gamma = v4l2_ctrl_find(hdl, V4L2_CID_GAMMA);
+	stream->cluster.gamma.bklight = v4l2_ctrl_find(hdl,
+			V4L2_CID_BACKLIGHT_COMPENSATION);
 	v4l2_ctrl_cluster(CLUSTER_SIZE(struct vinc_cluster_gamma),
 			  &stream->cluster.gamma.enable);
 
@@ -1608,6 +1663,9 @@ int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 	stream->sensor_awb = v4l2_ctrl_find(hdl,
 					    V4L2_CID_SENSOR_AUTO_WHITE_BALANCE);
 
+	stream->cluster.gamma.bklight->priv = devm_kmalloc(
+			priv->ici.v4l2_dev.dev,
+			256 * sizeof(u32), GFP_KERNEL);
 	stream->cluster.cc.brightness->priv = devm_kmalloc(
 			priv->ici.v4l2_dev.dev,
 			sizeof(struct vector), GFP_KERNEL);

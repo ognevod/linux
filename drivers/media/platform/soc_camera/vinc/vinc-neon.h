@@ -53,7 +53,10 @@ void vinc_neon_calculate_m_wb(u32 rb, u32 bb, void *matrix);
 
 void vinc_neon_calculate_m_ck(void *matrix, s32 val);
 
-void vinc_neon_calculate_gamma_curve(int value,
+void vinc_neon_calculate_he(struct bc_stat *p_stat, u32 n, u16 h, u16 w,
+			    u32 *conv);
+
+void vinc_neon_calculate_gamma_curve(int value, u32 *conv, u8 bklight,
 		struct vinc_gamma_curve *gamma_ptr);
 
 /* Calculate CC matrix and offset */
