@@ -3104,7 +3104,7 @@ static int try_set_ext_ctrls(struct v4l2_fh *fh, struct v4l2_ctrl_handler *hdl,
 			continue;
 
 		cs->error_idx = i;
-		master = helpers[i].mref->ctrl;
+		master = helpers[i].ctrl->cluster[0];
 		v4l2_ctrl_lock(master);
 
 		/* Reset the 'is_new' flags of the cluster */
