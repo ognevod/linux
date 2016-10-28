@@ -292,17 +292,23 @@ SND_SOC_DAPM_MIXER("Right Capture Mix", ALC5623_PWR_MANAG_ADD2, 0, 0,
 	&alc5623_captureR_mixer_controls[0],
 	ARRAY_SIZE(alc5623_captureR_mixer_controls)),
 
-SND_SOC_DAPM_DAC("Left DAC", "Left HiFi Playback",
-	ALC5623_PWR_MANAG_ADD2, 9, 0),
-SND_SOC_DAPM_DAC("Right DAC", "Right HiFi Playback",
-	ALC5623_PWR_MANAG_ADD2, 8, 0),
-SND_SOC_DAPM_MIXER("I2S Mix", ALC5623_PWR_MANAG_ADD1, 15, 0, NULL, 0),
+/* I2S Audio Interface */
+SND_SOC_DAPM_AIF_IN("I2SINL", "Left Playback", 0,
+		    ALC5623_PWR_MANAG_ADD1, 15, 0),
+SND_SOC_DAPM_AIF_IN("I2SINR", "Right Playback", 0,
+		    ALC5623_PWR_MANAG_ADD1, 15, 0),
+SND_SOC_DAPM_AIF_OUT("I2SOUTL", "Left Capture", 0,
+		     ALC5623_PWR_MANAG_ADD1, 15, 0),
+SND_SOC_DAPM_AIF_OUT("I2SOUTR", "Right Capture", 0,
+		     ALC5623_PWR_MANAG_ADD1, 15, 0),
+
+SND_SOC_DAPM_DAC("Left DAC", NULL, ALC5623_PWR_MANAG_ADD2, 9, 0),
+SND_SOC_DAPM_DAC("Right DAC", NULL, ALC5623_PWR_MANAG_ADD2, 8, 0),
+SND_SOC_DAPM_MIXER("I2S Mix", SND_SOC_NOPM, 0, 0, NULL, 0),
 SND_SOC_DAPM_MIXER("AuxI Mix", SND_SOC_NOPM, 0, 0, NULL, 0),
 SND_SOC_DAPM_MIXER("Line Mix", SND_SOC_NOPM, 0, 0, NULL, 0),
-SND_SOC_DAPM_ADC("Left ADC", "Left HiFi Capture",
-	ALC5623_PWR_MANAG_ADD2, 7, 0),
-SND_SOC_DAPM_ADC("Right ADC", "Right HiFi Capture",
-	ALC5623_PWR_MANAG_ADD2, 6, 0),
+SND_SOC_DAPM_ADC("Left ADC", NULL, ALC5623_PWR_MANAG_ADD2, 7, 0),
+SND_SOC_DAPM_ADC("Right ADC", NULL, ALC5623_PWR_MANAG_ADD2, 6, 0),
 SND_SOC_DAPM_PGA("Left Headphone", ALC5623_PWR_MANAG_ADD3, 10, 0, NULL, 0),
 SND_SOC_DAPM_PGA("Right Headphone", ALC5623_PWR_MANAG_ADD3, 9, 0, NULL, 0),
 SND_SOC_DAPM_PGA("SpeakerOut", ALC5623_PWR_MANAG_ADD3, 12, 0, NULL, 0),
@@ -353,6 +359,10 @@ SND_SOC_DAPM_PGA("LineOut Amp", ALC5623_PWR_MANAG_ADD2, 15, 0, NULL, 0),
 };
 
 static const struct snd_soc_dapm_route intercon[] = {
+	/* I2S Audio Interface Input */
+	{"Left DAC", NULL,				"I2SINL"},
+	{"Right DAC", NULL,				"I2SINR"},
+
 	/* virtual mixer - mixes left & right channels */
 	{"I2S Mix", NULL,				"Left DAC"},
 	{"I2S Mix", NULL,				"Right DAC"},
@@ -451,6 +461,10 @@ static const struct snd_soc_dapm_route intercon[] = {
 
 	/* right ADC */
 	{"Right ADC", NULL,				"Right Capture Mix"},
+
+	/* I2S Audio Interface Output */
+	{"I2SOUTL", NULL,				"Left ADC"},
+	{"I2SOUTR", NULL,				"Right ADC"},
 
 	{"SpeakerOut N Mux", "RN/-R",			"SpeakerOut"},
 	{"SpeakerOut N Mux", "RP/+R",			"SpeakerOut"},
