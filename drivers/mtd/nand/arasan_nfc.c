@@ -880,7 +880,9 @@ static int anfc_probe(struct platform_device *pdev)
 	nand_chip->read_buf = anfc_read_buf;
 	nand_chip->write_buf = anfc_write_buf;
 	nand_chip->read_byte = anfc_read_byte;
-	nand_chip->options = NAND_BUSWIDTH_AUTO;
+	nand_chip->options = NAND_BUSWIDTH_AUTO
+			     | NAND_NO_SUBPAGE_WRITE
+			     | NAND_USE_BOUNCE_BUFFER;
 	nand_chip->bbt_options = NAND_BBT_USE_FLASH;
 	nand_chip->select_chip = anfc_select_chip;
 	mtd->size = nand_chip->chipsize;
