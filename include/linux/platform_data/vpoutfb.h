@@ -20,18 +20,12 @@
 /* Will not implement indexed color for now */
 #define VPOUTFB_FORMATS \
 { \
-	{ "r3g3b2", 8, {5, 3}, {2, 3}, {0, 2}, {0, 0}, \
-		DRM_FORMAT_RGB332, 0 }, \
-	{ "x4r4g4b4", 16, {8, 4}, {4, 4}, {0, 4}, {0, 0}, \
-		DRM_FORMAT_XRGB4444, 1 }, \
-	{ "x1r5g5b5", 16, {10, 5}, {5, 5}, {0, 5}, {0, 0}, \
-		DRM_FORMAT_XRGB1555, 2 }, \
-	{ "r5g6b5", 16, {11, 5}, {5, 6}, {0, 5}, {0, 0}, \
-		DRM_FORMAT_RGB565, 3 }, \
-	{ "r8g8b8", 24, {16, 8}, {8, 8}, {0, 8}, {0, 0}, \
-		DRM_FORMAT_RGB888, 5 }, \
-	{ "x8r8g8b8", 32, {16, 8}, {8, 8}, {0, 8}, {0, 0}, \
-		DRM_FORMAT_XRGB8888, 6 }, \
+	{ "r3g3b2", 8, {5, 3}, {2, 3}, {0, 2}, {0, 0}, 0 }, \
+	{ "x4r4g4b4", 16, {8, 4}, {4, 4}, {0, 4}, {0, 0}, 1 }, \
+	{ "x1r5g5b5", 16, {10, 5}, {5, 5}, {0, 5}, {0, 0}, 2 }, \
+	{ "r5g6b5", 16, {11, 5}, {5, 6}, {0, 5}, {0, 0}, 3 }, \
+	{ "r8g8b8", 24, {16, 8}, {8, 8}, {0, 8}, {0, 0}, 5 }, \
+	{ "x8r8g8b8", 32, {16, 8}, {8, 8}, {0, 8}, {0, 0}, 6 }, \
 }
 
 /*
@@ -49,7 +43,6 @@ struct vpoutfb_format {
 	struct fb_bitfield green;
 	struct fb_bitfield blue;
 	struct fb_bitfield transp;
-	u32 fourcc;
 	u8 hw_modenum;
 };
 
