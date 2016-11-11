@@ -158,7 +158,6 @@ static const struct anfc_ecc_matrix ecc_matrix[] = {
  * struct anfc - Defines the Arasan NAND flash driver instance
  * @chip:		NAND chip information structure.
  * @mtd:		MTD information structure.
- * @parts:		Pointer to the mtd_partition structure.
  * @dev:		Pointer to the device structure.
  * @base:		Virtual address of the NAND flash device.
  * @curr_cmd:		Current command issued.
@@ -181,7 +180,6 @@ static const struct anfc_ecc_matrix ecc_matrix[] = {
 struct anfc {
 	struct nand_chip chip;
 	struct mtd_info mtd;
-	struct mtd_partition *parts;
 	struct device *dev;
 
 	void __iomem *base;
@@ -885,7 +883,6 @@ static int anfc_probe(struct platform_device *pdev)
 			     | NAND_USE_BOUNCE_BUFFER;
 	nand_chip->bbt_options = NAND_BBT_USE_FLASH;
 	nand_chip->select_chip = anfc_select_chip;
-	mtd->size = nand_chip->chipsize;
 	nfc->dma = of_property_read_bool(pdev->dev.of_node,
 					 "arasan,has-mdma");
 	nfc->rdintrmask = 0;
