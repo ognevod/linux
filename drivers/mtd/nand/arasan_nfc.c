@@ -601,6 +601,11 @@ static int anfc_ecc_init(struct mtd_info *mtd,
 		dev_err(nfc->dev, "ECC scheme not supported");
 		return 1;
 	}
+
+	dev_info(nfc->dev, "Current ECC scheme: %d/%d\n",
+		 ecc_matrix[found].eccbits,
+		 ecc_matrix[found].codeword_size);
+
 	if (ecc_matrix[found].bch) {
 		switch (ecc_matrix[found].eccbits) {
 		case 12:
