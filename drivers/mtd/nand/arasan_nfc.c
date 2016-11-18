@@ -123,35 +123,34 @@ struct anfc_ecc_matrix {
 	u32 codeword_size;
 	u8 eccbits;
 	u8 bch;
-	u16 eccaddr;
 	u16 eccsize;
 };
 
 static const struct anfc_ecc_matrix ecc_matrix[] = {
-	{512,	512,	1,	0,	0x20D,	0x3},
-	{512,	512,	4,	1,	0x209,	0x7},
-	{512,	512,	8,	1,	0x203,	0xD},
+	{512,	512,	1,	0,	0x3},
+	{512,	512,	4,	1,	0x7},
+	{512,	512,	8,	1,	0xD},
 	/* 2K byte page */
-	{2048,	512,	1,	0,	0x834,	0xC},
-	{2048,	512,	4,	1,	0x826,	0x1A},
-	{2048,	512,	8,	1,	0x80c,	0x34},
-	{2048,	512,	12,	1,	0x822,	0x4E},
-	{2048,	512,	16,	1,	0x808,	0x68},
-	{2048,	1024,	24,	1,	0x81c,	0x54},
+	{2048,	512,	1,	0,	0xC},
+	{2048,	512,	4,	1,	0x1A},
+	{2048,	512,	8,	1,	0x34},
+	{2048,	512,	12,	1,	0x4E},
+	{2048,	512,	16,	1,	0x68},
+	{2048,	1024,	24,	1,	0x54},
 	/* 4K byte page */
-	{4096,	512,	1,	0,	0x1068,	0x18},
-	/* {4096,	512,	4,	1,	0x104c,	0x34}, */
-	{4096,	512,	8,	1,	0x1018,	0x68},
-	/* {4096,	512,	12,	1,	0x1044,	0x9C}, */
-	{4096,	512,	16,	1,	0x1010,	0xD0},
-	/* {4096,	1024,	24,	1,	0x1038,	0xA8}, */
+	{4096,	512,	1,	0,	0x18},
+	/* {4096,	512,	4,	1,	0x34}, */
+	{4096,	512,	8,	1,	0x68},
+	/* {4096,	512,	12,	1,	0x9C}, */
+	{4096,	512,	16,	1,	0xD0},
+	/* {4096,	1024,	24,	1,	0xA8}, */
 	/* 8K byte page */
-	{8192,	512,	1,	0,	0x20d0,	0x30},
-	/* {8192,	512,	4,	1,	0x2098,	0x68}, */
-	{8192,	512,	8,	1,	0x2030,	0xD0},
-	{8192,	512,	12,	1,	0x2088,	0x138},
-	{8192,	512,	16,	1,	0x2020,	0x1A0},
-	/* {8192,	1024,	24,	1,	0x2070,	0x150}, */
+	{8192,	512,	1,	0,	0x30},
+	/* {8192,	512,	4,	1,	0x68}, */
+	{8192,	512,	8,	1,	0xD0},
+	{8192,	512,	12,	1,	0x138},
+	{8192,	512,	16,	1,	0x1A0},
+	/* {8192,	1024,	24,	1,	0x150}, */
 };
 
 /**
@@ -575,7 +574,7 @@ static void anfc_readfifo(struct anfc *nfc, u32 prog, u32 size)
 static int anfc_ecc_init(struct mtd_info *mtd,
 			 struct nand_ecc_ctrl *ecc)
 {
-	u32 oob_index, i, regval, bchmode = 0;
+	u32 oob_index, i, regval, eccaddr, bchmode = 0;
 	struct nand_chip *nand_chip = mtd->priv;
 	struct anfc *nfc = container_of(mtd, struct anfc, mtd);
 	int found = -1;
@@ -629,8 +628,12 @@ static int anfc_ecc_init(struct mtd_info *mtd,
 			       nand_chip->ecc.steps;
 	nfc->ecclayout.eccbytes = ecc_matrix[found].eccsize;
 	nfc->bch = ecc_matrix[found].bch;
-	oob_index = mtd->oobsize -
-		    nfc->ecclayout.eccbytes;
+	if (mtd->oobsize < ecc_matrix[found].eccsize + 2) {
+		dev_err(nfc->dev, "OOB too small for ECC scheme\n");
+		return 1;
+	}
+	oob_index = mtd->oobsize - nfc->ecclayout.eccbytes;
+	eccaddr = mtd->writesize + oob_index;
 
 	for (i = 0; i < nand_chip->ecc.size; i++)
 		nfc->ecclayout.eccpos[i] = oob_index + i;
@@ -640,7 +643,7 @@ static int anfc_ecc_init(struct mtd_info *mtd,
 					 nfc->ecclayout.oobfree->offset;
 
 	nand_chip->ecc.layout = &(nfc->ecclayout);
-	regval = ecc_matrix[found].eccaddr |
+	regval = eccaddr |
 		(ecc_matrix[found].eccsize << ECC_SIZE_SHIFT) |
 		(ecc_matrix[found].bch << BCH_EN_SHIFT);
 	nfc->ecc_regval = regval;
