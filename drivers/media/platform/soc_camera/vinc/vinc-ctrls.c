@@ -599,6 +599,13 @@ static int vinc_g_ctrl(struct v4l2_ctrl *ctrl)
 
 static int vinc_try_ctrl(struct v4l2_ctrl *ctrl)
 {
+	struct soc_camera_device *icd = container_of(ctrl->handler,
+			struct soc_camera_device, ctrl_handler);
+	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
+	struct vinc_dev *priv = ici->priv;
+	const u8 devnum = icd->devnum;
+	struct vinc_stream * const stream = &priv->stream[devnum];
+	struct v4l2_crop crop2 = stream->crop2;
 	struct vinc_cluster_bp *bp;
 	struct vinc_cluster_gamma *gamma;
 	struct vinc_cluster_stat *stat;
@@ -660,12 +667,19 @@ static int vinc_try_ctrl(struct v4l2_ctrl *ctrl)
 			zone = stat->zone[i]->p_new.p;
 			if (!stat->zone[i]->is_new || !zone->enable)
 				continue;
+			/* Zone boundaries should not match with image
+			 * boundaries for sobel filter correct calculation.
+			 * See also rf#2159.
+			 */
 			if (zone->x_lt > MAX_WIDTH_HEIGHT ||
 					zone->y_lt > MAX_WIDTH_HEIGHT ||
-					zone->x_rb > MAX_WIDTH_HEIGHT ||
-					zone->y_rb > MAX_WIDTH_HEIGHT ||
 					zone->x_lt >= zone->x_rb ||
-					zone->y_lt >= zone->y_rb)
+					zone->y_lt >= zone->y_rb ||
+					zone->x_lt < 1 ||
+					zone->y_lt < 1 ||
+					zone->x_rb > (crop2.c.width - 2) ||
+					zone->y_rb > (crop2.c.height - 2)
+					)
 				return -ERANGE;
 		}
 		return 0;
