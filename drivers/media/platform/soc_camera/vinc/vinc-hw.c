@@ -265,15 +265,14 @@ void vinc_configure(struct vinc_dev *priv, struct soc_camera_device *icd)
 		   STREAM_INP_DECIM_FDECIM(stream->fdecim - 1));
 
 	zone = stream->cluster.stat.zone[3]->p_cur.p;
-	zone->enable = 1;
-	zone->x_lt = 0;
-	zone->y_lt = 0;
-	/* Workaround of hardware bug rf#2159: very big value in histogram.
-	 * For correct histogram calculation we need to exclude right column or
-	 * bottom row from statistics zone.
+	/* Zone boundaries should not match with image boundaries
+	 * for sobel filter correct calculation. See also rf#2159.
 	 */
+	zone->enable = 1;
+	zone->x_lt = 1;
+	zone->y_lt = 1;
 	zone->x_rb = stream->crop2.c.width - 2;
-	zone->y_rb = stream->crop2.c.height - 1;
+	zone->y_rb = stream->crop2.c.height - 2;
 	proc_cfg = vinc_read(priv, STREAM_PROC_CFG(devnum));
 	proc_cfg |= STREAM_PROC_CFG_STT_EN(stream->cluster.stat.enable->val);
 	vinc_write(priv, STREAM_PROC_CFG(devnum), proc_cfg);
