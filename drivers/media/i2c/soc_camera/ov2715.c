@@ -646,6 +646,9 @@ static int ov2715_s_power(struct v4l2_subdev *sd, int on)
 	ret = reg_write(client, REG_AEC_PK_MANUAL, val);
 	if (ret)
 		return ret;
+	/* Delay was decided empirically, datasheet contain no
+	 * information on it */
+	msleep(20);
 
 	/* Set gain */
 	ret = set_gain(client, priv->gain->cur.val);
