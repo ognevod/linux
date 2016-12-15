@@ -1087,6 +1087,9 @@ static int ov772x_set_params(struct ov772x_priv *priv,
 	ret = ov772x_mask_set(client, COM8, AG_AE_MASK | AWB_ON, val);
 	if (ret < 0)
 		goto ov772x_set_fmt_error;
+	/* Delay was decided empirically, datasheet contain no
+	 * information on it */
+	msleep(20);
 
 	/* Set gain */
 	ret = set_gain(client, priv->gain->cur.val);
