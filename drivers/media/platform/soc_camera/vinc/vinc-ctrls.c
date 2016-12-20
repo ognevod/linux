@@ -526,28 +526,38 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 			.id = V4L2_CID_EXPOSURE_AUTO
 		};
 		struct v4l2_control gain = {
-			.id =  V4L2_CID_AUTOGAIN,
-			.value = ctrl->val
+			.id =  V4L2_CID_AUTOGAIN
 		};
 		exposure = (struct vinc_cluster_exposure *)ctrl->cluster;
 
 		if (exposure->ae->is_new) {
-			if (exposure->ae->val == V4L2_EXPOSURE_MANUAL)
-				exp.value = V4L2_EXPOSURE_AUTO;
-			else
+			int activate_exp = 0, activate_gain = 0;
+
+			if (exposure->ae->val == V4L2_EXPOSURE_AUTO) {
 				exp.value = V4L2_EXPOSURE_MANUAL;
-			exposure->sensor_ae->cur.val = exposure->ae->val;
-			exposure->sensor_ag->cur.val = exposure->ae->val;
+				gain.value = 0;
+				exposure->sensor_ae->cur.val = 0;
+				exposure->sensor_ag->cur.val = 0;
+
+				ret = v4l2_subdev_s_ctrl(sd, &exp);
+				if (ret < 0)
+					return ret;
+				ret = v4l2_subdev_s_ctrl(sd, &gain);
+				if (ret < 0)
+					return ret;
+			}
+			activate_exp = (exposure->ae->val ==
+				V4L2_EXPOSURE_MANUAL &&
+				!exposure->sensor_ae->cur.val) ? 1 : 0;
+			activate_sensor_exp_gain(sd->ctrl_handler,
+						 0, 1, activate_exp);
+			activate_gain = (exposure->ae->val ==
+				V4L2_EXPOSURE_MANUAL &&
+				!exposure->sensor_ag->cur.val) ? 1 : 0;
+			activate_sensor_exp_gain(sd->ctrl_handler,
+						 2, 2, activate_gain);
+
 			cluster_activate_only(ctrl->cluster);
-
-			ret = v4l2_subdev_s_ctrl(sd, &exp);
-			if (ret < 0)
-				return ret;
-			ret = v4l2_subdev_s_ctrl(sd, &gain);
-			if (ret < 0)
-				return ret;
-
-			activate_sensor_exp_gain(sd->ctrl_handler, 0, 2, 0);
 			if (exposure->ae->val == V4L2_EXPOSURE_MANUAL &&
 			    !(stream->cluster.cc.awb->cur.val) &&
 			    !(stream->cluster.cc.ab->cur.val))
@@ -561,20 +571,21 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 				ret = v4l2_subdev_s_ctrl(sd, &exp);
 				if (ret < 0)
 					return ret;
-				activate_sensor_exp_gain(sd->ctrl_handler, 0,
-							 1, 1);
+				activate_sensor_exp_gain(sd->ctrl_handler, 0, 1,
+						!exposure->sensor_ae->val);
 			}
 			if (exposure->sensor_ag->is_new) {
 				gain.value = exposure->sensor_ag->val;
 				ret = v4l2_subdev_s_ctrl(sd, &gain);
 				if (ret < 0)
 					return ret;
-				activate_sensor_exp_gain(sd->ctrl_handler, 2,
-							 2, 1);
+				activate_sensor_exp_gain(sd->ctrl_handler, 2, 2,
+						!exposure->sensor_ag->val);
 			}
 		}
-		break;
 	}
+	break;
+
 	default:
 		return -EINVAL;
 	}
@@ -914,6 +925,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 		.step = 0,
 		.def = V4L2_EXPOSURE_MANUAL,
 		.qmenu = vinc_exposure_auto_menu,
+		.flags = V4L2_CTRL_FLAG_UPDATE
 	},
 	{
 		.ops = &ctrl_ops,
