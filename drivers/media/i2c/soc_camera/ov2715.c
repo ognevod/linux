@@ -707,6 +707,8 @@ static int ov2715_probe(struct i2c_client *client,
 
 	priv->crop_rect.left = 436;
 	priv->crop_rect.top = 10;
+	/* There is an error in datasheet: default total vertical size is 1104
+	 * but not 1560. */
 	priv->total_width = 2420;
 	priv->total_height = 1104;
 
