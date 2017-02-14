@@ -129,12 +129,39 @@ static void vpoutfb_hwreset(unsigned long data)
 	spin_unlock(&par->reglock);
 }
 
+static int vpoutfb_init_video_mode_var(struct fb_var_screeninfo *var)
+{
+	struct fb_videomode *mode;
+
+	for (mode = vpoutfb_guaranteed_modedb;
+	     mode->name != NULL; mode++) {
+		if (mode->xres == var->xres &&
+		    mode->yres == var->yres)
+			break;
+	}
+	/* Don't switch if not in modedb */
+	if (mode->name == NULL)
+		return -EINVAL;
+
+	var->xres = mode->xres;
+	var->xres_virtual = var->xres;
+	var->yres = mode->yres;
+	var->yres_virtual = var->yres;
+	var->pixclock = mode->pixclock;
+	var->left_margin = mode->left_margin;
+	var->right_margin = mode->right_margin;
+	var->upper_margin = mode->upper_margin;
+	var->lower_margin = mode->lower_margin;
+	var->hsync_len = mode->hsync_len;
+	var->vsync_len = mode->vsync_len;
+
+	return 0;
+}
+
 static int vpoutfb_check_var(struct fb_var_screeninfo *var,
 			     struct fb_info *info)
 {
-	struct fb_var_screeninfo *oldvar;
-	struct fb_videomode *modecaret;
-	oldvar = &info->var;
+	struct fb_var_screeninfo *oldvar = &info->var;
 
 	/* SDL Applications zero out the var.<color> fields.
 	 * In order for them not to crash, we ignore changes to
@@ -152,28 +179,9 @@ static int vpoutfb_check_var(struct fb_var_screeninfo *var,
 	var->green = oldvar->green;
 	var->blue = oldvar->blue;
 
-	/* While EDID reading is not implemented, just check via modedb */
-	/* When it is implemented, should check for buffer size violation */
-	for (modecaret = vpoutfb_guaranteed_modedb;
-	     modecaret->name != NULL; modecaret++) {
-		if (modecaret->xres == var->xres &&
-		    modecaret->yres == var->yres)
-			break;
-	}
-	/* Don't switch if not in modedb */
-	if (modecaret->name == NULL)
+	if (var->xres > 4095 || var->yres > 4095)
 		return -EINVAL;
-	var->xres = modecaret->xres;
-	var->xres_virtual = var->xres;
-	var->yres = modecaret->yres;
-	var->yres_virtual = var->yres;
-	var->pixclock = modecaret->pixclock;
-	var->left_margin = modecaret->left_margin;
-	var->right_margin = modecaret->right_margin;
-	var->upper_margin = modecaret->upper_margin;
-	var->lower_margin = modecaret->lower_margin;
-	var->hsync_len = modecaret->hsync_len;
-	var->vsync_len = modecaret->vsync_len;
+
 	return 0;
 }
 
@@ -597,6 +605,14 @@ static int vpoutfb_probe(struct platform_device *pdev)
 	info->var.green = pdata.format->green;
 	info->var.blue = pdata.format->blue;
 	info->var.transp = pdata.format->transp;
+
+	ret = vpoutfb_init_video_mode_var(&info->var);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "Unable to find default video mode: %d\n",
+			ret);
+		goto error_cleanup;
+	}
+
 	par->color_fmt = pdata.format;
 
 	spin_lock_init(&par->reglock);
@@ -612,7 +628,6 @@ static int vpoutfb_probe(struct platform_device *pdev)
 	info->fbops = &vpoutfb_ops;
 	info->flags = FBINFO_DEFAULT | FBINFO_MISC_FIRMWARE;
 	info->screen_base = par->mem_virt;
-	vpoutfb_check_var(&info->var, info);
 
 	info->pseudo_palette = par->palette;
 
@@ -685,6 +700,7 @@ module_platform_driver(vpoutfb_driver);
 
 MODULE_AUTHOR("Oleg Kitain <okitain@elvees.com>");
 MODULE_AUTHOR("Anton Leontiev <aleontiev@elvees.com>");
+MODULE_AUTHOR("Alexander Barunin <abarunin@elvees.com>");
 MODULE_DESCRIPTION("Elvees VPOUT framebuffer driver");
 MODULE_LICENSE("GPL v2");
 MODULE_SOFTDEP("pre: ump");
