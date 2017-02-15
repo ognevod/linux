@@ -2,6 +2,7 @@
  * Elvees VPOUT framebuffer driver
  *
  * Copyright 2016, Elvees NeoTek JSC
+ * Copyright 2017 RnD Center "ELVEES", JSC
  *
  * based on simplefb, which was:
  * Copyright 2013, Stephen Warren
@@ -28,6 +29,10 @@
 #include <linux/platform_device.h>
 #include <linux/platform_data/vpoutfb.h>
 #include <linux/spinlock.h>
+#include <video/display_timing.h>
+#include <video/of_display_timing.h>
+#include <video/of_videomode.h>
+#include <video/videomode.h>
 
 #include <uapi/linux/vpoutfb.h>
 
@@ -65,6 +70,10 @@
 #define MAX_BUFSIZE (1920 * 1080 * 4)
 #define CLEAR_MSEC 40
 
+static const struct fb_videomode default_videomode = {
+	"1280x720p@59.94", 0, 1280, 720, 13890, 220, 110, 20, 5, 40, 5, 0,
+	FB_VMODE_NONINTERLACED, 0};
+
 static struct fb_fix_screeninfo vpoutfb_fix = {
 	.id		= "vpout",
 	.type		= FB_TYPE_PACKED_PIXELS,
@@ -87,23 +96,6 @@ static inline u32 hz_to_ps(unsigned int rate)
 	rate /= 1000000;
 	return ps_in_us / rate;
 }
-
-static struct fb_videomode vpoutfb_guaranteed_modedb[] = {
-	{"720p@59.94", 0, 1280, 720, 13890, 220, 110, 20, 5, 40, 5, 0,
-		FB_VMODE_NONINTERLACED, 0}, /* Real: 58.1 FPS */
-	{"1080p@59.94", 0, 1920, 1080, 6945, 148, 88, 36, 4, 44, 5, 0,
-		FB_VMODE_NONINTERLACED, 0}, /* Real: 58.1 FPS */
-	{"640x480@60", 0, 640, 480, 39355, 48, 16, 33, 10, 96, 2, 0,
-		FB_VMODE_NONINTERLACED, 0}, /* Real: 60.5 FPS */
-	{"480p@59.94", 0, 720, 480, 37040, 60, 16, 30, 9, 62, 6, 0,
-		FB_VMODE_NONINTERLACED, 0}, /* Real: 59.94 FPS */
-	{"800x600@60", 0, 800, 600, 27780, 128, 24, 22, 01, 72, 2, 0,
-		FB_VMODE_NONINTERLACED, 0}, /* Real: 56.2 FPS */
-	{"1024x768@60", 0, 1024, 768, 16205, 168, 8, 29, 3, 144, 6, 0,
-		FB_VMODE_NONINTERLACED, 0}, /* Real: 57 FPS */
-	{"1366x768@60", 0, 1366, 768, 13890, 120, 10, 14, 3, 32, 5, 0,
-		FB_VMODE_NONINTERLACED, 0}, /* Real: 59.6 FPS */
-};
 
 static void vpoutfb_hwreset(unsigned long data)
 {
@@ -129,33 +121,25 @@ static void vpoutfb_hwreset(unsigned long data)
 	spin_unlock(&par->reglock);
 }
 
-static int vpoutfb_init_video_mode_var(struct fb_var_screeninfo *var)
+static void vpoutfb_set_default_var(struct fb_info *info)
 {
-	struct fb_videomode *mode;
+	info->var = vpoutfb_var;
 
-	for (mode = vpoutfb_guaranteed_modedb;
-	     mode->name != NULL; mode++) {
-		if (mode->xres == var->xres &&
-		    mode->yres == var->yres)
-			break;
-	}
-	/* Don't switch if not in modedb */
-	if (mode->name == NULL)
-		return -EINVAL;
+	info->var.bits_per_pixel = 32;
 
-	var->xres = mode->xres;
-	var->xres_virtual = var->xres;
-	var->yres = mode->yres;
-	var->yres_virtual = var->yres;
-	var->pixclock = mode->pixclock;
-	var->left_margin = mode->left_margin;
-	var->right_margin = mode->right_margin;
-	var->upper_margin = mode->upper_margin;
-	var->lower_margin = mode->lower_margin;
-	var->hsync_len = mode->hsync_len;
-	var->vsync_len = mode->vsync_len;
+	info->var.red.offset = 16;
+	info->var.red.length = 8;
 
-	return 0;
+	info->var.green.offset = 8;
+	info->var.green.length = 8;
+
+	info->var.blue.offset = 0;
+	info->var.blue.length = 8;
+
+	info->var.transp.offset = 0;
+	info->var.transp.length = 0;
+
+	fb_videomode_to_var(&info->var, &default_videomode);
 }
 
 static int vpoutfb_check_var(struct fb_var_screeninfo *var,
@@ -373,24 +357,13 @@ static struct vpoutfb_format vpoutfb_formats[] = VPOUTFB_FORMATS;
 
 
 static int vpoutfb_parse_dt(struct platform_device *pdev,
-			   struct vpoutfb_platform_data *pdata)
+			    struct vpoutfb_platform_data *pdata)
 {
 	struct device_node *np = pdev->dev.of_node;
 	int ret;
 	const char *format;
 	int i;
-
-	ret = of_property_read_u32(np, "width", &pdata->width);
-	if (ret) {
-		dev_err(&pdev->dev, "Can't parse width property\n");
-		return ret;
-	}
-
-	ret = of_property_read_u32(np, "height", &pdata->height);
-	if (ret) {
-		dev_err(&pdev->dev, "Can't parse height property\n");
-		return ret;
-	}
+	struct videomode vm;
 
 	ret = of_property_read_string(np, "format", &format);
 	if (ret) {
@@ -418,7 +391,6 @@ static int vpoutfb_parse_dt(struct platform_device *pdev,
 				      &pdata->output_name);
 	if (ret) {
 		dev_err(&pdev->dev, "Can't parse output's compatibility\n");
-		return ret;
 	}
 	return 0;
 }
@@ -539,6 +511,8 @@ static int vpoutfb_probe(struct platform_device *pdev)
 	struct resource *devres = NULL;
 	struct vpoutfb_par *par;
 
+	pdata.output_name = NULL;
+
 	if (fb_get_options("vpoutfb", NULL))
 		return -ENODEV;
 
@@ -592,25 +566,26 @@ static int vpoutfb_probe(struct platform_device *pdev)
 	info->fix = vpoutfb_fix;
 	info->fix.smem_start = par->mem_phys;
 	info->fix.smem_len = par->mem_size;
-	info->fix.line_length = pdata.width *
-		pdata.format->bits_per_pixel / 8;
 
 	info->var = vpoutfb_var;
-	info->var.xres = pdata.width;
-	info->var.yres = pdata.height;
-	info->var.xres_virtual = pdata.width;
-	info->var.yres_virtual = pdata.height;
 	info->var.bits_per_pixel = pdata.format->bits_per_pixel;
 	info->var.red = pdata.format->red;
 	info->var.green = pdata.format->green;
 	info->var.blue = pdata.format->blue;
 	info->var.transp = pdata.format->transp;
 
-	ret = vpoutfb_init_video_mode_var(&info->var);
-	if (ret < 0) {
-		dev_err(&pdev->dev, "Unable to find default video mode: %d\n",
-			ret);
-		goto error_cleanup;
+	info->mode = kzalloc(sizeof(struct fb_videomode), GFP_KERNEL);
+
+	ret = of_get_fb_videomode(pdata.output_node,
+				  info->mode,
+				  OF_USE_NATIVE_MODE);
+	if (ret)
+		vpoutfb_set_default_var(info);
+
+	ret = vpoutfb_check_var(&info->var, info);
+	if (ret) {
+		dev_warn(&pdev->dev, "Incorrect videomode, resetting to default\n");
+		vpoutfb_set_default_var(info);
 	}
 
 	par->color_fmt = pdata.format;
@@ -631,8 +606,10 @@ static int vpoutfb_probe(struct platform_device *pdev)
 
 	info->pseudo_palette = par->palette;
 
-	if (!strcmp(pdata.output_name, "ite,it66121"))
+	if (pdata.output_name != NULL &&
+	    !strcmp(pdata.output_name, "ite,it66121")) {
 		it66121_probe(&par->hdmidata, pdata.output_node);
+	}
 
 	ret = vpoutfb_set_par(info);
 	if (ret < 0) {
