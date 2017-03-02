@@ -113,7 +113,7 @@ static void write_trailing_bits(struct bitstream *bs)
 	BUG_ON(bs->freebits != 8);
 }
 
-void avico_bitstream_init(struct avico_ctx *ctx, void *ptr, unsigned size)
+void avico_bitstream_init(struct avico_ctx *ctx, void *ptr, unsigned int size)
 {
 	struct bitstream *const bs = &ctx->bs;
 
@@ -322,7 +322,7 @@ void avico_bitstream_write_slice_header(struct avico_ctx *ctx)
 }
 
 void avico_bitstream_get64(struct avico_ctx *ctx, uint32_t data[2],
-			   unsigned bits[2])
+			   unsigned int bits[2])
 {
 	struct bitstream *bs = &ctx->bs;
 	uint8_t *p = (uint8_t *)((uintptr_t)bs->p & ~0x7);

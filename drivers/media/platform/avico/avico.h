@@ -401,7 +401,6 @@ union vdma_cfg {
 	};
 };
 
-
 struct avico_dev {
 	struct v4l2_device v4l2_dev;
 	struct video_device vfd;
@@ -538,13 +537,13 @@ struct avico_ctx {
 	int dbf;
 	enum frame_type frame_type;
 	bool idr, outon, capon;
-	unsigned frame, maxframe;
-	unsigned i_period;
-	unsigned bitstream_size;
+	unsigned int frame, maxframe;
+	unsigned int i_period;
+	unsigned int bitstream_size;
 
 	struct bitstream bs;
 
-	unsigned id; /* Hardware thread ID */
+	unsigned int id; /* Hardware thread ID */
 	void __iomem *thread;
 	void *vref;
 	dma_addr_t dmaref, dmainp, dmaout;
@@ -556,10 +555,10 @@ struct avico_ctx {
 	uint16_t dma_cbs_len;
 
 	enum v4l2_colorspace colorspace;
-	unsigned width, height;
-	unsigned capfmt, outfmt;
-	unsigned outsize, capsize, refsize;
-	unsigned outseq, capseq;
+	unsigned int width, height;
+	unsigned int capfmt, outfmt;
+	unsigned int outsize, capsize, refsize;
+	unsigned int outseq, capseq;
 };
 
 #define MAX_RBSP_LENGTH 0x0ffffc

@@ -434,7 +434,7 @@ static void avico_ec_configure(struct avico_ctx *const ctx)
 {
 	int i, ecd_stuff_pos;
 	uint32_t data[2];
-	unsigned bits[2];
+	unsigned int bits[2];
 	union ecd_task task = { .val = 0 };
 
 	avico_bitstream_get64(ctx, data, bits);
@@ -939,7 +939,7 @@ static int avico_s_fmt_output(struct file *file, void *priv,
 			      struct v4l2_format *f)
 {
 	struct avico_ctx *ctx = container_of(priv, struct avico_ctx, fh);
-	unsigned fmt = 0;
+	unsigned int fmt = 0;
 
 	ctx->width = round_up(f->fmt.pix.width, 16);
 	ctx->height = round_up(f->fmt.pix.height, 16);
@@ -962,7 +962,7 @@ static int avico_s_fmt_capture(struct file *file, void *priv,
 			       struct v4l2_format *f)
 {
 	struct avico_ctx *ctx = container_of(priv, struct avico_ctx, fh);
-	unsigned fmt = 0;
+	unsigned int fmt = 0;
 
 	/* Ignore width & height. They are only set for output end. */
 
@@ -1253,11 +1253,11 @@ static void avico_ec_init(struct avico_ctx *ctx)
 	} while (ecd_task.ready == 0);
 }
 
-static int avico_start_streaming(struct vb2_queue *vq, unsigned count)
+static int avico_start_streaming(struct vb2_queue *vq, unsigned int count)
 {
 	struct avico_ctx *ctx = vb2_get_drv_priv(vq);
-	unsigned reserve;
-	unsigned channel;
+	unsigned int reserve;
+	unsigned int channel;
 
 	switch (vq->type) {
 	case V4L2_BUF_TYPE_VIDEO_OUTPUT:

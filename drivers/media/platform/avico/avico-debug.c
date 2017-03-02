@@ -82,7 +82,7 @@ void avico_regs_vdma_channel_dump(void __iomem *const base)
 	dump("vdma.channel.cfg   ", base, AVICO_VDMA_CHANNEL_CFG);
 }
 
-void avico_regs_vdma_dump(void __iomem *const base, unsigned channel)
+void avico_regs_vdma_dump(void __iomem *const base, unsigned int channel)
 {
 	avico_regs_vdma_sys_dump(base + AVICO_VDMA_SYS_BASE);
 	avico_regs_vdma_channel_dump(base + AVICO_VDMA_CHANNEL_BASE(channel++));
@@ -174,7 +174,7 @@ void avico_regs_ec_dump(void __iomem *const base)
 	avico_regs_ec_taskctrc_dump(base + AVICO_EC_TASKCTRC);
 }
 
-void avico_regs_dump(void __iomem *const base, unsigned const thread)
+void avico_regs_dump(void __iomem *const base, const unsigned int thread)
 {
 	avico_regs_ctrl_dump(base + AVICO_CTRL_BASE);
 	avico_regs_thread_dump(base + AVICO_THREAD_BASE(thread));
