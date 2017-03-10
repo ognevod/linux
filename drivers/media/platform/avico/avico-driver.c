@@ -1134,7 +1134,6 @@ static int avico_queue_setup(struct vb2_queue *vq,
 		sizes[0] = ctx->capsize;
 		break;
 	default:
-		BUG();
 		return -EINVAL;
 	}
 
@@ -1167,7 +1166,6 @@ static int avico_buf_prepare(struct vb2_buffer *vb)
 		size = ctx->capsize;
 		break;
 	default:
-		BUG();
 		return -EINVAL;
 	}
 
@@ -1269,7 +1267,6 @@ static int avico_start_streaming(struct vb2_queue *vq, unsigned int count)
 		ctx->capon = 1;
 		break;
 	default:
-		BUG();
 		return -EINVAL;
 	}
 
