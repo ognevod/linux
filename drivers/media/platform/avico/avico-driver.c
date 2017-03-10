@@ -540,13 +540,13 @@ static void avico_run(void *priv)
 	dst = v4l2_m2m_next_dst_buf(ctx->fh.m2m_ctx);
 
 	out = vb2_plane_vaddr(dst, 0);
-	BUG_ON(out == NULL);
+	WARN_ON(out == NULL);
 
 	ctx->dmainp = vb2_dma_contig_plane_dma_addr(src, 0);
 	ctx->dmaout = vb2_dma_contig_plane_dma_addr(dst, 0);
 
-	BUG_ON(ctx->dmainp == 0);
-	BUG_ON(ctx->dmaout == 0);
+	WARN_ON(ctx->dmainp == 0);
+	WARN_ON(ctx->dmaout == 0);
 
 	/* Enable stop by SMBPOS */
 	if (ctx->mby > 1) {
@@ -643,7 +643,7 @@ static void avico_dma_out_callback(void *data)
 
 	encoded = avico_read(ctx, AVICO_EC_BASE(ctx->id) + AVICO_EC_PACKER +
 				  AVICO_PACKER_CBS_TOTAL_LEN);
-	BUG_ON(encoded % 8 != 0);
+	WARN_ON(encoded % 8 != 0);
 	ctx->bs.p += encoded / 8;
 	vb2_set_plane_payload(dst, 0, ctx->bs.p - ctx->bs.start);
 
@@ -909,7 +909,8 @@ static int avico_g_fmt_output(struct file *file, void *priv,
 		f->fmt.pix.sizeimage = ctx->outsize;
 		break;
 	default:
-		BUG();
+		/* We don't support other pixel formats */
+		__WARN();
 	}
 	f->fmt.pix.colorspace = V4L2_COLORSPACE_REC709;
 	f->fmt.pix.flags = output_formats[ctx->outfmt].flags;

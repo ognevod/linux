@@ -21,9 +21,9 @@ static void write_delimiter(struct bitstream *bs)
 {
 	const uint8_t delimiter[4] = { 0, 0, 0, 1 };
 
-	BUG_ON(bs == NULL);
-	BUG_ON(bs->p == NULL);
-	BUG_ON(bs->freebits != 8);
+	WARN_ON(bs == NULL);
+	WARN_ON(bs->p == NULL);
+	WARN_ON(bs->freebits != 8);
 
 	if (bs->p + 4 > bs->end) {
 		bs->p = bs->end + 1;
@@ -43,8 +43,8 @@ static void write_delimiter(struct bitstream *bs)
  * 32-bit buffer is more complex for bit-stuffing */
 static void writeu(struct bitstream *bs, uint8_t bits, uint32_t value)
 {
-	BUG_ON(bs == NULL);
-	BUG_ON(bs->p == NULL);
+	WARN_ON(bs == NULL);
+	WARN_ON(bs->p == NULL);
 
 	while (bits) {
 		unsigned const writebits = min(bs->freebits, bits);
@@ -84,9 +84,9 @@ static void writeue(struct bitstream *bs, uint32_t value)
 {
 	unsigned const bits = 32 - __builtin_clz(value + 1);
 
-	BUG_ON(bs == NULL);
-	BUG_ON(bs->p == NULL);
-	BUG_ON(value == U32_MAX);
+	WARN_ON(bs == NULL);
+	WARN_ON(bs->p == NULL);
+	WARN_ON(value == U32_MAX);
 
 	writeu(bs, bits * 2 - 1, value + 1);
 }
@@ -95,22 +95,22 @@ static void writese(struct bitstream *bs, int32_t value)
 {
 	uint32_t const uvalue = value <= 0 ? (-2 * value) : (2 * value - 1);
 
-	BUG_ON(bs == NULL);
-	BUG_ON(bs->p == NULL);
+	WARN_ON(bs == NULL);
+	WARN_ON(bs->p == NULL);
 
 	writeue(bs, uvalue);
 }
 
 static void write_trailing_bits(struct bitstream *bs)
 {
-	BUG_ON(bs == NULL);
-	BUG_ON(bs->p == NULL);
+	WARN_ON(bs == NULL);
+	WARN_ON(bs->p == NULL);
 
 	writeu(bs, 1, 1);
 	if (bs->freebits != 8)
 		writeu(bs, bs->freebits, 0);
 
-	BUG_ON(bs->freebits != 8);
+	WARN_ON(bs->freebits != 8);
 }
 
 void avico_bitstream_init(struct avico_ctx *ctx, void *ptr, unsigned int size)
@@ -279,12 +279,12 @@ void avico_bitstream_write_slice_header(struct avico_ctx *ctx)
 {
 	struct bitstream *bs;
 
-	BUG_ON(ctx == NULL);
+	WARN_ON(ctx == NULL);
 	bs = &ctx->bs;
 
-	BUG_ON(bs == NULL);
-	BUG_ON(bs->p == NULL);
-	BUG_ON(bs->freebits != 8);
+	WARN_ON(bs == NULL);
+	WARN_ON(bs->p == NULL);
+	WARN_ON(bs->freebits != 8);
 
 	write_delimiter(bs);
 	writeu(bs, 1, 0); /* forbidden_zero_bit */
