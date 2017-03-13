@@ -40,7 +40,6 @@
 
 MODULE_DESCRIPTION("Avico (a.k.a. VELcore-01) driver");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("1.0");
 MODULE_AUTHOR("Anton Leontiev <aleontiev@elvees.com>");
 
 #define MODULE_NAME "avico"
