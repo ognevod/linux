@@ -38,10 +38,6 @@
 #include "avico-bitstream.h"
 #include "avico-debug.h"
 
-MODULE_DESCRIPTION("Avico (a.k.a. VELcore-01) driver");
-MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Anton Leontiev <aleontiev@elvees.com>");
-
 #define MODULE_NAME "avico"
 
 /* Per queue */
@@ -1716,3 +1712,7 @@ static struct platform_driver avico_driver = {
 };
 
 module_platform_driver(avico_driver);
+
+MODULE_AUTHOR("Anton Leontiev <aleontiev@elvees.com>");
+MODULE_DESCRIPTION("Avico (a.k.a. VELcore-01) driver");
+MODULE_LICENSE("GPL");
