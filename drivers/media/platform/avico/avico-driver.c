@@ -1397,7 +1397,7 @@ static int avico_open(struct file *file)
 	 * 3. Setup controls */
 
 	struct avico_dev *dev = video_drvdata(file);
-	struct avico_ctx *ctx = NULL;
+	struct avico_ctx *ctx;
 	int rc = 0;
 	int i;
 
