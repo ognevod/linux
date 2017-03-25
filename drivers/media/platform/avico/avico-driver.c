@@ -1147,14 +1147,15 @@ static int avico_queue_setup(struct vb2_queue *vq,
 static int avico_buf_prepare(struct vb2_buffer *vb)
 {
 	struct avico_ctx *ctx = vb2_get_drv_priv(vb->vb2_queue);
+	struct v4l2_buffer *const b = &vb->v4l2_buf;
 	unsigned int size;
 
-	if (vb->v4l2_buf.field == V4L2_FIELD_ANY)
-		vb->v4l2_buf.field = V4L2_FIELD_NONE;
-	if (vb->v4l2_buf.field != V4L2_FIELD_NONE)
+	if (b->field == V4L2_FIELD_ANY)
+		b->field = V4L2_FIELD_NONE;
+	if (b->field != V4L2_FIELD_NONE)
 		return -EINVAL;
 
-	switch (vb->vb2_queue->type) {
+	switch (b->type) {
 	case V4L2_BUF_TYPE_VIDEO_OUTPUT:
 		size = ctx->outsize;
 		break;
