@@ -383,8 +383,8 @@ static int vpoutfb_parse_dt(struct platform_device *pdev,
 	}
 	pdata->output_node = of_parse_phandle(np, "output", 0);
 	if (!pdata->output_node) {
-		dev_err(&pdev->dev, "Can't parse output property\n");
-		return -EINVAL;
+		pr_info("output property doesn't exist, applying default resolution");
+		return 0;
 	}
 	ret = of_property_read_string(pdata->output_node,
 				      "compatible",
