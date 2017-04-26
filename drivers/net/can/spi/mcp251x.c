@@ -215,7 +215,7 @@
 
 #define TX_ECHO_SKB_MAX	1
 
-#define MCP251X_OST_DELAY_MS	(5)
+#define MCP251X_OST_DELAY_MS	(10)
 
 #define DEVICE_NAME "mcp251x"
 
