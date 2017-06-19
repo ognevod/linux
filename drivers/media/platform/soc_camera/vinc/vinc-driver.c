@@ -1,5 +1,6 @@
 /*
  * Copyright 2015 ELVEES NeoTek CJSC
+ * Copyright 2017 RnD Center "ELVEES", JSC
  *
  * Based on V4L2 Driver for SuperH Mobile CEU
  * interface - "sh_mobile_ceu_camera.c"
@@ -1045,7 +1046,8 @@ static int vinc_probe(struct platform_device *pdev)
 	struct device_node *np = pdev->dev.of_node;
 	int err;
 	u32 id;
-	u32 cmos_ctr;
+	u32 cmos_ctr = 0, pclkdiv = 0, pclkdiv_scale = 1;
+	bool fsync;
 	int i;
 
 	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
@@ -1124,13 +1126,43 @@ static int vinc_probe(struct platform_device *pdev)
 		tasklet_init(&priv->stream[i].stat_tasklet, vinc_stat_tasklet,
 			     (unsigned long)&priv->stream[i]);
 
-	cmos_ctr = CMOS_CTR_PCLK_EN | CMOS_CTR_PCLK_SRC(0) |
-			CMOS_CTR_CLK_DIV(4) | CMOS_CTR_FSYNC_EN;
+	of_property_read_u32(np, "elvees,pixel-clock-divider", &pclkdiv);
+	fsync = of_property_read_bool(np, "elvees,pixel-clock-over-fsync");
+
+	if (fsync) {
+		/*
+		 * When pixel clock is obtained from FSYNCO, it is always
+		 * additionally divided by 2. Therefore the value of PCLK
+		 * divider should be 2 times smaller.
+		 */
+		pclkdiv /= 2;
+		pclkdiv_scale *= 2;
+	}
+
+	if (pclkdiv > PCLKDIV_MAX)
+		pclkdiv = PCLKDIV_MAX;
+	else if (pclkdiv != 1)
+		pclkdiv = round_down(pclkdiv, 2);
+
+	if (pclkdiv != 0) {
+		cmos_ctr |= CMOS_CTR_PCLK_EN | CMOS_CTR_PCLK_SRC(0) |
+			    CMOS_CTR_CLK_DIV(pclkdiv / 2);
+
+		if (fsync) {
+			cmos_ctr |= CMOS_CTR_FSYNC_EN;
+			vinc_write(priv, CMOS_TIMER_HIGH(0), 1);
+			vinc_write(priv, CMOS_TIMER_LOW(0), 1);
+		}
+
+		dev_info(&pdev->dev, "pixel clock divider is set to %u\n",
+			 pclkdiv * pclkdiv_scale);
+	} else
+		dev_info(&pdev->dev, "pixel clock generation is disabled\n");
+
 	if (priv->reset_active == 0)
 		cmos_ctr |= CMOS_CTR_RESET;
+
 	vinc_write(priv, CMOS_CTR(0), cmos_ctr);
-	vinc_write(priv, CMOS_TIMER_HIGH(0), 1);
-	vinc_write(priv, CMOS_TIMER_LOW(0), 1);
 
 	/* GLOBAL_ENABLE need for generate clocks to sensor */
 	vinc_write(priv, AXI_MASTER_CFG, AXI_MASTER_CFG_MAX_BURST(2) |
