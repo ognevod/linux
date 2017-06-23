@@ -579,7 +579,9 @@ static int vpoutfb_probe(struct platform_device *pdev)
 	ret = of_get_fb_videomode(pdata.output_node,
 				  info->mode,
 				  OF_USE_NATIVE_MODE);
-	if (ret)
+	if (!ret)
+		fb_videomode_to_var(&info->var, info->mode);
+	else
 		vpoutfb_set_default_var(info);
 
 	ret = vpoutfb_check_var(&info->var, info);
