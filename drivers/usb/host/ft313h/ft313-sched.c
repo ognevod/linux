@@ -2,6 +2,7 @@
  * FT313 transaction schedue support.
  *
  * Copyright (C) 2011 Chang Yang <chang.yang@ftdichip.com>
+ * Copyright 2017 RnD Center "ELVEES", JSC
  *
  * This code is *strongly* based on EHCI-HCD code by David Brownell since
  * the chip is a quasi-EHCI compatible.
@@ -568,7 +569,6 @@ static int qh_link_periodic (struct ft313_hcd *ft313, struct ehci_qh *qh)
 {
 	unsigned	i;
 	unsigned	period = qh->period;
-	int		hw_p_ft313;
 
 	FUN_ENTRY();
 
@@ -586,7 +586,7 @@ static int qh_link_periodic (struct ft313_hcd *ft313, struct ehci_qh *qh)
 	for (i = qh->start; i < ft313->periodic_size; i += period) {
 		union ehci_shadow	*prev = &ft313->pshadow[i];
 		__hc32			*hw_p = &ft313->periodic[i];
-					 hw_p_ft313 = i * sizeof(__le32);
+		int			hw_p_ft313 = i * sizeof(__le32);
 		union ehci_shadow	here = *prev;
 		__hc32			type = 0;
 
@@ -611,7 +611,7 @@ static int qh_link_periodic (struct ft313_hcd *ft313, struct ehci_qh *qh)
 				break;
 			prev = &here.qh->qh_next;
 			hw_p = &here.qh->hw->hw_next; // hw_p no longer pointer to periodic list item!
-			hw_p_ft313 = &here.qh->qh_ft313 + offsetof(struct ehci_qh_hw, hw_next);
+			hw_p_ft313 = here.qh->qh_ft313 + offsetof(struct ehci_qh_hw, hw_next);
 			here = *prev;
 		}
 		/* link in this qh, unless some earlier pass did that */
@@ -2968,7 +2968,7 @@ restart:
 					 */
 					ERROR_MSG("Wrong Execution, FSTN not supported\n");
 					if (q.fstn->hw_prev != EHCI_LIST_END(ft313)) {
-						dbg ("ignoring completions from FSTNs");
+						DEBUG_MSG("ignoring completions from FSTNs");
 					}
 					type = Q_NEXT_TYPE(ft313, q.fstn->hw_next);
 					q = q.fstn->fstn_next;

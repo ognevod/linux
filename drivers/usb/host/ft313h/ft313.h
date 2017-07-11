@@ -4,7 +4,7 @@
 //#define LOG_ON
 //#define DEBUG_MSG_ON
 
-#define DMA_POOL_WORKAROUND
+//#define DMA_POOL_WORKAROUND
 //#define TI_PLAT_WORKAROUND
 #define DISABLE_HCD_DMA
 
@@ -129,9 +129,7 @@ struct ft313_hcd {
 	const char		*wakeup_wq_name;
 	struct work_struct	wakeup_work;
 
-	dev_t			ft313_cdev_major;
-	unsigned int		ft313_cdev_count;
-	struct cdev		ft313_cdev;
+	struct clk		*clk;
 };
 
 static inline struct ft313_hcd *hcd_to_ft313 (struct usb_hcd *hcd)
@@ -139,7 +137,7 @@ static inline struct ft313_hcd *hcd_to_ft313 (struct usb_hcd *hcd)
 	return (struct ft313_hcd *) (hcd->hcd_priv);
 }
 
-static inline struct usb_hcd *ft313_to_hcd (struct ft313_hcd *ft313)
+static inline struct usb_hcd *ft313_to_hcd (const struct ft313_hcd *ft313)
 {
 	return container_of ((void *) ft313, struct usb_hcd, hcd_priv);
 }

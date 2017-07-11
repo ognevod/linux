@@ -2,6 +2,7 @@
  * FT313 HCD qTD, qHead, iTD, siTD management.
  *
  * Copyright (C) 2011 Chang Yang <chang.yang@ftdichip.com>
+ * Copyright 2017 RnD Center "ELVEES", JSC
  *
  * This code is *strongly* based on EHCI-HCD code by David Brownell since
  * the chip is a quasi-EHCI compatible.
@@ -174,9 +175,9 @@ qh_update (struct ft313_hcd *ft313, struct ehci_qh *qh, struct ehci_qtd *qtd)
 static void
 qh_refresh (struct ft313_hcd *ft313, struct ehci_qh *qh)
 {
-	FUN_ENTRY();
-
 	struct ehci_qtd *qtd;
+
+	FUN_ENTRY();
 
 	if (list_empty (&qh->qtd_list)) {
 		qtd = qh->dummy;
@@ -404,8 +405,6 @@ static int qh_schedule (struct ft313_hcd *ft313, struct ehci_qh *qh);
 static unsigned
 qh_completions (struct ft313_hcd *ft313, struct ehci_qh *qh)
 {
-	FUN_ENTRY();
-
 	struct ehci_qtd		*last, *end = qh->dummy;
 	struct list_head	*entry, *tmp;
 	int			last_status;
@@ -418,6 +417,8 @@ qh_completions (struct ft313_hcd *ft313, struct ehci_qh *qh)
 	int			last_seg_still_active = 0;
 	int			got_short_packet = 0;
 	int			qh_in_unlink = 0;
+
+	FUN_ENTRY();
 
 	if (NULL == hw) {
 		BUG_ON("hw ptr is NULL!\n");
@@ -664,7 +665,6 @@ qh_completions (struct ft313_hcd *ft313, struct ehci_qh *qh)
 			DEBUG_MSG("urb 0x%X is done out of loop by qH 0x%X\n", last->urb, qh->qh_ft313);
 
 			// Set lock here!
-			unsigned long flags;
 
 			if (!list_empty(&qh->urb_list)) {
 				// There is urb waiting
@@ -884,7 +884,7 @@ qh_urb_transaction (
 		goto cleanup;
 
 		sg = urb->sg;
-		buf = sg_dma_address(sg);
+		buf = (void *)sg_dma_address(sg);
 
 		/* urb->transfer_buffer_length may be smaller than the
 		 * size of the scatterlist (or vice versa)
@@ -1042,14 +1042,14 @@ qh_make (
 	struct urb		*urb,
 	gfp_t			flags
 ) {
-	FUN_ENTRY();
-
 	struct ehci_qh		*qh = ft313_qh_alloc (ft313, flags);
 	u32			info1 = 0, info2 = 0;
 	int			is_input, type;
 	int			maxp = 0;
 	struct usb_tt		*tt = urb->dev->tt;
 	struct ehci_qh_hw	*hw;
+
+	FUN_ENTRY();
 
 	if (!qh)
 		return qh;
@@ -1105,8 +1105,9 @@ qh_make (
 				urb->interval = qh->period << 3;
 			}
 		} else {
-			DEBUG_MSG("Full/low speed Interrupt tranfer\n");
 			int		think_time;
+
+			DEBUG_MSG("Full/low speed Interrupt tranfer\n");
 
 			/* gap is f(FS/LS transfer times) */
 			qh->gap_uf = 1 + usb_calc_bus_time (urb->dev->speed,
@@ -1195,7 +1196,7 @@ qh_make (
 		}
 		break;
 	default:
-		dbg ("bogus dev %p speed %d", urb->dev, urb->dev->speed);
+		DEBUG_MSG("bogus dev %p speed %d", urb->dev, urb->dev->speed);
 done:
 		qh_put (qh);
 		FUN_EXIT();
@@ -1225,7 +1226,6 @@ done:
 
 static void qh_link_async (struct ft313_hcd *ft313, struct ehci_qh *qh)
 {
-	__hc32		dma = QH_NEXT(ft313, qh->qh_dma);
 	__hc32		dma_ft313 = QH_NEXT(ft313, qh->qh_ft313);
 	struct ehci_qh	*head;
 
@@ -1426,12 +1426,12 @@ submit_async (
 	struct list_head	*qtd_list,
 	gfp_t			mem_flags
 ) {
-	FUN_ENTRY();
-
 	int			epnum;
 	unsigned long		flags;
 	struct ehci_qh		*qh = NULL;
 	int			rc;
+
+	FUN_ENTRY();
 
 	DEBUG_MSG("mem flags for ctrl or bulk is 0x%X\n", mem_flags);
 
@@ -1506,12 +1506,12 @@ submit_async_next (
 	struct list_head	*qtd_list,
 	gfp_t			mem_flags
 ) {
-	FUN_ENTRY();
-
 	int			epnum;
-	unsigned long		flags;
+//	unsigned long		flags;
 	struct ehci_qh		*qh = NULL;
 	int			rc;
+
+	FUN_ENTRY();
 
 	epnum = urb->ep->desc.bEndpointAddress;
 
@@ -1582,10 +1582,11 @@ done:
 
 static void end_unlink_async (struct ft313_hcd *ft313)
 {
-	FUN_ENTRY();
-
 	struct ehci_qh		*qh = ft313->reclaim;
 	struct ehci_qh		*next;
+	u32			current_async_addr;
+
+	FUN_ENTRY();
 
 	iaa_watchdog_done(ft313);
 
@@ -1593,12 +1594,12 @@ static void end_unlink_async (struct ft313_hcd *ft313)
 //	display_async_list(ft313);
 
 	//Adjust the asynchronous list register value in case it is the same as qH for unlink
-	u32 current_async_addr = 0;
 	current_async_addr = ft313_reg_read32(ft313, &ft313->regs->async_next);
 	if (qh->qh_ft313 == current_async_addr) {
+		u32 cmd, status;
+
 		ERROR_MSG("Current async list register point to an unlinked qH, have to set manually!\n");
 
-		u32 cmd, status;
 		// FIXME: Check whether asynchronous schedule bit is still on before modify async list addr register
 		// This fix is not fully tested yet! Yang Chang on August 31, 2012
 		status = ft313_reg_read32(ft313, &ft313->regs->status);
@@ -1669,10 +1670,10 @@ static void end_unlink_async (struct ft313_hcd *ft313)
 
 static void start_unlink_async (struct ft313_hcd *ft313, struct ehci_qh *qh)
 {
-	FUN_ENTRY();
-
 	int		cmd = ft313_reg_read32(ft313, &ft313->regs->command);
 	struct ehci_qh	*prev;
+
+	FUN_ENTRY();
 
 #ifdef DEBUG
 	assert_spin_locked(&ft313->lock);
@@ -1688,6 +1689,8 @@ static void start_unlink_async (struct ft313_hcd *ft313, struct ehci_qh *qh)
 		/* can't get here without STS_ASS set */
 		if (ft313_to_hcd(ft313)->state != HC_STATE_HALT
 				&& !ft313->reclaim) {
+			u32 async_reg;
+
 			/* ... and CMD_IAAD clear */
 			ft313_reg_write32(ft313, cmd & ~ASCH_EN,
 				    &ft313->regs->command);
@@ -1695,7 +1698,6 @@ static void start_unlink_async (struct ft313_hcd *ft313, struct ehci_qh *qh)
 			DEBUG_MSG("Stop Async Scheduling\n");
 
 			// Restore async reg to original value if not!
-			u32 async_reg = 0;
 			async_reg = ft313_reg_read32(ft313, &ft313->regs->async_next);
 			if (async_reg != ft313->async->qh_ft313)
 				ft313_reg_write32(ft313, ft313->async->qh_ft313, &ft313->regs->async_next);
@@ -1777,12 +1779,12 @@ static void start_unlink_async (struct ft313_hcd *ft313, struct ehci_qh *qh)
 
 static void scan_async (struct ft313_hcd *ft313)
 {
-	FUN_ENTRY();
-
 	bool			stopped;
 	struct ehci_qh		*qh;
 	enum ft313_timer_action	action = TIMER_IO_WATCHDOG;
 	int			qh_count = 0;
+
+	FUN_ENTRY();
 
 	timer_action_done (ft313, TIMER_ASYNC_SHRINK);
 	stopped = !HC_IS_RUNNING(ft313_to_hcd(ft313)->state);
@@ -1794,8 +1796,9 @@ static void scan_async (struct ft313_hcd *ft313)
  rescan:
 		/* clean any finished work for this qh */
 		if (!list_empty(&qh->qtd_list)) {
-			DEBUG_MSG("qH 0x%X qTD list is not empty\n", qh->qh_ft313);
 			int temp;
+
+			DEBUG_MSG("qH 0x%X qTD list is not empty\n", qh->qh_ft313);
 
 			/*
 			 * Unlinks could happen here; completion reporting

@@ -2,6 +2,7 @@
  * FT313 Host Controller Driver.
  *
  * Copyright (C) 2011 Chang Yang <chang.yang@ftdichip.com>
+ * Copyright 2017 RnD Center "ELVEES", JSC
  *
  * This code is *strongly* based on EHCI-HCD code by David Brownell since
  * the chip is a quasi-EHCI compatible.
@@ -35,21 +36,15 @@
 #include <linux/debugfs.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
-#include <linux/cdev.h>
-#include <linux/ioctl.h>
 #include <linux/fs.h>
+#include <linux/clk.h>
+#include <linux/of.h>
+#include <linux/platform_device.h>
 
 #include <asm/byteorder.h>
 #include <asm/io.h>
 #include <asm/irq.h>
-#include <asm/system.h>
 #include <asm/unaligned.h>
-
-#ifdef USE_UDEV
-/* Device file related */
-static struct class* ftdi_class = NULL;
-static struct device* ftdi_device = NULL;
-#endif
 
 /* magic numbers that can affect system performance */
 #define	EHCI_TUNE_CERR		3	/* 0-3 qtd retries; 0 == don't stop */
@@ -82,7 +77,7 @@ module_param (park, uint, S_IRUGO); // FixMe: We may not want to use module para
 MODULE_PARM_DESC (park, "park setting; 1-3 back-to-back async packets");
 
 /* for flakey hardware, ignore overcurrent indicators */
-static int ignore_oc = 0;
+static bool ignore_oc = false;
 module_param (ignore_oc, bool, S_IRUGO);
 MODULE_PARM_DESC (ignore_oc, "ignore bogus hardware overcurrent indications");
 
@@ -90,7 +85,7 @@ MODULE_PARM_DESC (ignore_oc, "ignore bogus hardware overcurrent indications");
 static char *bcd_mode = "Disabled";
 module_param(bcd_mode, charp, 0000);
 MODULE_PARM_DESC(bcd_mode, "Indicate BCD mode when HCD inserted");
-#include "ft313_app.h"
+
 #include "ft313_def.h"
 #include "ft313.h"
 #include "ft313-dbg.c"
@@ -119,12 +114,13 @@ static inline void safe_spin_unlock(spinlock_t* lock, unsigned long* flags)
 static inline u8 ft313_reg_read8(const struct ft313_hcd *ft313,
 				   void __iomem * regs)
 {
-	u8 val;
+	struct usb_hcd *hcd = ft313_to_hcd(ft313);
+	u32 offset = regs - hcd->regs;
 
-	val = ioread8(regs);
+	u8 val = readb(hcd->regs + offset);
 
 #ifdef LOG_ON
-	print_reg_access_info(IO_READ, regs, val);
+	print_reg_access_info(IO_READ, offset, val);
 #endif
 	return val;
 }
@@ -132,22 +128,13 @@ static inline u8 ft313_reg_read8(const struct ft313_hcd *ft313,
 static inline u16 ft313_reg_read16(const struct ft313_hcd *ft313,
 		void __iomem * regs)
 {
-	unsigned short val = 0;
+	struct usb_hcd *hcd = ft313_to_hcd(ft313);
+	u32 offset = regs - hcd->regs;
 
-//	if (IS_8_BIT_MODE(ioread8(&ft313->cfg->sw_reset)))
-#ifdef FT313_IN_8_BIT_MODE
-	{ // 8 bit mode
-		val  = ioread8(regs);
-		val += ioread8(regs + 1) << 8;
-	}
-#else //	else // 16 bit mode
-	{
-		val = ioread16(regs);
-	}
-#endif
+	u16 val = readw(hcd->regs + offset);
 
 #ifdef LOG_ON
-	print_reg_access_info(IO_READ, regs, val);
+	print_reg_access_info(IO_READ, offset, val);
 #endif
 	return val;
 }
@@ -155,71 +142,42 @@ static inline u16 ft313_reg_read16(const struct ft313_hcd *ft313,
 static inline void ft313_reg_write16(const struct ft313_hcd *ft313, u16 val,
 		void __iomem * regs)
 {
-//	if (IS_8_BIT_MODE(ioread8(&ft313->cfg->sw_reset)))
-#ifdef FT313_IN_8_BIT_MODE
-	{ // 8 bit mode
-		iowrite8(val, regs);
-		iowrite8(val >>  8, regs + 1);
-	}
-#else //	else // 16 bit mode
-	{
-		iowrite16(val, regs);
-	}
-#endif
+	struct usb_hcd *hcd = ft313_to_hcd(ft313);
+	u32 offset = regs - hcd->regs;
+
+	writew(val, hcd->regs + offset);
 
 #ifdef LOG_ON
-	print_reg_access_info(IO_WRITE, regs, val);
+	print_reg_access_info(IO_WRITE, offset, val);
 #endif
-
 }
 
 static inline u32 ft313_reg_read32(const struct ft313_hcd *ft313,
 		void __iomem * regs)
 {
-	unsigned int val = 0;
+	struct usb_hcd *hcd = ft313_to_hcd(ft313);
+	u32 offset = regs - hcd->regs;
 
-//	if (IS_8_BIT_MODE(ioread8(&ft313->cfg->sw_reset)))
-#ifdef FT313_IN_8_BIT_MODE
-	{ // 8 bit mode
-		val  = ioread8(regs);
-		val += ioread8(regs + 1) << 8;
-		val += ioread8(regs + 2) << 16;
-		val += ioread8(regs + 3) << 24;
-	}
-#else //	else // 16 bit mode
-	{
-		val = ioread16(regs);
-		val += ioread16(regs + 2) << 16;
-	}
-#endif
+	u32 val = readw(hcd->regs + offset);
+	val += readw(hcd->regs + offset + 2) << 16;
 
 #ifdef LOG_ON
-	print_reg_access_info(IO_READ, regs, val);
+	print_reg_access_info(IO_READ, offset, val);
 #endif
-
 	return val;
 }
 
 static inline void ft313_reg_write32(const struct ft313_hcd *ft313, u32 val,
 		void __iomem * regs)
 {
-//	if (IS_8_BIT_MODE(ioread8(&ft313->cfg->sw_reset)))
-#ifdef FT313_IN_8_BIT_MODE
-	{ // 8 bit mode
-		iowrite8(val, regs);
-		iowrite8(val >>  8, regs + 1);
-		iowrite8(val >> 16, regs + 2);
-		iowrite8(val >> 24, regs + 3);
-	}
-#else //	else // 16 bit mode
-	{
-		iowrite16(val, regs);
-		iowrite16(val >> 16, regs + 2);
-	}
-#endif
+	struct usb_hcd *hcd = ft313_to_hcd(ft313);
+	u32 offset = regs - hcd->regs;
+
+	writew(val, hcd->regs + offset);
+	writew(val >> 16, hcd->regs + offset + 2);
 
 #ifdef LOG_ON
-	print_reg_access_info(IO_WRITE, regs, val);
+	print_reg_access_info(IO_WRITE, offset, val);
 #endif
 }
 
@@ -238,25 +196,14 @@ void ft313_mem_read(struct ft313_hcd *ft313, void *buf, u16 length, u16 offset)
 	} else {
 		spin_lock_irqsave(&ft313->dataport_lock, flags);
 	}
-//	if (IS_8_BIT_MODE(ioread8(&ft313->cfg->sw_reset)))
-#ifdef FT313_IN_8_BIT_MODE
-	{ // 8 bit mode
-		ft313_reg_write16(ft313, 0x8000 | length, &ft313->cfg->data_session_len); //Set direction as read
-		ft313_reg_write16(ft313, offset, &ft313->cfg->mem_addr);
-		for (i = 0; i < length; i++)
-			*((u8*)(buf + i)) = ioread8(&ft313->cfg->data_port);
 
-	}
-#else // 16 bit mode
-	{
-		if (0 != (length % 2)) length++; // Software need to adjust length
-		ft313_reg_write16(ft313, 0x8000 | length, &ft313->cfg->data_session_len); //Set direction as read
-		ft313_reg_write16(ft313, offset, &ft313->cfg->mem_addr);
+	if (0 != (length % 2)) length++; // Software need to adjust length
+	ft313_reg_write16(ft313, 0x8000 | length, &ft313->cfg->data_session_len); //Set direction as read
+	ft313_reg_write16(ft313, offset, &ft313->cfg->mem_addr);
 
-		for (i = 0; i < length; i += 2)
-			*((u16*)(buf + i)) = (u16)ioread16(&ft313->cfg->data_port);
-	}
-#endif
+	for (i = 0; i < length; i += 2)
+		*((u16*)(buf + i)) = ft313_reg_read16(ft313, &ft313->cfg->data_port);
+
 	if (in_interrupt()) {
 		spin_unlock(&ft313->dataport_lock);
 	} else {
@@ -273,7 +220,7 @@ void ft313_mem_read(struct ft313_hcd *ft313, void *buf, u16 length, u16 offset)
 
 }
 
-void ft313_mem_write(struct ft313_hcd *ft313, void *buf, u16 length, u16 offset)
+void ft313_mem_write(struct ft313_hcd *ft313, const void *buf, u16 length, u16 offset)
 {
 	int i;
 	unsigned long flags = 0;
@@ -284,25 +231,13 @@ void ft313_mem_write(struct ft313_hcd *ft313, void *buf, u16 length, u16 offset)
 		spin_lock_irqsave(&ft313->dataport_lock, flags);
 	}
 
-//	if (IS_8_BIT_MODE(ioread8(&ft313->cfg->sw_reset)))
-#ifdef FT313_IN_8_BIT_MODE
-	{ // 8 bit mode
-		ft313_reg_write16(ft313, length, &ft313->cfg->data_session_len);
-		ft313_reg_write16(ft313, offset, &ft313->cfg->mem_addr);
-		for (i = 0; i < length; i++)
-			iowrite8(*((u8*)(buf + i)), &ft313->cfg->data_port);
-	}
-#else // 16 bit mode
-	{
-		if (0 != (length % 2)) length++; // Software need to adjust length
-		ft313_reg_write16(ft313, length, &ft313->cfg->data_session_len);
-		ft313_reg_write16(ft313, offset, &ft313->cfg->mem_addr);
+	if (0 != (length % 2)) length++; // Software need to adjust length
+	ft313_reg_write16(ft313, length, &ft313->cfg->data_session_len);
+	ft313_reg_write16(ft313, offset, &ft313->cfg->mem_addr);
 
+	for (i = 0; i < length; i += 2)
+		ft313_reg_write16(ft313, *((u16*)(buf + i)), &ft313->cfg->data_port);
 
-		for (i = 0; i < length; i += 2)
-			iowrite16(*((u16*)(buf + i)), &ft313->cfg->data_port);
-	}
-#endif
 	if (in_interrupt()) {
 		spin_unlock(&ft313->dataport_lock);
 	} else {
@@ -465,10 +400,11 @@ static int handshake_on_error_set_halt(struct ft313_hcd *ft313, void __iomem *pt
 static int ft313_reset (struct ft313_hcd *ft313)
 {
 	int	retval;
+	u32	command;
 
 	FUN_ENTRY();
 
-	u32	command = ft313_reg_read32(ft313, &ft313->regs->command);
+	command = ft313_reg_read32(ft313, &ft313->regs->command);
 
 	/* If the EHCI debug controller is active, special care must be
 	 * taken before and after a host controller reset */
@@ -559,10 +495,10 @@ static void free_cached_lists(struct ft313_hcd *ft313);
 
 static void ft313_iaa_watchdog(unsigned long param)
 {
-	FUN_ENTRY();
-
 	struct ft313_hcd	*ft313 = (struct ft313_hcd *) param;
 	unsigned long		flags;
+
+	FUN_ENTRY();
 
 	spin_lock_irqsave (&ft313->lock, flags);
 
@@ -611,10 +547,10 @@ static void ft313_iaa_watchdog(unsigned long param)
 
 static void ft313_watchdog(unsigned long param)
 {
-	FUN_ENTRY();
-
 	struct ft313_hcd	*ft313 = (struct ft313_hcd *) param;
 	unsigned long		flags;
+
+	FUN_ENTRY();
 
 	spin_lock_irqsave(&ft313->lock, flags);
 
@@ -742,34 +678,21 @@ static void ft313_work (struct ft313_hcd *ft313)
 	FUN_EXIT();
 }
 
-static struct file_operations ft313_fops;
-#ifdef USE_UDEV
-static DEVICE_ATTR(ftdi, S_IWUSR | S_IRUGO, NULL, NULL);
-#endif
 /*
  * Called when the ft313_hcd module is removed.
  */
 static void ft313_stop (struct usb_hcd *hcd)
 {
 	struct ft313_hcd	*ft313 = hcd_to_ft313 (hcd);
+	u16			tmp;
 
 	//ehci_dbg (ft313, "stop\n");
 
-#ifdef USE_UDEV
-	device_remove_file(ftdi_device, &dev_attr_ftdi);
-	device_destroy(ftdi_class, MKDEV(ft313->ft313_cdev_major, 0));
-	class_unregister(ftdi_class);
-	class_destroy(ftdi_class);
-#endif
-	// deregister char device
-	cdev_del(&ft313->ft313_cdev);
-
-	// return the major number allocated to system
-	unregister_chrdev_region(ft313->ft313_cdev_major, ft313->ft313_cdev_count);
-
+#if 0
 	// deallocate workqueue
 	flush_workqueue(ft313->wakeup_wq);
 	destroy_workqueue(ft313->wakeup_wq);
+#endif
 
 	/* no more interrupts ... */
 	del_timer_sync(&ft313->watchdog);
@@ -797,7 +720,6 @@ static void ft313_stop (struct usb_hcd *hcd)
 	ft313_mem_cleanup (ft313);
 
 	// Shutdown V-Bus as well
-	u16 tmp;
 	tmp = ft313_reg_read16(ft313, &ft313->cfg->config);
 	ft313_reg_write16(ft313, VBUS_OFF | tmp, &ft313->cfg->config);
 
@@ -1059,65 +981,8 @@ static int ft313_run (struct usb_hcd *hcd)
 	//create_debug_files(ft313);
 	//create_companion_file(ft313);
 
-	// Register a charater device
-	ft313->ft313_cdev_count = 1;
-#ifdef USE_UDEV
-	retval = alloc_chrdev_region(&ft313->ft313_cdev_major, 0, ft313->ft313_cdev_count, "ft313_hc");
-#else
-	ft313->ft313_cdev_major = FT313_MAJOR;
-	retval = register_chrdev_region(ft313->ft313_cdev_major, ft313->ft313_cdev_count, "ft313_hc");
-#endif
-	if (retval) {
-		FUN_EXIT();
-		return retval;
-	}
-	int devno = MKDEV(ft313->ft313_cdev_major, 0);
-
-	cdev_init(&ft313->ft313_cdev, &ft313_fops);
-	ft313->ft313_cdev.owner = THIS_MODULE;
-	retval = cdev_add(&ft313->ft313_cdev, devno, ft313->ft313_cdev_count);
-
-	if (retval) {
-		ALERT_MSG("Char device register fails\n");
-		FUN_EXIT();
-		return retval;
-	}
-
-#ifdef USE_UDEV
-	// Create device file under "/dev"
-	ftdi_class = class_create(THIS_MODULE, CLASS_NAME);
-	if (IS_ERR(ftdi_class)) {
-		ALERT_MSG("failed to register device class '%s'\n", CLASS_NAME);
-		retval = PTR_ERR(ftdi_class);
-		goto failed_classreg;
-	}
-
-	/* With a class, the easiest way to instantiate a device is to call device_create() */
-	ftdi_device = device_create(ftdi_class, NULL, devno, NULL, CLASS_NAME "_" DEVICE_NAME);
-	if (IS_ERR(ftdi_device)) {
-		ALERT_MSG("failed to create device '%s_%s'\n", CLASS_NAME, DEVICE_NAME);
-		retval = PTR_ERR(ftdi_device);
-		goto failed_devreg;
-	}
-
-	retval = device_create_file(ftdi_device, &dev_attr_ftdi);
-	if (retval < 0) {
-		ALERT_MSG("failed to create write /sys endpoint - continuing without\n");
-	}
-#endif
 	FUN_EXIT();
 	return 0;
-
-#ifdef USE_UDEV
-failed_devreg:
-	class_unregister(ftdi_class);
-	class_destroy(ftdi_class);
-failed_classreg:
-	cdev_del(&ft313->ft313_cdev);
-
-	FUN_EXIT();
-	return -1;
-#endif
 }
 
 static irqreturn_t ft313_irq (struct usb_hcd *hcd)
@@ -1129,7 +994,9 @@ static irqreturn_t ft313_irq (struct usb_hcd *hcd)
 	u32 temp = 0;
 	u16 tmp = 0, hc_int_sts = 0, hc_int_en = 0;
 	int ft313_spec_int = 0, count = 0;
+#ifdef DEBUG_MSG_ON
 	u32 static irq_count = 0;
+#endif
 
 	FUN_ENTRY();
 
@@ -1165,12 +1032,12 @@ static irqreturn_t ft313_irq (struct usb_hcd *hcd)
 			if (0 == (tmp & CLKREADY)) {
 				ALERT_MSG("Wake up without clock ready set, strange?\n");
 			}
-
+#if 0
 			PREPARE_WORK(&ft313->wakeup_work, ft313_wakeup_wq_handler);
 			if (0 == queue_work(ft313->wakeup_wq, &ft313->wakeup_work)) {
 				ALERT_MSG("Work item is already in queue\n");
 			}
-
+#endif
 			spin_unlock(&ft313->lock);
 			FUN_EXIT();
 			return IRQ_HANDLED;
@@ -1821,139 +1688,269 @@ static int ft313_get_frame (struct usb_hcd *hcd)
 
 /*-------------------------------------------------------------------------*/
 
+void* g_old_dma_mask = NULL;
 
-MODULE_DESCRIPTION(DRIVER_DESC);
-MODULE_AUTHOR (DRIVER_AUTHOR);
-MODULE_LICENSE ("GPL");
-
-int ft313_open(struct inode *inode, struct file *fp)
+/* Called during probe() after chip reset completes.
+ */
+static int ft313_platform_setup(struct usb_hcd *hcd)
 {
-	struct ft313_hcd *ft313;
+	struct ft313_hcd *ft313 = hcd_to_ft313(hcd);
+	int retval;
+	u16 tmp;
+	u32 temp32;
 
-	ft313 = container_of(inode->i_cdev, struct ft313_hcd, ft313_cdev);
-	fp->private_data = ft313; /* for other methods */
+	ft313->cfg = hcd->regs + FT313_CONFIG_OFFSET;
 
-	printk("FT313 device file opened with ft313 is %X\n", ft313);
+	/* FixMe: */
+	// Some HW init function like HW reset, set chip mode (16/8 bit)
+	// Interrupt setting (edge trigger or level trigger etc.)
+	// may needed here!
 
-	return 0;
-}
+	// Dummy read to wakeup chip!
+	ft313_reg_read16(ft313, &ft313->cfg->sw_reset);
+	mdelay(10);
 
-int ft313_close(struct inode *inode, struct file *fp)
-{
-	printk("FT313 device file closed\n");
-	return 0;
-}
+	ft313_reg_write16(ft313, RESET_ALL, &ft313->cfg->sw_reset);
+	mdelay(200);
 
-int ft313_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
-{
-	struct ft313_hcd *ft313;
-	struct usb_hcd *hcd;
-	int retval = -1;
+	ft313_reg_read16(ft313, &ft313->cfg->sw_reset);
 
-//	if (_IOC_TYPE(cmd) != FT313_IOC_MAGIC) return -ENOTTY;
-//	if (_IOC_NR(cmd) > FT313_IOC_MAXNR) return -ENOTTY;
+	tmp = ft313_reg_read16(ft313, &ft313->cfg->hw_mode);
+	ft313_reg_write16(ft313,
+			  tmp | INTF_LOCK | INTR_EDGE | GLOBAL_INTR_EN, //INTR_EDGE use level interrupt
+			  &ft313->cfg->hw_mode); // Enable global interrupt
+	ft313_reg_read16(ft313, &ft313->cfg->hw_mode);
 
-	ft313 = fp->private_data;
+	tmp = ft313_reg_read16(ft313, &ft313->cfg->config);
+	//Turn VBUS on and set BCD mode
 
-	hcd = ft313_to_hcd(ft313);
+	DEBUG_MSG("bcd_mode is %s\n", bcd_mode);
 
-
-	switch (cmd) {
-		case FT313_IOC_SUSPEND:
-			ALERT_MSG("FT313: SUSPEND chip\n");
-
-			if (hcd->state == HC_STATE_SUSPENDED) {
-				ALERT_MSG("FT313 is already in suspend state\n");
-				retval = 0;
-				break;
-			}
-
-			if(hcd->driver->bus_suspend)
-				retval = hcd->driver->bus_suspend(hcd);
-			break;
-
-		case FT313_IOC_RESUME:
-			ALERT_MSG("FT313: RESUME chip\n");
-
-			if (HC_STATE_RUNNING == hcd->state) {
-				ALERT_MSG("FT313 is not in suspend state! \n");
-				retval = 0;
-				break;
-			}
-			if(hcd->driver->bus_resume)
-				retval = hcd->driver->bus_resume(hcd);
-			break;
-
-		case FT313_IOC_RESET:
-			ALERT_MSG("FT313: RESET chip\n");
-			ft313_quiesce(ft313);
-			ft313_halt(ft313);
-			ft313_reset(ft313);
-			ssleep(1);
-			// Rerun FT313
-			ft313_run(hcd);
-			retval = 0;
-			break;
-
-		default:
-			printk("Wrong IOCTL cmd\n");
-			break;
+	if (!strcmp(bcd_mode, "Disable")) {
+		tmp &= ~BCD_EN; // Disable BCD
+	} else if (!strcmp(bcd_mode, "Enable")) {
+		tmp |= BCD_EN; // Enable BCD, actual mode setting by BCD Mode Pins
+		tmp &= ~BCD_MODE_CTRL;
+	} else if (!strcmp(bcd_mode, "SDP")) {
+		tmp &= ~(3 << 13); // Clear bit [14:13]
+		tmp |= (BCD_MODE_CTRL | BCD_MODE_SDP | BCD_EN);
+	} else if (!strcmp(bcd_mode, "DCP")) {
+		tmp &= ~(3 << 13); // Clear bit [14:13]
+		tmp |= (BCD_MODE_CTRL | BCD_MODE_DCP | BCD_EN);
+	} else if (!strcmp(bcd_mode, "CDP1")) {
+		tmp &= ~(3 << 13); // Clear bit [14:13]
+		tmp |= (BCD_MODE_CTRL | BCD_MODE_CDP1 | BCD_EN);
+	} else if (!strcmp(bcd_mode, "CDP2")) {
+		tmp &= ~(3 << 13); // Clear bit [14:13]
+		tmp |= (BCD_MODE_CTRL | BCD_MODE_CDP2 | BCD_EN);
 	}
 
-	return retval;
+	ft313_reg_write16(ft313, ~VBUS_OFF & tmp, &ft313->cfg->config);
+
+	temp32 = ft313_reg_read32(ft313, &ft313->cfg->chip_id);
+
+	ft313->caps = hcd->regs + FT313_CAP_OFFSET;
+	ft313->regs = hcd->regs + CAPLENGTH(ft313_reg_read32(ft313, &ft313->caps->hc_capbase));
+
+	/* cache this readonly data; minimize chip reads */
+	ft313->hcs_params = ft313_reg_read32(ft313, &ft313->caps->hcs_params);
+
+	retval = ft313_halt(ft313);
+	if (retval)
+		return retval;
+
+	/* data structure init */
+	retval = ft313_init(hcd);
+	hcd->has_tt = 1;  // host include transaction-translator, will change speed to FS/LS
+	ft313->need_io_watchdog = 0;
+
+	if (retval)
+		return retval;
+
+	retval = ft313_reset(ft313);
+
+	if (retval)
+		return retval;
+#if 0
+	ft313->wakeup_wq_name = FT313_WK_NAME;
+	ft313->wakeup_wq = create_singlethread_workqueue(FT313_WK_NAME);
+	if (ft313->wakeup_wq == NULL) {
+		ERROR_MSG("FT313 Wakeup Workqueue creation failed\n");
+		return -ENOMEM;
+	}
+	INIT_WORK(&ft313->wakeup_work, ft313_wakeup_wq_handler);
+#endif
+
+	return 0;
 }
 
+static int ft313_update_device(struct usb_hcd *hcd, struct usb_device *udev)
+{
+//	struct ft313_hcd *ft313 = hcd_to_ft313(hcd);
+	int rc = 0;
 
-/* HCD file operations */
-static struct file_operations ft313_fops = {
-	.owner =		THIS_MODULE,
-	.read =			NULL,
-	.write = 		NULL,
-	.poll =			NULL,
-	.unlocked_ioctl =	ft313_ioctl,
-	.open =			ft313_open,
-	.release =		ft313_close,
+	if (!udev->parent) /* udev is root hub itself, impossible */
+		rc = -1;
+	/* we only support lpm device connected to root hub yet */
+//	if (ehci->has_lpm && !udev->parent->parent) {
+//		rc = ehci_lpm_set_da(ehci, udev->devnum, udev->portnum);
+//		if (!rc)
+//			rc = ehci_lpm_check(ehci, udev->portnum);
+//	}
+	return rc;
+}
+
+static const struct hc_driver ft313_hc_driver = {
+	.description			= "ft313h-hcd",
+	.product_desc			= "FT313H USB Host Controller",
+	.hcd_priv_size			= sizeof(struct ft313_hcd),
+
+	/*
+	 * Generic hardware linkage
+	 */
+	.irq				= ft313_irq,
+	.flags				= HCD_USB2,
+
+	/*
+	 * Basic lifecycle operations
+	 */
+	.reset				= ft313_platform_setup,
+	.start				= ft313_run,
+	.stop				= ft313_stop,
+	.shutdown			= ft313_shutdown,
+
+	/*
+	 * Managing i/o requests and associated device resources
+	 */
+	.urb_enqueue			= ft313_urb_enqueue,
+	.urb_dequeue			= ft313_urb_dequeue,
+	.endpoint_disable		= ft313_endpoint_disable,
+	.endpoint_reset			= ft313_endpoint_reset,
+
+	/*
+	 * Scheduling support
+	 */
+	.get_frame_number		= ft313_get_frame,
+
+	/*
+	 * Root hub support
+	 */
+	.hub_status_data		= ft313_hub_status_data,
+	.hub_control			= ft313_hub_control,
+	.bus_suspend			= ft313_bus_suspend,
+	.bus_resume			= ft313_bus_resume,
+	.relinquish_port		= ft313_relinquish_port,
+	.port_handed_over		= ft313_port_handed_over,
+
+	/*
+	 * call back when device connected and addressed
+	 */
+	.update_device			= ft313_update_device,
+
+	.clear_tt_buffer_complete	= ft313_clear_tt_buffer_complete,
 };
 
-#ifdef CONFIG_PCI
-#include "ft313-pci.c"
-#define	PCI_DRIVER		ft313_pci_driver
-#endif
-
-#ifdef CONFIG_MACH_AM335XEVM
-#include "ft313-am335x.c"
-#define PLATFORM_DRIVER         ft313_am335x_evm_driver
-#endif
-
-#if !defined(PCI_DRIVER) && !defined(PLATFORM_DRIVER)
-#error "missing bus glue for ft313-hcd"
-#endif
-
-static int __init ft313_hcd_init(void)
+static int ft313_probe(struct platform_device *pdev)
 {
+	struct usb_hcd *hcd;
+	struct ft313_hcd *ft313;
+	struct resource *res;
+	void __iomem *regs;
+	int irq, ret;
+
 	if (usb_disabled())
 		return -ENODEV;
-#ifdef PLATFORM_DRIVER
-	return platform_driver_register(&PLATFORM_DRIVER);
+
+	irq = platform_get_irq(pdev, 0);
+	if (irq < 0)
+		return irq;
+
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	regs = devm_ioremap_resource(&pdev->dev, res);
+	if (IS_ERR(regs))
+		return PTR_ERR(regs);
+
+	hcd = usb_create_hcd(&ft313_hc_driver, &pdev->dev,
+			     dev_name(&pdev->dev));
+	if (!hcd)
+		return -ENOMEM;
+
+	hcd->rsrc_start = res->start;
+	hcd->rsrc_len = resource_size(res);
+	hcd->regs = regs;
+
+	hcd->state = HC_STATE_HALT;
+
+	ft313 = hcd_to_ft313(hcd);
+
+	ft313->clk = devm_clk_get(&pdev->dev, 0);
+	if (IS_ERR(ft313->clk)) {
+		ret = PTR_ERR(ft313->clk);
+		goto error_hcd;
+	}
+
+	ret = clk_prepare_enable(ft313->clk);
+	if (ret != 0)
+		goto error_hcd;
+
+	ret = usb_add_hcd(hcd, irq, IRQF_SHARED | IRQF_TRIGGER_FALLING);
+	if (ret != 0)
+		goto error_clk;
+
+#ifdef DISABLE_HCD_DMA
+	// FixMe: Disable DMA
+	hcd->self.uses_dma = 0;
+	g_old_dma_mask = hcd->self.controller->dma_mask;
+	hcd->self.controller->dma_mask = NULL;
 #endif
 
-#ifdef PCI_DRIVER
-	return pci_register_driver(&PCI_DRIVER);
-#endif
+	return 0;
+
+error_clk:
+	clk_disable_unprepare(ft313->clk);
+
+error_hcd:
+	usb_put_hcd(hcd);
+
+	return ret;
 }
-module_init(ft313_hcd_init);
 
-static void __exit ft313_hcd_cleanup(void)
+static int ft313_remove(struct platform_device *pdev)
 {
-#ifdef PLATFORM_DRIVER
-	platform_driver_unregister(&PLATFORM_DRIVER);
+	struct usb_hcd *hcd = platform_get_drvdata(pdev);
+	struct ft313_hcd *ft313 = hcd_to_ft313(hcd);
+
+#ifdef DISABLE_HCD_DMA
+	hcd->self.controller->dma_mask = g_old_dma_mask;
+	hcd->self.uses_dma = 1;
 #endif
 
-#ifdef PCI_DRIVER
-	pci_unregister_driver(&PCI_DRIVER);
-#endif
+	usb_remove_hcd(hcd);
+
+	clk_disable_unprepare(ft313->clk);
+
+	usb_put_hcd(hcd);
+
+	return 0;
 }
-module_exit(ft313_hcd_cleanup);
 
-MODULE_LICENSE("GPL v2");
-MODULE_AUTHOR("Chang Yang");
+static const struct of_device_id ft313_match_table[] = {
+	{ .compatible = "ftdi,usb-ft313h", },
+	{ },
+};
+MODULE_DEVICE_TABLE(of, ft313_match_table);
+
+static struct platform_driver ft313_platform_driver = {
+	.probe			= ft313_probe,
+	.remove			= ft313_remove,
+	.driver			= {
+		.name		= "ft313h-hcd",
+		.of_match_table = of_match_ptr(ft313_match_table),
+	},
+};
+
+module_platform_driver(ft313_platform_driver);
+
+MODULE_AUTHOR(DRIVER_AUTHOR);
+MODULE_DESCRIPTION(DRIVER_DESC);
+MODULE_LICENSE("GPL");

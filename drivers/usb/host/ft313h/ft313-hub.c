@@ -2,6 +2,7 @@
  * FT313 root hub management.
  *
  * Copyright (C) 2011 Chang Yang <chang.yang@ftdichip.com>
+ * Copyright 2017 RnD Center "ELVEES", JSC
  *
  * This code is *strongly* based on EHCI-HCD code by David Brownell since
  * the chip is a quasi-EHCI compatible.
@@ -40,11 +41,11 @@ static int ft313_bus_suspend(struct usb_hcd *hcd)
 {
 	struct ft313_hcd	*ft313 = hcd_to_ft313 (hcd);
 	int			port;
-	int			mask;
+	//int			mask;
 	int			changed;
-
 	u16			hc_int_en = 0, hc_int_sts = 0, config = 0;
-	int			count = 0;
+	//int			count = 0;
+	u32			temp;
 
 	FUN_ENTRY();
 
@@ -66,7 +67,7 @@ static int ft313_bus_suspend(struct usb_hcd *hcd)
 	del_timer_sync(&ft313->iaa_watchdog);
 
 	spin_lock_irq (&ft313->lock);
-
+#if 0
 	/* Once the controller is stopped, port resumes that are already
 	 * in progress won't complete.  Hence if remote wakeup is enabled
 	 * for the root hub and any ports are in the middle of a resume or
@@ -85,7 +86,7 @@ static int ft313_bus_suspend(struct usb_hcd *hcd)
 			}
 		}
 	}
-
+#endif
 	/* stop schedules, clean any completed work */
 	if (HC_IS_RUNNING(hcd->state)) {
 		ft313_quiesce (ft313);
@@ -123,7 +124,7 @@ static int ft313_bus_suspend(struct usb_hcd *hcd)
 			DEBUG_MSG("Port %d need suspend\n", port);
 			set_bit(port, &ft313->bus_suspended);
 		}
-
+#if 0
 		/* enable remote wakeup on all ports, if told to do so */
 		if (hcd->self.root_hub->do_remote_wakeup) {
 			/* only enable appropriate wake bits, otherwise the
@@ -141,7 +142,7 @@ static int ft313_bus_suspend(struct usb_hcd *hcd)
 			hc_int_en |= WAKEUPINT_EN;
 			DEBUG_MSG("Enable the device connection/disconnection wakeup interrupt\n");
 		}
-
+#endif
 		if (t1 != t2) {
 			DEBUG_MSG("port %d, %08x -> %08x\n", port + 1, t1, t2);
 			ft313_reg_write32(ft313, t2, reg);
@@ -204,7 +205,7 @@ static int ft313_bus_suspend(struct usb_hcd *hcd)
 	ft313_reg_write16(ft313, hc_int_en, &ft313->cfg->hc_int_en);
 
 	// Set transceiver to suspend mode
-	u32 temp = ft313_reg_read32(ft313, &ft313->regs->eof_time);
+	temp = ft313_reg_read32(ft313, &ft313->regs->eof_time);
 	temp &= ~U_SUSP_N;
 	ft313_reg_write32(ft313, temp, &ft313->regs->eof_time);
 
@@ -226,19 +227,13 @@ static int ft313_bus_resume(struct usb_hcd *hcd)
 	u32			power_okay;
 	int			i;
 	u8			resume_needed = 0;
-
-	u16			tmp;
 	int			count = 0;
 
 	FUN_ENTRY();
 
 	// Dummy read to wakeup chip
 	DEBUG_MSG("Dummy read to wakeup FT313\n");
-#ifdef FT313_IN_8_BIT_MODE
-	temp = ft313_reg_read8(ft313, &ft313->cfg->sw_reset);
-#else
 	temp = ft313_reg_read16(ft313, &ft313->cfg->sw_reset);
-#endif
 	msleep(1);
 
 	temp = ft313_reg_read8(ft313, &ft313->regs->eof_time);
@@ -1123,10 +1118,7 @@ static int ft313_hub_control (
 					while (((temp & HCHALTED) == 0) && (count<=10000)) {
 						udelay(125);
 						count++;
-						if (count == 0)
-							temp = ft313_reg_read32(ft313, &ft313->regs->status);
-						else
-							temp = ioread32(&ft313->regs->status);
+						temp = ft313_reg_read32(ft313, &ft313->regs->status);
 					}
 					DEBUG_MSG("Reset %d times\n",count);
 
@@ -1213,8 +1205,9 @@ static int ft313_hub_control (
 					break;
 
 				case 4: {// USB_PID_TEST_PACKET
-					ALERT_MSG("USB_PID_TEST_PACKET test \n");
 					struct ft313_mem_blk *mem_blk;
+
+					ALERT_MSG("USB_PID_TEST_PACKET test \n");
 
 					mem_blk = allocate_mem_blk(ft313, BUFFER, sizeof(ft313_test_packet));
 					if (NULL == mem_blk) {
@@ -1284,4 +1277,5 @@ static int ft313_port_handed_over(struct usb_hcd *hcd, int portnum)
 		return 0;
 	//reg = &ehci->regs->port_status[portnum - 1];
 	//return ehci_readl(ehci, reg) & PORT_OWNER;
+	return 0;
 }

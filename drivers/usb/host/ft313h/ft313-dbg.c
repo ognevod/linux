@@ -2,6 +2,7 @@
  * FT313 debug support.
  *
  * Copyright (C) 2011 Chang Yang <chang.yang@ftdichip.com>
+ * Copyright 2017 RnD Center "ELVEES", JSC
  *
  * This code is *strongly* based on EHCI-HCD code by David Brownell since
  * the chip is a quasi-EHCI compatible.
@@ -331,10 +332,14 @@ struct reg_info ft313_reg_map[] = {
 
 #define SRAM_MEM_OFFSET0 	0x200000
 
-void *g_regbase = NULL;
-u32  g_print_cnt = 0;
+u32 g_print_cnt = 0;
 
 #ifdef DEBUG_MSG_ON
+
+#define ALERT_MSG(fmt, args...) do { \
+printk(KERN_ALERT "FT313 Alert at %s, line=%d, %s: ",  __FILE__, __LINE__, __func__); \
+printk(KERN_ALERT fmt, ##args); \
+} while(0)
 
 #define DEBUG_MSG(fmt, args...) do { \
 printk(KERN_ERR "%s, line=%d, %s: ",  __FILE__, __LINE__, __func__); \
@@ -356,6 +361,8 @@ printk("\n%s: Enter++ at line %d\n", __func__, __LINE__); \
 
 #else
 
+#define ALERT_MSG(fmt, args...)
+
 #define DEBUG_MSG(fmt, args...)
 
 #define ERROR_MSG(fmt, args...)
@@ -365,11 +372,6 @@ printk("\n%s: Enter++ at line %d\n", __func__, __LINE__); \
 #define FUN_EXIT()
 
 #endif // DEBUG_MSG_ON
-
-#define ALERT_MSG(fmt, args...) do { \
-printk(KERN_ALERT "FT313 Alert at %s, line=%d, %s: ",  __FILE__, __LINE__, __func__); \
-printk(KERN_ALERT fmt, ##args); \
-} while(0)
 
 char* get_friendly_name(int offset)
 {
@@ -400,25 +402,18 @@ void print_mem_access_info(int access_type, u32 mem_offset, u32 length, void* bu
 	}
 
 	if (access_type == IO_READ) {
-		printk("Read %d bytes long memory segment from offset 0x%X to system mem 0x%X\n", length, mem_offset, buf);
+		printk("Read %d bytes long memory segment from offset 0x%X to system mem 0x%X\n", length, mem_offset, (u32)buf);
 	}
 	else if (access_type == IO_WRITE) {
-		printk("Write %d bytes long memory segment from offset 0x%X from system mem 0x%X\n", length, mem_offset, buf);
+		printk("Write %d bytes long memory segment from offset 0x%X from system mem 0x%X\n", length, mem_offset, (u32)buf);
 	}
 	else {
 		printk("Wrong access type \n");
 	}
 }
 
-void print_reg_access_info(int access_type, void* reg, u32 value)
+void print_reg_access_info(int access_type, u32 offset, u32 value)
 {
-	int offset;
-
-	if (reg < g_regbase)
-		offset = -1;
-	else
-		offset = reg - g_regbase;
-
 	printk("No. %d op\t: ", ++g_print_cnt);
 
 	if (access_type == IO_READ) {

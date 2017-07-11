@@ -5,16 +5,9 @@
 #define FT313_CONFIG_OFFSET	0x80
 
 #define FT313_CHIP_MEM_AMT	(24 * 1024)
-#define FT313_IN_8_BIT_MODE
-//#undef  FT313_IN_8_BIT_MODE
 
 //#define PORT_RESET_TIME_WORKAROUND
 //#define USB_SOF_INTR
-#ifndef USB_SOF_INTR
-#ifdef CONFIG_PCI
-#define PCI_ENABLE_MSI
-#endif
-#endif
 
 //#define ENABLE_DYN_UNLINK
 
