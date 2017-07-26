@@ -13,6 +13,9 @@
 
 #undef CONFIG_USB_EHCI_TT_NEWSCHED
 
+/* This is workaround for a bug, caused by the wrong address line wiring on the
+ * Salute-EL24PM1 board. */
+#define FT313_REG_SHIFT		1
 
 /* Ft313 chip configuration registers */
 struct ft313_cfg {

@@ -115,12 +115,12 @@ static inline u8 ft313_reg_read8(const struct ft313_hcd *ft313,
 				   void __iomem * regs)
 {
 	struct usb_hcd *hcd = ft313_to_hcd(ft313);
-	u32 offset = regs - hcd->regs;
+	u32 offset = (regs - hcd->regs) << FT313_REG_SHIFT;
 
 	u8 val = readb(hcd->regs + offset);
 
 #ifdef LOG_ON
-	print_reg_access_info(IO_READ, offset, val);
+	print_reg_access_info(IO_READ, offset >> FT313_REG_SHIFT, val);
 #endif
 	return val;
 }
@@ -129,12 +129,12 @@ static inline u16 ft313_reg_read16(const struct ft313_hcd *ft313,
 		void __iomem * regs)
 {
 	struct usb_hcd *hcd = ft313_to_hcd(ft313);
-	u32 offset = regs - hcd->regs;
+	u32 offset = (regs - hcd->regs) << FT313_REG_SHIFT;
 
 	u16 val = readw(hcd->regs + offset);
 
 #ifdef LOG_ON
-	print_reg_access_info(IO_READ, offset, val);
+	print_reg_access_info(IO_READ, offset >> FT313_REG_SHIFT, val);
 #endif
 	return val;
 }
@@ -143,12 +143,12 @@ static inline void ft313_reg_write16(const struct ft313_hcd *ft313, u16 val,
 		void __iomem * regs)
 {
 	struct usb_hcd *hcd = ft313_to_hcd(ft313);
-	u32 offset = regs - hcd->regs;
+	u32 offset = (regs - hcd->regs) << FT313_REG_SHIFT;
 
 	writew(val, hcd->regs + offset);
 
 #ifdef LOG_ON
-	print_reg_access_info(IO_WRITE, offset, val);
+	print_reg_access_info(IO_WRITE, offset >> FT313_REG_SHIFT, val);
 #endif
 }
 
@@ -156,13 +156,14 @@ static inline u32 ft313_reg_read32(const struct ft313_hcd *ft313,
 		void __iomem * regs)
 {
 	struct usb_hcd *hcd = ft313_to_hcd(ft313);
-	u32 offset = regs - hcd->regs;
+	u32 offset = (regs - hcd->regs) << FT313_REG_SHIFT;
+	u32 offset_hi = (regs - hcd->regs + 2) << FT313_REG_SHIFT;
 
 	u32 val = readw(hcd->regs + offset);
-	val += readw(hcd->regs + offset + 2) << 16;
+	val += readw(hcd->regs + offset_hi) << 16;
 
 #ifdef LOG_ON
-	print_reg_access_info(IO_READ, offset, val);
+	print_reg_access_info(IO_READ, offset >> FT313_REG_SHIFT, val);
 #endif
 	return val;
 }
@@ -171,13 +172,14 @@ static inline void ft313_reg_write32(const struct ft313_hcd *ft313, u32 val,
 		void __iomem * regs)
 {
 	struct usb_hcd *hcd = ft313_to_hcd(ft313);
-	u32 offset = regs - hcd->regs;
+	u32 offset = (regs - hcd->regs) << FT313_REG_SHIFT;
+	u32 offset_hi = (regs - hcd->regs + 2) << FT313_REG_SHIFT;
 
 	writew(val, hcd->regs + offset);
-	writew(val >> 16, hcd->regs + offset + 2);
+	writew(val >> 16, hcd->regs + offset_hi);
 
 #ifdef LOG_ON
-	print_reg_access_info(IO_WRITE, offset, val);
+	print_reg_access_info(IO_WRITE, offset >> FT313_REG_SHIFT, val);
 #endif
 }
 
