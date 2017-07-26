@@ -203,6 +203,10 @@ void ft313_mem_read(struct ft313_hcd *ft313, void *buf, u16 length, u16 offset)
 	ft313_reg_write16(ft313, 0x8000 | length, &ft313->cfg->data_session_len); //Set direction as read
 	ft313_reg_write16(ft313, offset, &ft313->cfg->mem_addr);
 
+	/* This delay prevents the internal memory access errors after writing
+	 * the MEMADDR and DATASESSION registers. */
+	udelay(1);
+
 	for (i = 0; i < length; i += 2)
 		*((u16*)(buf + i)) = ft313_reg_read16(ft313, &ft313->cfg->data_port);
 
@@ -236,6 +240,10 @@ void ft313_mem_write(struct ft313_hcd *ft313, const void *buf, u16 length, u16 o
 	if (0 != (length % 2)) length++; // Software need to adjust length
 	ft313_reg_write16(ft313, length, &ft313->cfg->data_session_len);
 	ft313_reg_write16(ft313, offset, &ft313->cfg->mem_addr);
+
+	/* This delay prevents the internal memory access errors after writing
+	 * the MEMADDR and DATASESSION registers. */
+	udelay(1);
 
 	for (i = 0; i < length; i += 2)
 		ft313_reg_write16(ft313, *((u16*)(buf + i)), &ft313->cfg->data_port);
