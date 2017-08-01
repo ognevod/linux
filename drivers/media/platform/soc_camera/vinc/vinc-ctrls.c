@@ -1,5 +1,6 @@
 /*
  * Copyright 2016 ELVEES NeoTek JSC
+ * Copyright 2017 RnD Center "ELVEES", JSC
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -800,14 +801,14 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_DO_WHITE_BALANCE,
-		.name = "Do white balance",
+		.name = "Do White Balance",
 		.type = V4L2_CTRL_TYPE_BUTTON,
 		.flags = V4L2_CTRL_FLAG_UPDATE
 	},
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_RED_BALANCE,
-		.name = "Red balance",
+		.name = "Red Balance",
 		.type = V4L2_CTRL_TYPE_INTEGER,
 		.min = -112,
 		.max = 112,
@@ -818,7 +819,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_BLUE_BALANCE,
-		.name = "Blue balance",
+		.name = "Blue Balance",
 		.type = V4L2_CTRL_TYPE_INTEGER,
 		.min = -112,
 		.max = 112,
@@ -829,7 +830,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_BACKLIGHT_COMPENSATION,
-		.name = "Backlight compensation",
+		.name = "Backlight Compensation",
 		.type = V4L2_CTRL_TYPE_INTEGER,
 		.min = 0,
 		.max = 10,
@@ -851,7 +852,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops   = &ctrl_ops,
 		.id    = V4L2_CID_COLOR_KILLER,
-		.name  = "Color killer",
+		.name  = "Color Killer",
 		.type  = V4L2_CTRL_TYPE_BOOLEAN,
 		.min   = 0,
 		.max   = 1,
@@ -862,7 +863,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops   = &ctrl_ops,
 		.id    = V4L2_CID_COLORFX,
-		.name  = "Color effects",
+		.name  = "Color Effects",
 		.type  = V4L2_CTRL_TYPE_MENU,
 		.min   = 0,
 		.max   = ARRAY_SIZE(vinc_color_effect_menu) - 1,
@@ -874,7 +875,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops   = &ctrl_ops,
 		.id    = V4L2_CID_COLORFX_CBCR,
-		.name  = "Cb Cr components",
+		.name  = "Color Effects, CbCr",
 		.type  = V4L2_CTRL_TYPE_INTEGER,
 		.min   = 0,
 		.max   = 65535,
@@ -896,7 +897,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_WHITE_BALANCE_TEMPERATURE,
-		.name = "White balance temperature",
+		.name = "White Balance Temperature",
 		.type = V4L2_CTRL_TYPE_INTEGER,
 		.min = 2000,
 		.max = 9000,
@@ -907,7 +908,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_AUTO_WHITE_BALANCE,
-		.name = "White balance, Automatic",
+		.name = "White Balance, Automatic",
 		.type = V4L2_CTRL_TYPE_BOOLEAN,
 		.min = 0,
 		.max = 1,
@@ -930,7 +931,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_BAD_CORRECTION_ENABLE,
-		.name = "Bad pixels/rows/columns repair enable",
+		.name = "Bad Pixels/Rows/Columns Repair Enable",
 		.type = V4L2_CTRL_TYPE_BOOLEAN,
 		.min = 0,
 		.max = 1,
@@ -941,7 +942,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_BAD_PIXELS,
-		.name = "Bad pixels",
+		.name = "Bad Pixels",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -954,7 +955,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_BAD_ROWS,
-		.name = "Bad rows",
+		.name = "Bad Rows",
 		.type = V4L2_CTRL_TYPE_U16,
 		.min = 0,
 		.max = 0xFFF,
@@ -966,7 +967,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_BAD_COLS,
-		.name = "Bad columns",
+		.name = "Bad Columns",
 		.type = V4L2_CTRL_TYPE_U16,
 		.min = 0,
 		.max = 0xFFF,
@@ -978,7 +979,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_GAMMA_CURVE_ENABLE,
-		.name = "Gamma curve enable",
+		.name = "Gamma Curve Enable",
 		.type = V4L2_CTRL_TYPE_BOOLEAN,
 		.min = 0,
 		.max = 1,
@@ -989,7 +990,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_GAMMA_CURVE,
-		.name = "Gamma curve",
+		.name = "Gamma Curve",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -1001,7 +1002,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_CC_ENABLE,
-		.name = "Color correction enable",
+		.name = "Color Correction Enable",
 		.type = V4L2_CTRL_TYPE_BOOLEAN,
 		.min = 0,
 		.max = 1,
@@ -1012,7 +1013,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_CC,
-		.name = "Color correction",
+		.name = "Color Correction",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -1024,7 +1025,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_CT_ENABLE,
-		.name = "Color tranformation enable",
+		.name = "Color Tranformation Enable",
 		.type = V4L2_CTRL_TYPE_BOOLEAN,
 		.min = 0,
 		.max = 1,
@@ -1035,7 +1036,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_CT,
-		.name = "Color tranformation",
+		.name = "Color Tranformation",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -1047,7 +1048,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_DR_ENABLE,
-		.name = "Dynamic range enable",
+		.name = "Dynamic Range Enable",
 		.type = V4L2_CTRL_TYPE_BOOLEAN,
 		.min = 0,
 		.max = 1,
@@ -1058,7 +1059,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_DR,
-		.name = "Dynamic range",
+		.name = "Dynamic Range",
 		.type = V4L2_CTRL_TYPE_U16,
 		.min = 0,
 		.max = 0xFFF,
@@ -1070,7 +1071,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_STAT_ENABLE,
-		.name = "Statistics enable",
+		.name = "Statistics Enable",
 		.type = V4L2_CTRL_TYPE_BITMASK,
 		.min = 0,
 		.max = 0x7,
@@ -1081,7 +1082,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_STAT_AF_COLOR,
-		.name = "Autofocus component",
+		.name = "Autofocus Component",
 		.type = V4L2_CTRL_TYPE_MENU,
 		.min = 0,
 		.max = ARRAY_SIZE(vinc_af_color_menu) - 1,
@@ -1092,7 +1093,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_STAT_AF_TH,
-		.name = "Autofocus threshold",
+		.name = "Autofocus Threshold",
 		.type = V4L2_CTRL_TYPE_INTEGER,
 		.min = 0,
 		.max = 0x7FF,
@@ -1103,7 +1104,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_STAT_ZONE0,
-		.name = "Window of zone 0",
+		.name = "Window of Zone 0",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -1115,7 +1116,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_STAT_ZONE1,
-		.name = "Window of zone 1",
+		.name = "Window of Zone 1",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -1127,7 +1128,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_STAT_ZONE2,
-		.name = "Window of zone 2",
+		.name = "Window of Zone 2",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -1139,7 +1140,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_STAT_ZONE3,
-		.name = "Window of zone 3",
+		.name = "Window of Zone 3",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -1151,7 +1152,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_STAT_HIST0,
-		.name = "Histogram in zone 0",
+		.name = "Histogram in Zone 0",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -1164,7 +1165,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_STAT_HIST1,
-		.name = "Histogram in zone 1",
+		.name = "Histogram in Zone 1",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -1177,7 +1178,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_STAT_HIST2,
-		.name = "Histogram in zone 2",
+		.name = "Histogram in Zone 2",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -1190,7 +1191,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_STAT_HIST3,
-		.name = "Histogram in zone 3",
+		.name = "Histogram in Zone 3",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -1203,7 +1204,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_STAT_AF0,
-		.name = "Autofocus in zone 0",
+		.name = "Autofocus in Zone 0",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -1216,7 +1217,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_STAT_AF1,
-		.name = "Autofocus in zone 1",
+		.name = "Autofocus in Zone 1",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -1229,7 +1230,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_STAT_AF2,
-		.name = "Autofocus in zone 2",
+		.name = "Autofocus in Zone 2",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -1242,7 +1243,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_STAT_AF3,
-		.name = "Autofocus in zone 3",
+		.name = "Autofocus in Zone 3",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -1255,7 +1256,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_STAT_ADD0,
-		.name = "Additional statistics in zone 0",
+		.name = "Additional Statistics in Zone 0",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -1268,7 +1269,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_STAT_ADD1,
-		.name = "Additional statistics in zone 1",
+		.name = "Additional Statistics in Zone 1",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -1281,7 +1282,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_STAT_ADD2,
-		.name = "Additional statistics in zone 2",
+		.name = "Additional Statistics in Zone 2",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -1294,7 +1295,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_STAT_ADD3,
-		.name = "Additional statistics in zone 3",
+		.name = "Additional Statistics in Zone 3",
 		.type = V4L2_CTRL_COMPOUND_TYPES,
 		.min = 0,
 		.max = 0xFF,
@@ -1317,7 +1318,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_SENSOR_EXPOSURE_AUTO,
-		.name = "Sensor autoexposure enable",
+		.name = "Sensor Autoexposure Enable",
 		.type = V4L2_CTRL_TYPE_BOOLEAN,
 		.min = 0,
 		.max = 1,
@@ -1328,7 +1329,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_SENSOR_AUTOGAIN,
-		.name = "Sensor autogain enable",
+		.name = "Sensor Autogain Enable",
 		.type = V4L2_CTRL_TYPE_BOOLEAN,
 		.min = 0,
 		.max = 1,
@@ -1339,7 +1340,7 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_SENSOR_AUTO_WHITE_BALANCE,
-		.name = "Sensor auto white balance enable",
+		.name = "Sensor Auto White Balance Enable",
 		.type = V4L2_CTRL_TYPE_BOOLEAN,
 		.min = 0,
 		.max = 1,

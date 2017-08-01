@@ -43,6 +43,9 @@
 #include "vinc-hw.h"
 #include "vinc-ctrls.h"
 
+/* Maximum PCLK divider. Determined by hardware. */
+#define PCLKDIV_MAX 30
+
 struct vinc_cam {
 	/* Client output */
 	unsigned int width;
