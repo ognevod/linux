@@ -757,7 +757,6 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops   = &ctrl_ops,
 		.id    = V4L2_CID_BRIGHTNESS,
-		.name  = "Brightness",
 		.type  = V4L2_CTRL_TYPE_INTEGER,
 		.min   = -2048,
 		.max   =  2048,
@@ -768,7 +767,6 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops   = &ctrl_ops,
 		.id    = V4L2_CID_CONTRAST,
-		.name  = "Contrast",
 		.type  = V4L2_CTRL_TYPE_INTEGER,
 		.min   = 0,
 		.max   = 255,
@@ -779,7 +777,6 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops   = &ctrl_ops,
 		.id    = V4L2_CID_SATURATION,
-		.name  = "Saturation",
 		.type  = V4L2_CTRL_TYPE_INTEGER,
 		.min   = 0,
 		.max   = 255,
@@ -790,7 +787,6 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops   = &ctrl_ops,
 		.id    = V4L2_CID_HUE,
-		.name  = "Hue",
 		.type  = V4L2_CTRL_TYPE_INTEGER,
 		.min   = -128,
 		.max   =  127,
@@ -801,14 +797,12 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_DO_WHITE_BALANCE,
-		.name = "Do White Balance",
 		.type = V4L2_CTRL_TYPE_BUTTON,
 		.flags = V4L2_CTRL_FLAG_UPDATE
 	},
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_RED_BALANCE,
-		.name = "Red Balance",
 		.type = V4L2_CTRL_TYPE_INTEGER,
 		.min = -112,
 		.max = 112,
@@ -819,7 +813,6 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_BLUE_BALANCE,
-		.name = "Blue Balance",
 		.type = V4L2_CTRL_TYPE_INTEGER,
 		.min = -112,
 		.max = 112,
@@ -830,7 +823,6 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_BACKLIGHT_COMPENSATION,
-		.name = "Backlight Compensation",
 		.type = V4L2_CTRL_TYPE_INTEGER,
 		.min = 0,
 		.max = 10,
@@ -841,7 +833,6 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_GAMMA,
-		.name = "Gamma",
 		.type = V4L2_CTRL_TYPE_INTEGER,
 		.min = 1,
 		.max = 31,
@@ -852,7 +843,6 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops   = &ctrl_ops,
 		.id    = V4L2_CID_COLOR_KILLER,
-		.name  = "Color Killer",
 		.type  = V4L2_CTRL_TYPE_BOOLEAN,
 		.min   = 0,
 		.max   = 1,
@@ -863,7 +853,6 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops   = &ctrl_ops,
 		.id    = V4L2_CID_COLORFX,
-		.name  = "Color Effects",
 		.type  = V4L2_CTRL_TYPE_MENU,
 		.min   = 0,
 		.max   = ARRAY_SIZE(vinc_color_effect_menu) - 1,
@@ -875,7 +864,6 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops   = &ctrl_ops,
 		.id    = V4L2_CID_COLORFX_CBCR,
-		.name  = "Color Effects, CbCr",
 		.type  = V4L2_CTRL_TYPE_INTEGER,
 		.min   = 0,
 		.max   = 65535,
@@ -886,7 +874,6 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops   = &ctrl_ops,
 		.id    = V4L2_CID_AUTOBRIGHTNESS,
-		.name  = "Brightness, Automatic",
 		.type  = V4L2_CTRL_TYPE_BOOLEAN,
 		.min   = 0,
 		.max   = 1,
@@ -897,7 +884,6 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_WHITE_BALANCE_TEMPERATURE,
-		.name = "White Balance Temperature",
 		.type = V4L2_CTRL_TYPE_INTEGER,
 		.min = 2000,
 		.max = 9000,
@@ -908,7 +894,6 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_AUTO_WHITE_BALANCE,
-		.name = "White Balance, Automatic",
 		.type = V4L2_CTRL_TYPE_BOOLEAN,
 		.min = 0,
 		.max = 1,
@@ -919,7 +904,6 @@ static struct v4l2_ctrl_config ctrl_cfg[] = {
 	{
 		.ops = &ctrl_ops,
 		.id = V4L2_CID_EXPOSURE_AUTO,
-		.name = "Auto Exposure",
 		.type = V4L2_CTRL_TYPE_MENU,
 		.min = V4L2_EXPOSURE_AUTO,
 		.max = ARRAY_SIZE(vinc_exposure_auto_menu) - 1,
@@ -1614,6 +1598,9 @@ int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 					     stream[devnum]);
 
 	for (i = 0; i < ARRAY_SIZE(ctrl_cfg); i++) {
+		if (!ctrl_cfg[i].name)
+			ctrl_cfg[i].name = v4l2_ctrl_get_name(ctrl_cfg[i].id);
+
 		tmp_ctrl = v4l2_ctrl_new_custom(hdl, &ctrl_cfg[i], NULL);
 		if (!tmp_ctrl) {
 			dev_err(priv->ici.v4l2_dev.dev,
