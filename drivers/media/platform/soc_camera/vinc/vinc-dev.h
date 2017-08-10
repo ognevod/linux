@@ -351,7 +351,7 @@
 #define CTRL_GC_ELEMENTS_COUNT		4096
 #define CTRL_DR_ELEMENTS_COUNT		4096
 
-#define MAX_WIDTH_HEIGHT		4095
+#define MAX_WIDTH_HEIGHT		4095U
 #define MAX_COMP_VALUE			4095
 
 /* Historgam hardware bug correction */
