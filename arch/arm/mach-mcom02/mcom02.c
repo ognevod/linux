@@ -94,6 +94,7 @@ void __init mcom02_init_machine(void)
 {
 	platform_device_register(&brcmfmac_device);
 	of_platform_populate(NULL, of_default_bus_match_table, NULL, NULL);
+	platform_device_register_simple("cpufreq-dt", 0, NULL, 0);
 }
 
 DT_MACHINE_START(MCOM02, "ELVEES MCom-02 (Flattened Device Tree)")
