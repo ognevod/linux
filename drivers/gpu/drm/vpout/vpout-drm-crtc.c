@@ -297,6 +297,9 @@ int vpout_drm_crtc_mode_valid(struct drm_crtc *crtc,
 {
 	uint32_t hbp, hfp, hsw, vbp, vfp, vsw;
 
+	if (mode->flags & DRM_MODE_FLAG_INTERLACE)
+		return MODE_NO_INTERLACE;
+
 	if (mode->hdisplay > 2048)
 		return MODE_VIRTUAL_X;
 
