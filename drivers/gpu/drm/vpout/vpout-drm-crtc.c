@@ -230,10 +230,10 @@ static int vpout_drm_crtc_mode_set(struct drm_crtc *crtc,
 	if (vpout_drm_crtc->info->invert_pxl_clk)
 		vpout_drm_set(dev, LCDC_MODE, LCDC_MODE_PINV);
 
-	if (mode->flags & DRM_MODE_FLAG_NHSYNC)
+	if (!(mode->flags & DRM_MODE_FLAG_NHSYNC))
 		vpout_drm_set(dev, LCDC_MODE, LCDC_MODE_HINV);
 
-	if (mode->flags & DRM_MODE_FLAG_NVSYNC)
+	if (!(mode->flags & DRM_MODE_FLAG_NVSYNC))
 		vpout_drm_set(dev, LCDC_MODE, LCDC_MODE_VINV);
 
 	vpout_drm_crtc_set_clk(crtc);
