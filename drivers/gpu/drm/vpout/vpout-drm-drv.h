@@ -78,9 +78,6 @@ int vpout_drm_crtc_mode_valid(struct drm_crtc *crtc,
 void vpout_drm_crtc_set_panel_info(struct drm_crtc *crtc,
 				   const struct vpout_drm_panel_info *info);
 
-void vpout_drm_crtc_set_simulate_vesa_sync(struct drm_crtc *crtc,
-					   bool simulate_vesa_sync);
-
 irqreturn_t vpout_drm_crtc_irq(struct drm_crtc *crtc);
 
 struct drm_crtc *vpout_drm_crtc_create(struct drm_device *dev);

@@ -38,7 +38,6 @@ struct vpout_drm_crtc {
 	struct drm_flip_work unref_work;
 	struct drm_pending_vblank_event *event;
 	const struct vpout_drm_panel_info *info;
-	bool simulate_vesa_sync;
 };
 
 #define to_vpout_drm_crtc(x) container_of(x, struct vpout_drm_crtc, base)
@@ -171,22 +170,6 @@ static bool vpout_drm_crtc_mode_fixup(struct drm_crtc *crtc,
 				      const struct drm_display_mode *mode,
 				      struct drm_display_mode *adjusted_mode)
 {
-	struct vpout_drm_crtc *vpout_drm_crtc = to_vpout_drm_crtc(crtc);
-
-	if (!vpout_drm_crtc->simulate_vesa_sync)
-		return true;
-
-	adjusted_mode->hskew = mode->hsync_end - mode->hsync_start;
-	adjusted_mode->flags |= DRM_MODE_FLAG_HSKEW;
-
-	if (mode->flags & DRM_MODE_FLAG_NHSYNC) {
-		adjusted_mode->flags |= DRM_MODE_FLAG_PHSYNC;
-		adjusted_mode->flags &= ~DRM_MODE_FLAG_NHSYNC;
-	} else {
-		adjusted_mode->flags &= ~DRM_MODE_FLAG_PHSYNC;
-		adjusted_mode->flags |= DRM_MODE_FLAG_NHSYNC;
-	}
-
 	return true;
 }
 
@@ -247,11 +230,11 @@ static int vpout_drm_crtc_mode_set(struct drm_crtc *crtc,
 	if (vpout_drm_crtc->info->invert_pxl_clk)
 		vpout_drm_set(dev, LCDC_MODE, LCDC_MODE_PINV);
 
+	if (mode->flags & DRM_MODE_FLAG_NHSYNC)
+		vpout_drm_set(dev, LCDC_MODE, LCDC_MODE_HINV);
+
 	if (mode->flags & DRM_MODE_FLAG_NVSYNC)
 		vpout_drm_set(dev, LCDC_MODE, LCDC_MODE_VINV);
-
-	if (adjusted_mode->flags & DRM_MODE_FLAG_NHSYNC)
-		vpout_drm_set(dev, LCDC_MODE, LCDC_MODE_HINV);
 
 	vpout_drm_crtc_set_clk(crtc);
 
@@ -357,14 +340,6 @@ void vpout_drm_crtc_set_panel_info(struct drm_crtc *crtc,
 	struct vpout_drm_crtc *vpout_drm_crtc = to_vpout_drm_crtc(crtc);
 
 	vpout_drm_crtc->info = info;
-}
-
-void vpout_drm_crtc_set_simulate_vesa_sync(struct drm_crtc *crtc,
-				       bool simulate_vesa_sync)
-{
-	struct vpout_drm_crtc *vpout_drm_crtc = to_vpout_drm_crtc(crtc);
-
-	vpout_drm_crtc->simulate_vesa_sync = simulate_vesa_sync;
 }
 
 irqreturn_t vpout_drm_crtc_irq(struct drm_crtc *crtc)

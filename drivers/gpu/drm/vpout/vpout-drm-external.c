@@ -56,7 +56,6 @@ static int vpout_drm_add_external_encoder(struct drm_device *dev, int *bpp,
 	priv->connectors[priv->num_connectors] = connector;
 	priv->encoders[priv->num_encoders++] = connector->encoder;
 
-	vpout_drm_crtc_set_simulate_vesa_sync(priv->crtc, true);
 	vpout_drm_crtc_set_panel_info(priv->crtc, &panel_info_tda998x);
 	*bpp = panel_info_tda998x.bpp;
 
