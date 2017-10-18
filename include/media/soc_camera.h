@@ -23,6 +23,8 @@
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
 
+#define SOC_CAMERA_MAX_CLIENTS 2
+
 struct file;
 struct soc_camera_desc;
 struct soc_camera_async_client;
@@ -83,6 +85,9 @@ struct soc_camera_host {
 	unsigned char nr;		/* Host number */
 	u32 capabilities;
 	struct soc_camera_device *icd;	/* Currently attached client */
+
+	/* Currently attached clients. Useful for multiple cameras */
+	struct soc_camera_device *icds[SOC_CAMERA_MAX_CLIENTS];
 	void *priv;
 	const char *drv_name;
 	struct soc_camera_host_ops *ops;

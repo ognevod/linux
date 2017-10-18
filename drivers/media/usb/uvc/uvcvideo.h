@@ -422,6 +422,7 @@ struct uvc_stats_stream {
 	struct timespec stop_ts;	/* Stream stop timestamp */
 
 	unsigned int nb_frames;		/* Number of frames */
+	unsigned int nb_error_frames;	/* Number of error frames */
 
 	unsigned int nb_packets;	/* Number of packets */
 	unsigned int nb_empty;		/* Number of empty packets */
@@ -438,6 +439,13 @@ struct uvc_stats_stream {
 	unsigned int scr_sof;		/* STC.SOF of the last packet */
 	unsigned int min_sof;		/* Minimum STC.SOF value */
 	unsigned int max_sof;		/* Maximum STC.SOF value */
+};
+
+struct uvc_urb {
+	struct urb *urb;
+	struct uvc_streaming *stream;
+	struct timespec ts;
+	u16 sof;
 };
 
 struct uvc_streaming {
@@ -470,7 +478,7 @@ struct uvc_streaming {
 	/* Buffers queue. */
 	unsigned int frozen : 1;
 	struct uvc_video_queue queue;
-	void (*decode) (struct urb *urb, struct uvc_streaming *video,
+	void (*decode)(struct uvc_urb *uu, struct uvc_streaming *video,
 			struct uvc_buffer *buf);
 
 	/* Context data used by the bulk completion handler. */
@@ -482,7 +490,11 @@ struct uvc_streaming {
 		__u32 max_payload_size;
 	} bulk;
 
-	struct urb *urb[UVC_URBS];
+	bool stop;
+	spinlock_t urb_list_lock;
+	struct list_head urb_complete_list;
+	struct tasklet_struct urb_tasklet;
+	struct uvc_urb uvc_urb[UVC_URBS];
 	char *urb_buffer[UVC_URBS];
 	dma_addr_t urb_dma[UVC_URBS];
 	unsigned int urb_size;
@@ -555,6 +567,7 @@ struct uvc_device {
 	__u8 *status;
 	struct input_dev *input;
 	char input_phys[64];
+	bool hcd_uses_bh;
 };
 
 enum uvc_handle_state {
@@ -731,7 +744,7 @@ extern struct usb_host_endpoint *uvc_find_endpoint(
 		struct usb_host_interface *alts, __u8 epaddr);
 
 /* Quirks support */
-void uvc_video_decode_isight(struct urb *urb, struct uvc_streaming *stream,
+void uvc_video_decode_isight(struct uvc_urb *uu, struct uvc_streaming *stream,
 		struct uvc_buffer *buf);
 
 /* debugfs and statistics */

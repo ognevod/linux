@@ -250,6 +250,15 @@ config VIDEO_TI_VPE_DEBUG
 	---help---
 	  Enable debug messages on VPE driver.
 
+config VIDEO_ELVEES_AVICO
+	tristate "ELVEES Avico driver"
+	depends on PLAT_MCOM || COMPILE_TEST
+	select VIDEOBUF2_DMA_CONTIG
+	select V4L2_MEM2MEM_DEV
+	---help---
+	  V4L2 driver for Avico (a.k.a. VELcore-01) hardware encoder and
+	  decoder found on MCom-02 SoC.
+
 endif # V4L_MEM2MEM_DRIVERS
 
 menuconfig V4L_TEST_DRIVERS

@@ -206,6 +206,8 @@ EXPORT_SYMBOL_GPL(sdhci_reset);
 
 static void sdhci_do_reset(struct sdhci_host *host, u8 mask)
 {
+	u8 host_ctrl;
+
 	if (host->quirks & SDHCI_QUIRK_NO_CARD_NO_RESET) {
 		if (!(sdhci_readl(host, SDHCI_PRESENT_STATE) &
 			SDHCI_CARD_PRESENT))
@@ -218,6 +220,13 @@ static void sdhci_do_reset(struct sdhci_host *host, u8 mask)
 		if (host->flags & (SDHCI_USE_SDMA | SDHCI_USE_ADMA)) {
 			if (host->ops->enable_dma)
 				host->ops->enable_dma(host);
+		}
+		if ((host->quirks & SDHCI_QUIRK_BROKEN_CARD_DETECTION) &&
+		    (host->mmc->caps & MMC_CAP_NONREMOVABLE)) {
+			host_ctrl = sdhci_readb(host, SDHCI_HOST_CONTROL);
+			host_ctrl |= SDHCI_CTRL_CD_SIGSEL |
+				     SDHCI_CTRL_CD_TSTLVL;
+			sdhci_writeb(host, host_ctrl, SDHCI_HOST_CONTROL);
 		}
 
 		/* Resetting the controller clears many */

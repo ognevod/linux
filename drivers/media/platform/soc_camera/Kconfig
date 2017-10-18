@@ -60,6 +60,24 @@ config VIDEO_SH_MOBILE_CEU
 	---help---
 	  This is a v4l2 driver for the SuperH Mobile CEU Interface
 
+config VIDEO_VINC
+	tristate "VINC driver"
+	depends on VIDEO_DEV && SOC_CAMERA
+	select VIDEOBUF2_DMA_CONTIG
+	select SOC_CAMERA_SCALE_CROP
+	select KERNEL_MODE_NEON
+	---help---
+	  This is a v4l2 driver for the Elvees VINC camera interface
+
+config VIDEO_VINC_MEMORY_PER_STREAM_MB
+	int "VINC driver default memory limit per stream in MiB"
+	default 64
+	depends on VIDEO_VINC
+	---help---
+	  This is default value of memory_per_stream parameter for VINC driver.
+	  This parameter sets memory limit in MiB for video buffers per stream.
+	  If set to 0 the limitation is disabled.
+
 config VIDEO_OMAP1
 	tristate "OMAP1 Camera Interface driver"
 	depends on VIDEO_DEV && SOC_CAMERA

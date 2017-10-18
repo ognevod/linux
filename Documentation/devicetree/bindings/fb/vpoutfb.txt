@@ -1,0 +1,70 @@
+Elvees VPOUT framebuffer
+
+Required properties:
+- compatible: Should be "elvees,vpoutfb".
+- reg: Address and length of the VPOUT control registers.
+- interrupts: Should contain VPOUT interrupts.
+- output: Phandle to HDMI display node or for the lcd-display node (see below for details).
+  Lcd-display node must be described according to standard
+  "Linux/Documentation/devicetree/bindings/video/display-timing.txt".
+- format: Description of pixel format (see below for possible configurations)
+
+Valid formats:
+    r3g3b2 - 8-bit pixels
+    x4r4g4b4 - 16-bit pixels
+    x1r5g5b5 - 16-bit pixels
+    r5g6b5 - 16-bit pixels
+    r8g8b8 - 24-bit pixels
+    x8r8g8b8 - 32-bit pixels
+
+Optional properties:
+ - clocks: Should contain phandles to all clocks needed for device operation.
+
+* HDMI display node
+
+Has to be an I2C client.
+
+Required properties:
+- compatible: Should be "ite,it66121".
+- reg: Should be the device address on I2C bus.
+- reset-gpios: GPIO for resetting the HDMI device.
+
+Examples:
+
+at070tn92: lcd-display {
+	bits-per-pixel = <24>;
+	bus-width = <24>;
+
+	display-timings {
+		800x480p60 {
+			clock-frequency = <33300000>;
+			hactive = <800>;
+			vactive = <480>;
+			hfront-porch = <85>;
+			hback-porch = <85>;
+			hsync-len = <86>;
+			vback-porch = <15>;
+			vfront-porch = <15>;
+			vsync-len = <15>;
+			hsync-active = <0>;
+		};
+	};
+};
+
+&i2c1 {
+	it66121: it66121@4c {
+		compatible = "ite,it66121";
+		reg = <0x4c>;
+		reset-gpios = <&gpioc 14 GPIO_ACTIVE_LOW>;
+	};
+};
+
+framebuffer: framebuffer@38004000 {
+	compatible = "elvees,vpoutfb";
+	reg = <0x38004000 0x1000>;
+	format = "x8r8g8b8";
+	interrupts = <GIC_SPI 37 IRQ_TYPE_LEVEL_HIGH>;
+	clocks = <&vpout_hclk>, <&vpout_aclk>;
+	output = <&it66121>;
+	# Or if connected to LCD display: output = <&at070tn92>;
+};

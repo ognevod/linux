@@ -3058,7 +3058,7 @@ static void update_from_auto_cluster(struct v4l2_ctrl *master)
 {
 	int i;
 
-	for (i = 0; i < master->ncontrols; i++)
+	for (i = 1; i < master->ncontrols; i++)
 		cur_to_new(master->cluster[i]);
 	if (!call_op(master, g_volatile_ctrl))
 		for (i = 1; i < master->ncontrols; i++)
@@ -3104,7 +3104,7 @@ static int try_set_ext_ctrls(struct v4l2_fh *fh, struct v4l2_ctrl_handler *hdl,
 			continue;
 
 		cs->error_idx = i;
-		master = helpers[i].mref->ctrl;
+		master = helpers[i].ctrl->cluster[0];
 		v4l2_ctrl_lock(master);
 
 		/* Reset the 'is_new' flags of the cluster */

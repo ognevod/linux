@@ -308,6 +308,8 @@ static int dw_i2c_remove(struct platform_device *pdev)
 	if (has_acpi_companion(&pdev->dev))
 		dw_i2c_acpi_unconfigure(pdev);
 
+	clk_disable_unprepare(dev->clk);
+
 	return 0;
 }
 

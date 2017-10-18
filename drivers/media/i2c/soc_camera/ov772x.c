@@ -23,6 +23,7 @@
 #include <linux/delay.h>
 #include <linux/v4l2-mediabus.h>
 #include <linux/videodev2.h>
+#include <linux/time.h>
 
 #include <media/ov772x.h>
 #include <media/soc_camera.h>
@@ -67,7 +68,7 @@
 #define LAEC        0x1F /* Fine AEC value */
 #define COM11       0x20 /* Common control 11 */
 #define BDBASE      0x22 /* Banding filter Minimum AEC value */
-#define DBSTEP      0x23 /* Banding filter Maximum Setp */
+#define BDMSTEP     0x23 /* Banding filter Maximum Setp */
 #define AEW         0x24 /* AGC/AEC - Stable operating region (upper limit) */
 #define AEB         0x25 /* AGC/AEC - Stable operating region (lower limit) */
 #define VPT         0x26 /* AGC/AEC Fast mode operating region */
@@ -291,6 +292,8 @@
 #define OFMT_BRAW       0x03	/* 11 : Bayer RAW */
 
 /* COM8 */
+#define AG_AE_MASK	(AGC_ON | AEC_ON)
+
 #define FAST_ALGO       0x80	/* Enable fast AGC/AEC algorithm */
 				/* AEC Setp size limit */
 #define UNLMT_STEP      0x40	/*   0 : Step size is limited */
@@ -328,6 +331,7 @@
 /* EXHCH */
 #define EXHCH_VSIZE_SHIFT	2	/* VOUTSIZE LSB */
 #define EXHCH_HSIZE_SHIFT	0	/* HOUTSIZE 2 LSBs */
+#define EXHCH_DUMMY_SHIFT	4	/* Dummy pixels 4 MSBs */
 
 /* DSP_CTRL1 */
 #define FIFO_ON         0x80	/* FIFO enable/disable selection */
@@ -388,19 +392,36 @@ struct ov772x_win_size {
 	char                     *name;
 	unsigned char             com7_bit;
 	struct v4l2_rect	  rect;
+	u16			  horizontal_blank;
+	u16			  vertical_blank;
 };
 
 struct ov772x_priv {
 	struct v4l2_subdev                subdev;
 	struct v4l2_ctrl_handler	  hdl;
+	struct {
+		/* gain cluster */
+		struct v4l2_ctrl *auto_gain;
+		struct v4l2_ctrl *gain;
+	};
+	struct {
+		/* exposure cluster */
+		struct v4l2_ctrl *auto_exp;
+		struct v4l2_ctrl *exp;
+		struct v4l2_ctrl *exp_abs;
+	};
+	struct v4l2_ctrl *awb;
+	struct soc_camera_subdev_desc	  ssdd_dt;
 	struct v4l2_clk			 *clk;
 	struct ov772x_camera_info        *info;
 	const struct ov772x_color_format *cfmt;
 	const struct ov772x_win_size     *win;
 	unsigned short                    flag_vflip:1;
 	unsigned short                    flag_hflip:1;
-	/* band_filter = COM8[5] ? 256 - BDBASE : 0 */
-	unsigned short                    band_filter;
+
+	int total_width;
+	int total_height;
+	int fps;
 };
 
 /*
@@ -473,7 +494,7 @@ static const struct ov772x_color_format ov772x_cfmts[] = {
 		.dsp3		= 0x0,
 		.dsp4		= DSP_OFMT_RAW10,
 		.com3		= 0x0,
-		.com7		= SENSOR_RAW | OFMT_BRAW,
+		.com7		= OFMT_BRAW,
 	},
 };
 
@@ -492,6 +513,8 @@ static const struct ov772x_win_size ov772x_win_sizes[] = {
 			.width = VGA_WIDTH,
 			.height = VGA_HEIGHT,
 		},
+		.horizontal_blank = 144,
+		.vertical_blank = 30,
 	}, {
 		.name     = "QVGA",
 		.com7_bit = SLCT_QVGA,
@@ -501,6 +524,8 @@ static const struct ov772x_win_size ov772x_win_sizes[] = {
 			.width = QVGA_WIDTH,
 			.height = QVGA_HEIGHT,
 		},
+		.horizontal_blank = 256,
+		.vertical_blank = 38,
 	},
 };
 
@@ -515,12 +540,40 @@ static struct ov772x_priv *to_ov772x(struct v4l2_subdev *sd)
 
 static inline int ov772x_read(struct i2c_client *client, u8 addr)
 {
-	return i2c_smbus_read_byte_data(client, addr);
+	int ret;
+	int retry = 0;
+	u8 val;
+
+	do {
+		ret = i2c_master_send(client, &addr, 1);
+	} while (ret < 1 && retry++ < 10);
+	if (ret < 1)
+		return ret < 0 ? ret : -EIO;
+
+	retry = 0;
+	do {
+		ret = i2c_master_recv(client, &val, 1);
+	} while (ret < 1 && retry++ < 10);
+	if (ret < 1)
+		return ret < 0 ? ret : -EIO;
+
+	return val;
 }
 
 static inline int ov772x_write(struct i2c_client *client, u8 addr, u8 value)
 {
-	return i2c_smbus_write_byte_data(client, addr, value);
+	int ret;
+	int retry = 0;
+	u8 data[3] = { addr, value };
+
+	do {
+		ret = i2c_master_send(client, data, 2);
+	} while (ret < 2 && retry++ < 10);
+
+	if (ret != 2)
+		return ret < 0 ? ret : -EIO;
+
+	return 0;
 }
 
 static int ov772x_mask_set(struct i2c_client *client, u8  command, u8  mask,
@@ -571,6 +624,82 @@ static int ov772x_s_stream(struct v4l2_subdev *sd, int enable)
 	return 0;
 }
 
+/* The exposure value in registers is in units of line period */
+static u32 exposure_reg_to_100us(struct ov772x_priv *priv, u32 value)
+{
+	return value * (USEC_PER_SEC / 100) / (priv->total_height * priv->fps);
+}
+
+static u32 exposure_100us_to_reg(struct ov772x_priv *priv, u32 value)
+{
+	return value * (priv->total_height * priv->fps) / (USEC_PER_SEC / 100);
+}
+
+static int ov772x_g_volatile_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct ov772x_priv *priv = container_of(ctrl->handler,
+						struct ov772x_priv, hdl);
+	struct v4l2_subdev *sd = &priv->subdev;
+	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	int ret;
+	u8 val, high, low;
+
+	switch (ctrl->id) {
+	case V4L2_CID_AUTOGAIN:
+		val = ov772x_read(client, GAIN);
+		if (val < 0)
+			return ret;
+		low = val & 0x0f;
+		high = hweight8(val & 0xf0) << 4;
+
+		priv->gain->val = high | low;
+
+		return 0;
+	case V4L2_CID_EXPOSURE_AUTO: {
+		u32 exposure;
+
+		val = ov772x_read(client, AEC);
+		if (val < 0)
+			return ret;
+		exposure = val;
+		val = ov772x_read(client, AECH);
+		if (val < 0)
+			return ret;
+		exposure |= val << 8;
+		priv->exp->val = exposure;
+		priv->exp_abs->val = exposure_reg_to_100us(priv, exposure);
+
+		return 0;
+
+	}
+	}
+	return -EINVAL;
+}
+
+static int set_gain(struct i2c_client *client, u32 gain)
+{
+	u8 high, low;
+
+	low = gain & 0x0f;
+	high = gain >> 4;
+	high = (0x0f << high) & 0xf0;
+
+	return ov772x_write(client, GAIN, high | low);
+}
+
+static int set_exposure(struct i2c_client *client, u32 exposure)
+{
+	u8 val, ret;
+
+	val = (u8)(exposure & 0xff);
+	ret = ov772x_write(client, AEC, val);
+	if (ret)
+		return ret;
+
+	val = (u8)((exposure >> 8) & 0xff);
+	return ov772x_write(client, AECH, val);
+}
+
 static int ov772x_s_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct ov772x_priv *priv = container_of(ctrl->handler,
@@ -593,27 +722,90 @@ static int ov772x_s_ctrl(struct v4l2_ctrl *ctrl)
 		if (priv->info->flags & OV772X_FLAG_HFLIP)
 			val ^= HFLIP_IMG;
 		return ov772x_mask_set(client, COM3, HFLIP_IMG, val);
-	case V4L2_CID_BAND_STOP_FILTER:
-		if (!ctrl->val) {
-			/* Switch the filter off, it is on now */
-			ret = ov772x_mask_set(client, BDBASE, 0xff, 0xff);
-			if (!ret)
-				ret = ov772x_mask_set(client, COM8,
-						      BNDF_ON_OFF, 0);
+	case V4L2_CID_AUTOGAIN:
+		val = ctrl->val ? AGC_ON : 0;
+		ret = ov772x_mask_set(client, COM8, AGC_ON, val);
+		if (ret)
+			return ret;
+
+		if (ctrl->val)
+			return 0;
+
+		return set_gain(client, priv->gain->val);
+	case V4L2_CID_EXPOSURE_AUTO: {
+		u32 exposure;
+
+		val = (!ctrl->val) ? AEC_ON : 0;
+		ret = ov772x_mask_set(client, COM8, AEC_ON, val);
+		if (ret)
+			return ret;
+
+		if (ctrl->val == V4L2_EXPOSURE_AUTO)
+			return 0;
+
+		if (priv->exp_abs->is_new) {
+			exposure = exposure_100us_to_reg(priv,
+							 priv->exp_abs->val);
+			*priv->exp->p_cur.p_s32 = exposure;
 		} else {
-			/* Switch the filter on, set AEC low limit */
-			val = 256 - ctrl->val;
-			ret = ov772x_mask_set(client, COM8,
-					      BNDF_ON_OFF, BNDF_ON_OFF);
-			if (!ret)
-				ret = ov772x_mask_set(client, BDBASE,
-						      0xff, val);
+			exposure = priv->exp->val;
+			*priv->exp_abs->p_cur.p_s32 =
+					exposure_reg_to_100us(priv, exposure);
 		}
-		if (!ret)
-			priv->band_filter = ctrl->val;
+
+		return set_exposure(client, exposure);
+	}
+	case V4L2_CID_POWER_LINE_FREQUENCY: {
+		u32 light_freq, step;
+
+		val = (ctrl->val) ? BNDF_ON_OFF : 0;
+		ret = ov772x_mask_set(client, COM8, BNDF_ON_OFF, val);
+		if (ret)
+			return ret;
+
+		switch (ctrl->val) {
+		case V4L2_CID_POWER_LINE_FREQUENCY_50HZ:
+			light_freq = 50;
+			break;
+		case V4L2_CID_POWER_LINE_FREQUENCY_60HZ:
+			light_freq = 60;
+			break;
+		case V4L2_CID_POWER_LINE_FREQUENCY_DISABLED:
+			return 0;
+		default:
+			return -EINVAL;
+		}
+
+		step = (priv->total_height * priv->fps) / (light_freq * 2);
+		if (step > 255)
+			return -EINVAL;
+		/* Write minimum step value to "Banding Filter Minimum AEC
+		 * Value" field of BDBase register
+		 */
+		ret = ov772x_write(client, BDBASE, (u8)step);
+		if (ret)
+			return ret;
+
+		val = ((light_freq * 2) / priv->fps) - 1;
+		/* Write maximim exposure value to "Banding Filter Maximum Step"
+		 * field of BDMStep register
+		 */
+		ret = ov772x_write(client, BDMSTEP, val);
+
 		return ret;
 	}
+	case V4L2_CID_AUTO_WHITE_BALANCE:
+		val = (ctrl->val) ? AWB_ON : 0;
+		ret = ov772x_mask_set(client, COM8, AWB_ON, val);
 
+		/* Set color gains to default values */
+		if (!ctrl->val) {
+			ov772x_write(client, BLUE, 0x40);
+			ov772x_write(client, GREEN, 0x40);
+			ov772x_write(client, RED, 0x40);
+		}
+		return ret;
+	}
 	return -EINVAL;
 }
 
@@ -697,18 +889,39 @@ static void ov772x_select_params(const struct v4l2_mbus_framefmt *mf,
 	*win = ov772x_select_win(mf->width, mf->height);
 }
 
+static u32 ov772x_get_intclk(u32 inpclk, u8 rc)
+{
+	u8 x_pll, div_pll;
+	u32 intclk;
+
+	x_pll = 4;   /* Multiplyer by 4 */
+	div_pll = (rc + 1) * 2; /* Divider by 4 */
+
+	intclk = (inpclk * x_pll) / div_pll;
+	return intclk;
+}
+
 static int ov772x_set_params(struct ov772x_priv *priv,
 			     const struct ov772x_color_format *cfmt,
 			     const struct ov772x_win_size *win)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(&priv->subdev);
 	int ret;
-	u8  val;
+	u8  val, rc;
+	int dummy_pixels, dummy_rows;
+	u32 inpclk, intclk, pixclk;
+	u32 max_exp, def_exp;
 
 	/*
 	 * reset hardware
 	 */
 	ov772x_reset(client);
+
+	/* Set PLL */
+	inpclk = v4l2_clk_get_rate(priv->clk);
+	rc = 1;
+	ov772x_write(client, CLKRC, rc);
+	intclk = ov772x_get_intclk(inpclk, rc);
 
 	/*
 	 * Edge Ctrl
@@ -757,6 +970,10 @@ static int ov772x_set_params(struct ov772x_priv *priv,
 			goto ov772x_set_fmt_error;
 	}
 
+	/* TODO: add dummy settings calculation from inpclk frequency */
+	dummy_pixels = 0;
+	dummy_rows = 43;
+
 	/* Format and window size */
 	ret = ov772x_write(client, HSTART, win->rect.left >> 2);
 	if (ret < 0)
@@ -785,7 +1002,36 @@ static int ov772x_set_params(struct ov772x_priv *priv,
 		goto ov772x_set_fmt_error;
 	ret = ov772x_write(client, EXHCH,
 			   ((win->rect.height & 1) << EXHCH_VSIZE_SHIFT) |
-			   ((win->rect.width & 3) << EXHCH_HSIZE_SHIFT));
+			   ((win->rect.width & 3) << EXHCH_HSIZE_SHIFT) |
+			   (((dummy_pixels >> 8) & 0xf) << EXHCH_DUMMY_SHIFT));
+	if (ret < 0)
+		goto ov772x_set_fmt_error;
+	ret = ov772x_write(client, EXHCL, dummy_pixels & 0xff);
+	if (ret < 0)
+		goto ov772x_set_fmt_error;
+	ret = ov772x_write(client, DM_LNL, dummy_rows & 0xff);
+	if (ret < 0)
+		goto ov772x_set_fmt_error;
+	ret = ov772x_write(client, DM_LNH, (dummy_rows >> 8) & 0xff);
+	if (ret < 0)
+		goto ov772x_set_fmt_error;
+
+	if (cfmt->com7 == OFMT_BRAW)
+		pixclk = intclk / 2;
+	else
+		pixclk = intclk;
+
+	priv->total_width = win->rect.width + win->horizontal_blank +
+			    dummy_pixels;
+	priv->total_height = win->rect.height + win->vertical_blank +
+			    dummy_rows;
+	priv->fps = DIV_ROUND_CLOSEST(pixclk, priv->total_width *
+				      priv->total_height);
+
+	/* Modify exposure_absolute max/def values with image size/fps */
+	max_exp = exposure_reg_to_100us(priv, priv->total_height);
+	def_exp = exposure_reg_to_100us(priv, win->rect.height);
+	ret = v4l2_ctrl_modify_range(priv->exp_abs, 1, max_exp, 1, def_exp);
 	if (ret < 0)
 		goto ov772x_set_fmt_error;
 
@@ -833,14 +1079,27 @@ static int ov772x_set_params(struct ov772x_priv *priv,
 	/*
 	 * set COM8
 	 */
-	if (priv->band_filter) {
-		ret = ov772x_mask_set(client, COM8, BNDF_ON_OFF, 1);
-		if (!ret)
-			ret = ov772x_mask_set(client, BDBASE,
-					      0xff, 256 - priv->band_filter);
-		if (ret < 0)
-			goto ov772x_set_fmt_error;
-	}
+	val = (priv->auto_exp->cur.val) ? 0 : AEC_ON;
+	if (priv->auto_gain->cur.val)
+		val |= AGC_ON;
+	if (priv->awb->cur.val)
+		val |= AWB_ON;
+	ret = ov772x_mask_set(client, COM8, AG_AE_MASK | AWB_ON, val);
+	if (ret < 0)
+		goto ov772x_set_fmt_error;
+	/* Delay was decided empirically, datasheet contain no
+	 * information on it */
+	msleep(20);
+
+	/* Set gain */
+	ret = set_gain(client, priv->gain->cur.val);
+	if (ret < 0)
+		goto ov772x_set_fmt_error;
+
+	/* Set exposure */
+	ret = set_exposure(client, priv->exp->cur.val);
+	if (ret < 0)
+		goto ov772x_set_fmt_error;
 
 	return ret;
 
@@ -979,6 +1238,7 @@ done:
 
 static const struct v4l2_ctrl_ops ov772x_ctrl_ops = {
 	.s_ctrl = ov772x_s_ctrl,
+	.g_volatile_ctrl = ov772x_g_volatile_ctrl,
 };
 
 static struct v4l2_subdev_core_ops ov772x_subdev_core_ops = {
@@ -1030,6 +1290,47 @@ static struct v4l2_subdev_ops ov772x_subdev_ops = {
 	.video	= &ov772x_subdev_video_ops,
 };
 
+static int ov772x_probe_dt(struct i2c_client *client, struct ov772x_priv *priv)
+{
+	int ret;
+	u8 value;
+
+	priv->info = devm_kzalloc(&client->dev, sizeof(*priv->info),
+				  GFP_KERNEL);
+	if (!priv->info)
+		return -ENOMEM;
+
+	if (of_property_read_bool(client->dev.of_node, "ov772x,vflip"))
+		priv->info->flags |= OV772X_FLAG_VFLIP;
+	if (of_property_read_bool(client->dev.of_node, "ov772x,hflip"))
+		priv->info->flags |= OV772X_FLAG_HFLIP;
+
+	ret = of_property_read_u8(client->dev.of_node, "edge-threshold",
+				  &value);
+	if (!ret) {
+		priv->info->edgectrl.threshold = value;
+		ret = of_property_read_u8(client->dev.of_node, "edge-strength",
+					  &value);
+		if (!ret)
+			priv->info->edgectrl.strength = value |
+					OV772X_MANUAL_EDGE_CTRL;
+	}
+	ret = of_property_read_u8(client->dev.of_node, "edge-upper",
+				  &value);
+	if (!ret)
+		priv->info->edgectrl.upper = value;
+
+	ret = of_property_read_u8(client->dev.of_node, "edge-lower",
+				  &value);
+	if (!ret)
+		priv->info->edgectrl.lower = value;
+
+	client->dev.platform_data = &priv->ssdd_dt;
+	priv->ssdd_dt.drv_priv = priv->info;
+
+	return 0;
+}
+
 /*
  * i2c_driver function
  */
@@ -1042,11 +1343,6 @@ static int ov772x_probe(struct i2c_client *client,
 	struct i2c_adapter	*adapter = to_i2c_adapter(client->dev.parent);
 	int			ret;
 
-	if (!ssdd || !ssdd->drv_priv) {
-		dev_err(&client->dev, "OV772X: missing platform data!\n");
-		return -EINVAL;
-	}
-
 	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE_DATA)) {
 		dev_err(&adapter->dev,
 			"I2C-Adapter doesn't support "
@@ -1058,7 +1354,16 @@ static int ov772x_probe(struct i2c_client *client,
 	if (!priv)
 		return -ENOMEM;
 
-	priv->info = ssdd->drv_priv;
+	if ((!ssdd || !ssdd->drv_priv) && !client->dev.of_node) {
+		dev_err(&client->dev, "OV772X: missing platform data!\n");
+		return -EINVAL;
+	}
+	if (!ssdd || !ssdd->drv_priv) {
+		ret = ov772x_probe_dt(client, priv);
+		if (ret)
+			return ret;
+	} else
+		priv->info = ssdd->drv_priv;
 
 	v4l2_i2c_subdev_init(&priv->subdev, client, &ov772x_subdev_ops);
 	v4l2_ctrl_handler_init(&priv->hdl, 3);
@@ -1066,11 +1371,30 @@ static int ov772x_probe(struct i2c_client *client,
 			V4L2_CID_VFLIP, 0, 1, 1, 0);
 	v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
 			V4L2_CID_HFLIP, 0, 1, 1, 0);
-	v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
-			V4L2_CID_BAND_STOP_FILTER, 0, 256, 1, 0);
+	priv->auto_gain = v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
+					    V4L2_CID_AUTOGAIN, 0, 1, 1, 1);
+	priv->gain = v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
+				       V4L2_CID_GAIN, 0, 79, 1, 16);
+	priv->auto_exp = v4l2_ctrl_new_std_menu(&priv->hdl, &ov772x_ctrl_ops,
+			V4L2_CID_EXPOSURE_AUTO, V4L2_EXPOSURE_MANUAL, 0,
+			V4L2_EXPOSURE_AUTO);
+	priv->auto_exp->is_private = 1;
+	priv->exp = v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
+			V4L2_CID_EXPOSURE, 1, 510, 1, 480);
+	priv->exp_abs = v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
+			V4L2_CID_EXPOSURE_ABSOLUTE, 1, 166, 1, 156);
+	v4l2_ctrl_new_std_menu(&priv->hdl, &ov772x_ctrl_ops,
+		V4L2_CID_POWER_LINE_FREQUENCY,
+		V4L2_CID_POWER_LINE_FREQUENCY_60HZ, 0,
+		V4L2_CID_POWER_LINE_FREQUENCY_DISABLED);
+	priv->awb = v4l2_ctrl_new_std(&priv->hdl, &ov772x_ctrl_ops,
+				      V4L2_CID_AUTO_WHITE_BALANCE, 0, 1, 1, 1);
+	priv->awb->is_private = 1;
 	priv->subdev.ctrl_handler = &priv->hdl;
 	if (priv->hdl.error)
 		return priv->hdl.error;
+	v4l2_ctrl_auto_cluster(2, &priv->auto_gain, 0, true);
+	v4l2_ctrl_auto_cluster(3, &priv->auto_exp, V4L2_EXPOSURE_MANUAL, true);
 
 	priv->clk = v4l2_clk_get(&client->dev, "mclk");
 	if (IS_ERR(priv->clk)) {
@@ -1079,14 +1403,15 @@ static int ov772x_probe(struct i2c_client *client,
 	}
 
 	ret = ov772x_video_probe(priv);
-	if (ret < 0) {
-		v4l2_clk_put(priv->clk);
-eclkget:
-		v4l2_ctrl_handler_free(&priv->hdl);
-	} else {
+	if (!ret) {
 		priv->cfmt = &ov772x_cfmts[0];
 		priv->win = &ov772x_win_sizes[0];
+		return v4l2_async_register_subdev(&priv->subdev);
 	}
+
+	v4l2_clk_put(priv->clk);
+eclkget:
+	v4l2_ctrl_handler_free(&priv->hdl);
 
 	return ret;
 }
@@ -1096,7 +1421,7 @@ static int ov772x_remove(struct i2c_client *client)
 	struct ov772x_priv *priv = to_ov772x(i2c_get_clientdata(client));
 
 	v4l2_clk_put(priv->clk);
-	v4l2_device_unregister_subdev(&priv->subdev);
+	v4l2_async_unregister_subdev(&priv->subdev);
 	v4l2_ctrl_handler_free(&priv->hdl);
 	return 0;
 }

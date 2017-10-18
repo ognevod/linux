@@ -1,0 +1,25 @@
+ELVEES Avico (a.k.a. VELcore-01)
+--------------------------------
+
+Avico is a VPU (Video Processing Unit) designed by RnD Center ELVEES.
+It supports encoding and decoding several video streams simultaneously.
+
+Required properties:
+
+- compatible: Should be "elvees,avico".
+- reg: Should contain two memory regions: register region and
+  VRAM scratchpad memory region.
+- interrupts: Should contain the VPU interrupt.
+- clocks: Should contain the "pclk", "aclk", and "sclk" clocks, in the order
+  determined by the clock-names property.
+- clock-names: Should be "pclk", "aclk", and "sclk".
+
+Example:
+
+vpu: codec@37100000 {
+	compatible = "elvees,avico";
+	reg = <0x37100000 0x00010000>, <0x3b000000 0x01000000>;
+	interrupts = <GIC_SPI 7 IRQ_TYPE_LEVEL_HIGH>;
+	clocks = <&vpu_pclk>, <&vpu_aclk>, <&vpu_sclk>;
+	clock-names = "pclk", "aclk", "sclk";
+};
