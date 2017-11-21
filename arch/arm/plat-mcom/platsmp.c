@@ -1,5 +1,6 @@
 /*
  *  Copyright 2015 ELVEES NeoTek CJSC
+ *  Copyright 2017 RnD Center "ELVEES", JSC
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -7,6 +8,7 @@
  * (at your option) any later version.
  */
 
+#include <asm/cacheflush.h>
 #include <linux/init.h>
 #include <linux/smp.h>
 #include <linux/io.h>
@@ -15,59 +17,74 @@
 #include <asm/smp_scu.h>
 #include <asm/smp_plat.h>
 
-static void __iomem *spram_base_addr;
+#include "common.h"
 
-static void __init mcom_prepare_spram(void)
+static void __iomem *spram_base_addr;
+static void __iomem *pmctr_base_addr;
+static void __iomem *smctr_base_addr;
+
+static void __init mcom_map_device(char *compatible, void **base_addr)
 {
 	struct device_node *node;
 
-	node = of_find_compatible_node(NULL, NULL, "elvees,mcom-spram");
+	node = of_find_compatible_node(NULL, NULL, compatible);
 	if (!node) {
-		pr_err("%s: could not find spram dt node\n", __func__);
+		pr_err("%s: could not find %s node\n", __func__, compatible);
 		return;
 	}
 
-	spram_base_addr = of_iomap(node, 0);
-	if (!spram_base_addr) {
-		pr_err("%s: could not map spram registers\n", __func__);
+	*base_addr = of_iomap(node, 0);
+	if (!*base_addr) {
+		pr_err("%s: could not map %s registers\n",
+			__func__, node->name);
 		return;
 	}
 }
 
 static int __cpuinit mcom_boot_secondary(unsigned int cpu,
-					   struct task_struct *idle)
+					 struct task_struct *idle)
 {
-	/* FIX ME
-	 *
-	 * The code in this block is actualy a hack.
-	 * We should use power management controller (PMCTR) to power up all
-	 * cores except core1. Instead of that we simply write magic value and
-	 * address of secondary_startup function to spram. Secondary core polls
-	 * spram and when the magic value is read calls secondary_startup
-	 * function.
-	*/
-
-	const u32 magic = 0xdeadbeef;
-	const u32 offset_for_magic = 0xfff8;
-	const u32 offset_for_addr = 0xfff4;
-
-
-	if (!spram_base_addr) {
-		pr_err("%s: spram_base_addr is missing for cpu boot\n",
-		       __func__);
+	if (!smctr_base_addr) {
+		pr_err("%s: SMCTR is not mapped\n", __func__);
 		return -ENXIO;
 	}
 
-	__raw_writel(magic, spram_base_addr + offset_for_magic);
-	__raw_writel(virt_to_phys(&secondary_startup), spram_base_addr +
-		     offset_for_addr);
+	/* Remap BOOT so that CPU1 boots from SPRAM where the boot
+	 * vector is stored */
+	writel(SMCTR_BOOT_REMAP_SPRAM, smctr_base_addr + SMCTR_BOOT_REMAP);
+
+	if (!pmctr_base_addr) {
+		pr_err("%s: PMCTR is not mapped\n", __func__);
+		return -ENXIO;
+	}
+
+	/* Turn on power domain for CPU1 */
+	writel(BIT(cpu + 1), pmctr_base_addr + PMCTR_SYS_PWR_UP);
 
 	return 0;
 }
 
 static void __init mcom_smp_prepare_cpus(unsigned int max_cpus)
 {
-	mcom_prepare_spram();
+	u32 trampoline_sz = &mcom_secondary_trampoline_end -
+			    &mcom_secondary_trampoline;
+
+	mcom_map_device("elvees,mcom-spram", &spram_base_addr);
+
+	if (!spram_base_addr) {
+		pr_err("%s: SPRAM is not mapped\n", __func__);
+		return;
+	}
+
+	mcom_secondary_boot_vector = virt_to_phys(mcom_secondary_startup);
+
+	memcpy(spram_base_addr, &mcom_secondary_trampoline, trampoline_sz);
+	flush_cache_all();
+	outer_clean_range(0, trampoline_sz);
+
+	mcom_map_device("elvees,mcom-pmctr", &pmctr_base_addr);
+	mcom_map_device("elvees,mcom-smctr", &smctr_base_addr);
+
 	scu_enable(ioremap(scu_a9_get_base(), SZ_4K));
 }
 
