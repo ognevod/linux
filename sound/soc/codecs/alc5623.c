@@ -6,6 +6,7 @@
  *
  * Copyright 2010 Arnaud Patard <arnaud.patard@rtp-net.org>
  *
+ * Copyright 2017 RnD Center "ELVEES", JSC
  *
  * Based on WM8753.c
  *
@@ -528,6 +529,7 @@ static const struct _pll_div codec_master_pll_div[] = {
 	{ 12000000,  24576000,	0x2915},
 	{ 13000000,  24576000,	0x772e},
 	{ 13100000,  24576000,	0x0d20},
+	{ 24576000,  22579200,	0x0921},
 };
 
 static const struct _pll_div codec_slave_pll_div[] = {
@@ -623,13 +625,12 @@ static const struct _coeff_div coeff_div[] = {
 	{384*1, 0x0c6b},
 };
 
-static int get_coeff(struct snd_soc_codec *codec, int rate)
+static int get_coeff(int sysclk, int rate)
 {
-	struct alc5623_priv *alc5623 = snd_soc_codec_get_drvdata(codec);
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(coeff_div); i++) {
-		if (coeff_div[i].fs * rate == alc5623->sysclk)
+		if (coeff_div[i].fs * rate == sysclk)
 			return i;
 	}
 	return -EINVAL;
@@ -748,10 +749,20 @@ static int alc5623_pcm_hw_params(struct snd_pcm_substream *substream,
 
 	/* set iface & srate */
 	snd_soc_write(codec, ALC5623_DAI_CONTROL, iface);
+
 	rate = params_rate(params);
-	coeff = get_coeff(codec, rate);
-	if (coeff < 0)
-		return -EINVAL;
+	coeff = get_coeff(alc5623->sysclk, rate);
+	if (coeff < 0) {
+		coeff = get_coeff(22579200, rate);
+		if (coeff < 0)
+			return -EINVAL;
+		if (alc5623_set_dai_pll(dai, 0, 0,
+					alc5623->sysclk,
+					22579200) < 0)
+			return -EINVAL;
+	} else
+		snd_soc_write(codec, ALC5623_GLOBAL_CLK_CTRL_REG,
+			      ALC5623_GBL_CLK_SYS_SOUR_SEL_MCLK);
 
 	coeff = coeff_div[coeff].regvalue;
 	dev_dbg(codec->dev, "%s: sysclk=%d,rate=%d,coeff=0x%04x\n",
@@ -857,7 +868,8 @@ static const struct snd_soc_dai_ops alc5623_dai_ops = {
 		.digital_mute = alc5623_mute,
 		.set_fmt = alc5623_set_dai_fmt,
 		.set_sysclk = alc5623_set_dai_sysclk,
-		.set_pll = alc5623_set_dai_pll,
+		/* There was set_pll-callback. It was removed in order to   */
+		/* guarantee the operability of the remaining functionality */
 };
 
 static struct snd_soc_dai_driver alc5623_dai = {
