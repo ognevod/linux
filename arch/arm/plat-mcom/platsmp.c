@@ -14,6 +14,7 @@
 #include <linux/io.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
+#include <linux/delay.h>
 #include <asm/smp_scu.h>
 #include <asm/smp_plat.h>
 
@@ -22,6 +23,7 @@
 static void __iomem *spram_base_addr;
 static void __iomem *pmctr_base_addr;
 static void __iomem *smctr_base_addr;
+static void __iomem *scu_base_addr;
 
 static void __init mcom_map_device(char *compatible, void **base_addr)
 {
@@ -84,11 +86,37 @@ static void __init mcom_smp_prepare_cpus(unsigned int max_cpus)
 	mcom_map_device("elvees,mcom-pmctr", &pmctr_base_addr);
 	mcom_map_device("elvees,mcom-smctr", &smctr_base_addr);
 
-	scu_enable(ioremap(scu_a9_get_base(), SZ_4K));
+	scu_base_addr = ioremap(scu_a9_get_base(), SZ_4K);
+
+	scu_enable(scu_base_addr);
 }
 
+#ifdef CONFIG_HOTPLUG_CPU
+static int mcom_cpu_kill(unsigned int cpu)
+{
+	unsigned long timeout = jiffies + msecs_to_jiffies(50);
+
+	while (!(readl(pmctr_base_addr + PMCTR_SYS_PWR_STATUS) & BIT(cpu + 1)))
+		if (time_after(jiffies, timeout))
+			return 0;
+
+	return 1;
+}
+
+static void mcom_cpu_die(unsigned int cpu)
+{
+	scu_power_mode(scu_base_addr, SCU_PM_POWEROFF);
+	while (1)
+		cpu_do_idle();
+}
+#endif
+
 static struct smp_operations mcom_smp_ops __initdata = {
-	.smp_prepare_cpus   = mcom_smp_prepare_cpus,
-	.smp_boot_secondary = mcom_boot_secondary,
+	.smp_prepare_cpus	= mcom_smp_prepare_cpus,
+	.smp_boot_secondary	= mcom_boot_secondary,
+#ifdef CONFIG_HOTPLUG_CPU
+	.cpu_kill		= mcom_cpu_kill,
+	.cpu_die		= mcom_cpu_die,
+#endif
 };
 CPU_METHOD_OF_DECLARE(mcom_smp, "elvees,mcom-smp", &mcom_smp_ops);
