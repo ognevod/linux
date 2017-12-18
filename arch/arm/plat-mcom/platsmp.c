@@ -41,8 +41,7 @@ static void __init mcom_map_device(char *compatible, void **base_addr)
 	}
 }
 
-static int __cpuinit mcom_boot_secondary(unsigned int cpu,
-					 struct task_struct *idle)
+static int mcom_boot_secondary(unsigned int cpu, struct task_struct *idle)
 {
 	if (!smctr_base_addr) {
 		pr_err("%s: SMCTR is not mapped\n", __func__);

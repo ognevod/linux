@@ -1135,10 +1135,15 @@ static int ov772x_cropcap(struct v4l2_subdev *sd, struct v4l2_cropcap *a)
 	return 0;
 }
 
-static int ov772x_g_fmt(struct v4l2_subdev *sd,
-			struct v4l2_mbus_framefmt *mf)
+static int ov772x_get_fmt(struct v4l2_subdev *sd,
+		struct v4l2_subdev_pad_config *cfg,
+		struct v4l2_subdev_format *format)
 {
+	struct v4l2_mbus_framefmt *mf = &format->format;
 	struct ov772x_priv *priv = to_ov772x(sd);
+
+	if (format->pad)
+		return -EINVAL;
 
 	mf->width	= priv->win->rect.width;
 	mf->height	= priv->win->rect.height;
@@ -1174,11 +1179,16 @@ static int ov772x_s_fmt(struct v4l2_subdev *sd, struct v4l2_mbus_framefmt *mf)
 	return 0;
 }
 
-static int ov772x_try_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_mbus_framefmt *mf)
+static int ov772x_set_fmt(struct v4l2_subdev *sd,
+		struct v4l2_subdev_pad_config *cfg,
+		struct v4l2_subdev_format *format)
 {
+	struct v4l2_mbus_framefmt *mf = &format->format;
 	const struct ov772x_color_format *cfmt;
 	const struct ov772x_win_size *win;
+
+	if (format->pad)
+		return -EINVAL;
 
 	ov772x_select_params(mf, &cfmt, &win);
 
@@ -1188,6 +1198,9 @@ static int ov772x_try_fmt(struct v4l2_subdev *sd,
 	mf->field = V4L2_FIELD_NONE;
 	mf->colorspace = cfmt->colorspace;
 
+	if (format->which == V4L2_SUBDEV_FORMAT_ACTIVE)
+		return ov772x_s_fmt(sd, mf);
+	cfg->try_fmt = *mf;
 	return 0;
 }
 
@@ -1249,13 +1262,14 @@ static struct v4l2_subdev_core_ops ov772x_subdev_core_ops = {
 	.s_power	= ov772x_s_power,
 };
 
-static int ov772x_enum_fmt(struct v4l2_subdev *sd, unsigned int index,
-			   u32 *code)
+static int ov772x_enum_mbus_code(struct v4l2_subdev *sd,
+		struct v4l2_subdev_pad_config *cfg,
+		struct v4l2_subdev_mbus_code_enum *code)
 {
-	if (index >= ARRAY_SIZE(ov772x_cfmts))
+	if (code->pad || code->index >= ARRAY_SIZE(ov772x_cfmts))
 		return -EINVAL;
 
-	*code = ov772x_cfmts[index].code;
+	code->code = ov772x_cfmts[code->index].code;
 	return 0;
 }
 
@@ -1276,18 +1290,21 @@ static int ov772x_g_mbus_config(struct v4l2_subdev *sd,
 
 static struct v4l2_subdev_video_ops ov772x_subdev_video_ops = {
 	.s_stream	= ov772x_s_stream,
-	.g_mbus_fmt	= ov772x_g_fmt,
-	.s_mbus_fmt	= ov772x_s_fmt,
-	.try_mbus_fmt	= ov772x_try_fmt,
 	.cropcap	= ov772x_cropcap,
 	.g_crop		= ov772x_g_crop,
-	.enum_mbus_fmt	= ov772x_enum_fmt,
 	.g_mbus_config	= ov772x_g_mbus_config,
+};
+
+static const struct v4l2_subdev_pad_ops ov772x_subdev_pad_ops = {
+	.enum_mbus_code = ov772x_enum_mbus_code,
+	.get_fmt	= ov772x_get_fmt,
+	.set_fmt	= ov772x_set_fmt,
 };
 
 static struct v4l2_subdev_ops ov772x_subdev_ops = {
 	.core	= &ov772x_subdev_core_ops,
 	.video	= &ov772x_subdev_video_ops,
+	.pad	= &ov772x_subdev_pad_ops,
 };
 
 static int ov772x_probe_dt(struct i2c_client *client, struct ov772x_priv *priv)
