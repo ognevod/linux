@@ -629,7 +629,7 @@ static void avico_dma_out_callback(void *data)
 {
 	struct avico_ctx *ctx = (struct avico_ctx *)data;
 	struct avico_dev *dev = ctx->dev;
-	struct vb2_buffer *src, *dst;
+	struct vb2_v4l2_buffer *src, *dst;
 	unsigned long flags;
 	uint32_t encoded;
 
@@ -640,20 +640,20 @@ static void avico_dma_out_callback(void *data)
 				  AVICO_PACKER_CBS_TOTAL_LEN);
 	WARN_ON(encoded % 8 != 0);
 	ctx->bs.p += encoded / 8;
-	vb2_set_plane_payload(dst, 0, ctx->bs.p - ctx->bs.start);
+	vb2_set_plane_payload(&dst->vb2_buf, 0, ctx->bs.p - ctx->bs.start);
 
-	dst->v4l2_buf.sequence = ctx->capseq++;
-	src->v4l2_buf.sequence = ctx->outseq++;
+	dst->sequence = ctx->capseq++;
+	src->sequence = ctx->outseq++;
 
-	memcpy(&dst->v4l2_buf.timestamp, &src->v4l2_buf.timestamp,
+	memcpy(&dst->timestamp, &src->timestamp,
 	       sizeof(struct timeval));
-	if (src->v4l2_buf.flags & V4L2_BUF_FLAG_TIMECODE) {
-		memcpy(&dst->v4l2_buf.timecode, &src->v4l2_buf.timecode,
+	if (src->flags & V4L2_BUF_FLAG_TIMECODE) {
+		memcpy(&dst->timecode, &src->timecode,
 		       sizeof(struct v4l2_timecode));
 	}
 
-	dst->v4l2_buf.field = src->v4l2_buf.field;
-	dst->v4l2_buf.flags = src->v4l2_buf.flags;
+	dst->field = src->field;
+	dst->flags = src->flags;
 
 	/* \todo Do not understand why we need irqlock here */
 	spin_lock_irqsave(&dev->irqlock, flags);
@@ -1116,7 +1116,7 @@ static const struct v4l2_ioctl_ops avico_ioctl_ops = {
  */
 
 static int avico_queue_setup(struct vb2_queue *vq,
-			     const struct v4l2_format *fmt,
+			     const void *parg,
 			     unsigned int *nbuffers, unsigned int *nplanes,
 			     unsigned int sizes[], void *alloc_ctxs[])
 {
@@ -1146,16 +1146,16 @@ static int avico_queue_setup(struct vb2_queue *vq,
 
 static int avico_buf_prepare(struct vb2_buffer *vb)
 {
+	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
 	struct avico_ctx *ctx = vb2_get_drv_priv(vb->vb2_queue);
-	struct v4l2_buffer *const b = &vb->v4l2_buf;
 	unsigned int size;
 
-	if (b->field == V4L2_FIELD_ANY)
-		b->field = V4L2_FIELD_NONE;
-	if (b->field != V4L2_FIELD_NONE)
+	if (vbuf->field == V4L2_FIELD_ANY)
+		vbuf->field = V4L2_FIELD_NONE;
+	if (vbuf->field != V4L2_FIELD_NONE)
 		return -EINVAL;
 
-	switch (b->type) {
+	switch (vb->type) {
 	case V4L2_BUF_TYPE_VIDEO_OUTPUT:
 		size = ctx->outsize;
 		break;
@@ -1181,8 +1181,9 @@ static int avico_buf_prepare(struct vb2_buffer *vb)
 static void avico_buf_queue(struct vb2_buffer *vb)
 {
 	struct avico_ctx *ctx = vb2_get_drv_priv(vb->vb2_queue);
+	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
 
-	v4l2_m2m_buf_queue(ctx->fh.m2m_ctx, vb);
+	v4l2_m2m_buf_queue(ctx->fh.m2m_ctx, vbuf);
 }
 
 static void avico_thread_init(struct avico_ctx *ctx)
@@ -1320,18 +1321,18 @@ static int avico_start_streaming(struct vb2_queue *vq, unsigned int count)
 static void avico_stop_streaming(struct vb2_queue *q)
 {
 	struct avico_ctx *ctx = vb2_get_drv_priv(q);
-	struct vb2_buffer *vb;
+	struct vb2_v4l2_buffer *vbuf;
 	unsigned long flags;
 
 	for (;;) {
 		if (V4L2_TYPE_IS_OUTPUT(q->type))
-			vb = v4l2_m2m_src_buf_remove(ctx->fh.m2m_ctx);
+			vbuf = v4l2_m2m_src_buf_remove(ctx->fh.m2m_ctx);
 		else
-			vb = v4l2_m2m_dst_buf_remove(ctx->fh.m2m_ctx);
-		if (vb == NULL)
+			vbuf = v4l2_m2m_dst_buf_remove(ctx->fh.m2m_ctx);
+		if (vbuf == NULL)
 			break;
 		spin_lock_irqsave(&ctx->dev->irqlock, flags);
-		v4l2_m2m_buf_done(vb, VB2_BUF_STATE_ERROR);
+		v4l2_m2m_buf_done(vbuf, VB2_BUF_STATE_ERROR);
 		spin_unlock_irqrestore(&ctx->dev->irqlock, flags);
 	}
 
