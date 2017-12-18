@@ -87,8 +87,7 @@ MODULE_PARM_DESC(memory_per_stream,
  *		  requested number of buffers and to fill in plane sizes
  *		  for the current frame format if required
  */
-static int vinc_queue_setup(struct vb2_queue *vq,
-			    const struct v4l2_format *fmt,
+static int vinc_queue_setup(struct vb2_queue *vq, const void *parg,
 			    unsigned int *count, unsigned int *num_planes,
 			    unsigned int sizes[], void *alloc_ctxs[])
 {
@@ -96,6 +95,7 @@ static int vinc_queue_setup(struct vb2_queue *vq,
 			struct soc_camera_device, vb2_vidq);
 	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
 	struct vinc_dev *priv = ici->priv;
+	const struct v4l2_format *fmt = parg;
 	unsigned int max_count;
 
 	if (fmt)
@@ -174,12 +174,11 @@ static void vinc_buf_queue(struct vb2_buffer *vb)
 	const u8 devnum = icd->devnum;
 	struct vinc_stream * const stream = &priv->stream[devnum];
 
-	dev_dbg(icd->parent, "Add buffer #%u to queue\n",
-		buf->vb.v4l2_buf.index);
+	dev_dbg(icd->parent, "Add buffer #%u to queue\n", vb->index);
 
 	if (vb2_plane_size(vb, 0) < size) {
 		dev_err(icd->parent, "Buffer #%u too small (%lu < %lu)\n",
-		       vb->v4l2_buf.index, vb2_plane_size(vb, 0), size);
+			vb->index, vb2_plane_size(vb, 0), size);
 		vb2_buffer_done(vb, VB2_BUF_STATE_ERROR);
 	}
 	vb2_set_plane_payload(vb, 0, size);
@@ -878,6 +877,7 @@ static void vinc_next_buffer(struct vinc_stream *stream,
 			     enum vb2_buffer_state state)
 {
 	struct vb2_buffer *vb = stream->active;
+	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
 	struct vinc_dev *priv = container_of(stream, struct vinc_dev,
 					     stream[stream->devnum]);
 
@@ -907,9 +907,9 @@ static void vinc_next_buffer(struct vinc_stream *stream,
 		vinc_write(priv, STREAM_DMA_WR_CTR(stream->devnum, 0), wr_ctr);
 	}
 
-	v4l2_get_timestamp(&vb->v4l2_buf.timestamp);
+	v4l2_get_timestamp(&vbuf->timestamp);
 
-	vb->v4l2_buf.sequence = stream->sequence++;
+	vbuf->sequence = stream->sequence++;
 
 	vb2_buffer_done(vb, state);
 	spin_unlock(&stream->lock);
