@@ -249,12 +249,12 @@ static irqreturn_t vpout_drm_irq(int irq, void *arg)
 	return vpout_drm_crtc_irq(priv->crtc);
 }
 
-static int vpout_drm_enable_vblank(struct drm_device *dev, int crtc)
+static int vpout_drm_enable_vblank(struct drm_device *dev, unsigned int pipe)
 {
 	return 0;
 }
 
-static void vpout_drm_disable_vblank(struct drm_device *dev, int crtc)
+static void vpout_drm_disable_vblank(struct drm_device *dev, unsigned int pipe)
 {
 }
 
