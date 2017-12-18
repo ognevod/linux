@@ -282,13 +282,14 @@ static struct ov2715_priv *to_ov2715(const struct i2c_client *client)
 			struct ov2715_priv, subdev);
 }
 
-static int ov2715_enum_fmt(struct v4l2_subdev *sd, unsigned int index,
-			   u32 *code)
+static int ov2715_enum_mbus_code(struct v4l2_subdev *sd,
+				 struct v4l2_subdev_pad_config *cfg,
+				 struct v4l2_subdev_mbus_code_enum *code)
 {
-	if (index >= ARRAY_SIZE(ov2715_cfmts))
+	if (code->pad || code->index >= ARRAY_SIZE(ov2715_cfmts))
 		return -EINVAL;
 
-	*code = ov2715_cfmts[index].code;
+	code->code = ov2715_cfmts[code->index].code;
 	return 0;
 }
 
@@ -410,10 +411,12 @@ static int set_vflip(struct i2c_client *client, u32 vflip)
 }
 
 static int ov2715_try_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_mbus_framefmt *mf)
+			  struct v4l2_subdev_pad_config *cfg,
+			  struct v4l2_subdev_format *format)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 	struct ov2715_priv *priv = to_ov2715(client);
+	struct v4l2_mbus_framefmt *mf = &format->format;
 	const struct ov2715_color_format *fmt = ov2715_find_datafmt(mf->code);
 
 	dev_dbg(&client->dev, "%s: %dx%d\n", __func__, mf->width, mf->height);
@@ -590,14 +593,16 @@ static int ov2715_s_ctrl(struct v4l2_ctrl *ctrl)
 }
 
 static struct v4l2_subdev_video_ops ov2715_subdev_video_ops = {
-	.g_mbus_fmt	= ov2715_try_fmt,
-	.s_mbus_fmt	= ov2715_try_fmt,
-	.try_mbus_fmt	= ov2715_try_fmt,
 	.cropcap	= ov2715_cropcap,
 	.s_crop		= ov2715_s_crop,
 	.g_parm		= ov2715_g_parm,
-	.enum_mbus_fmt	= ov2715_enum_fmt,
 	.g_mbus_config	= ov2715_g_mbus_config,
+};
+
+static const struct v4l2_subdev_pad_ops ov2715_subdev_pad_ops = {
+	.enum_mbus_code = ov2715_enum_mbus_code,
+	.get_fmt	= ov2715_try_fmt,
+	.set_fmt	= ov2715_try_fmt,
 };
 
 static int ov2715_s_power(struct v4l2_subdev *sd, int on)
@@ -691,6 +696,7 @@ static struct v4l2_subdev_core_ops ov2715_subdev_core_ops = {
 static struct v4l2_subdev_ops ov2715_subdev_ops = {
 	.core	= &ov2715_subdev_core_ops,
 	.video	= &ov2715_subdev_video_ops,
+	.pad	= &ov2715_subdev_pad_ops,
 };
 
 static int ov2715_probe(struct i2c_client *client,
