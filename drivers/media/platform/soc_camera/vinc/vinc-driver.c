@@ -341,15 +341,18 @@ static int vinc_get_formats(struct soc_camera_device *icd, unsigned int idx,
 	struct vinc_cam *cam;
 	const u8 devnum = icd->devnum;
 	struct vinc_stream * const stream = &priv->stream[devnum];
-	u32 code;
 	int ret, i;
 	int formats_count;
+	struct v4l2_subdev_mbus_code_enum code = {
+		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
+		.index = idx,
+	};
 
-	ret = v4l2_subdev_call(sd, video, enum_mbus_fmt, idx, &code);
+	ret = v4l2_subdev_call(sd, pad, enum_mbus_code, NULL, &code);
 	if (ret < 0)
 		return ret;
 
-	switch (code) {
+	switch (code.code) {
 	case MEDIA_BUS_FMT_SBGGR8_1X8:
 	case MEDIA_BUS_FMT_SGBRG8_1X8:
 	case MEDIA_BUS_FMT_SGRBG8_1X8:
@@ -366,7 +369,7 @@ static int vinc_get_formats(struct soc_camera_device *icd, unsigned int idx,
 		if (xlate) {
 			for (i = 0; i < formats_count; i++) {
 				xlate->host_fmt = &vinc_formats[i];
-				xlate->code = code;
+				xlate->code = code.code;
 				xlate++;
 			}
 		}
@@ -378,7 +381,10 @@ static int vinc_get_formats(struct soc_camera_device *icd, unsigned int idx,
 
 	if (!icd->host_priv) {
 		struct v4l2_mbus_config mbus_cfg;
-		struct v4l2_mbus_framefmt mbus_fmt;
+		struct v4l2_subdev_format format = {
+			.which = V4L2_SUBDEV_FORMAT_ACTIVE,
+		};
+		struct v4l2_mbus_framefmt *mf = &format.format;
 
 		ret = vinc_create_controls(&icd->ctrl_handler, stream);
 		if (ret)
@@ -413,12 +419,12 @@ static int vinc_get_formats(struct soc_camera_device *icd, unsigned int idx,
 		if (!cam)
 			return -ENOMEM;
 
-		ret = v4l2_subdev_call(sd, video, g_mbus_fmt, &mbus_fmt);
+		ret = v4l2_subdev_call(sd, pad, get_fmt, NULL, &format);
 		if (ret < 0)
 			return ret;
-		cam->width = mbus_fmt.width;
-		cam->height = mbus_fmt.height;
-		cam->code = mbus_fmt.code;
+		cam->width = mf->width;
+		cam->height = mf->height;
+		cam->code = mf->code;
 
 		icd->host_priv = cam;
 	}
@@ -502,10 +508,13 @@ static u32 ycbcr_enc_adjust(u16 ycbcr_enc_cam, u32 ycbcr_enc_user,
 }
 
 static int __vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f,
-			  struct v4l2_mbus_framefmt *mbus_fmt)
+			  struct v4l2_subdev_format *format)
 {
 	struct v4l2_pix_format *pix = &f->fmt.pix;
 	struct v4l2_subdev *sd = soc_camera_to_subdev(icd);
+
+	struct v4l2_mbus_framefmt *mbus_fmt = &format->format;
+	struct v4l2_subdev_pad_config pad_cfg;
 
 	struct soc_mbus_pixelfmt *pixelfmt;
 	const struct soc_camera_format_xlate *xlate;
@@ -538,7 +547,8 @@ static int __vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f,
 	mbus_fmt->field = pix->field;
 	mbus_fmt->ycbcr_enc = pix->ycbcr_enc;
 	mbus_fmt->quantization = V4L2_QUANTIZATION_FULL_RANGE;
-	ret = v4l2_subdev_call(sd, video, try_mbus_fmt, mbus_fmt);
+
+	ret = v4l2_subdev_call(sd, pad, set_fmt, &pad_cfg, format);
 	if (ret) {
 		dev_warn(icd->parent, "Sensor can not negotiate format\n");
 		return ret;
@@ -580,9 +590,11 @@ static int __vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f,
 
 static int vinc_try_fmt(struct soc_camera_device *icd, struct v4l2_format *f)
 {
-	struct v4l2_mbus_framefmt mbus_fmt;
+	struct v4l2_subdev_format format = {
+		.which = V4L2_SUBDEV_FORMAT_TRY,
+	};
 
-	return __vinc_try_fmt(icd, f, &mbus_fmt);
+	return __vinc_try_fmt(icd, f, &format);
 }
 
 static enum vinc_ycbcr_encoding stream_set_ycbcr_enc(u32 ycbcr_enc)
@@ -615,21 +627,24 @@ static int vinc_set_fmt(struct soc_camera_device *icd, struct v4l2_format *f)
 	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
 	struct vinc_dev *priv = ici->priv;
 	struct v4l2_subdev *sd = soc_camera_to_subdev(icd);
-	struct v4l2_mbus_framefmt mbus_fmt;
+	struct v4l2_subdev_format format = {
+		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
+	};
+	struct v4l2_mbus_framefmt *mbus_fmt = &format.format;
 	const struct soc_camera_format_xlate *xlate;
 	const u8 devnum = icd->devnum;
 	struct vinc_stream * const stream = &priv->stream[devnum];
 	int ret;
 	int offset_x, offset_y;
 
-	ret = __vinc_try_fmt(icd, f, &mbus_fmt);
+	ret = __vinc_try_fmt(icd, f, &format);
 	if (ret)
 		return ret;
 
 	stream->ycbcr_enc = stream_set_ycbcr_enc(pix->ycbcr_enc);
-	stream->quantization = stream_set_quantization(mbus_fmt.quantization);
+	stream->quantization = stream_set_quantization(mbus_fmt->quantization);
 
-	switch (mbus_fmt.code) {
+	switch (mbus_fmt->code) {
 	case MEDIA_BUS_FMT_SRGGB8_1X8:
 	case MEDIA_BUS_FMT_SRGGB10_1X10:
 	case MEDIA_BUS_FMT_SRGGB12_1X12:
@@ -658,17 +673,17 @@ static int vinc_set_fmt(struct soc_camera_device *icd, struct v4l2_format *f)
 		stream->input_format = UNKNOWN;
 		dev_warn(icd->parent,
 			 "Sensor reported invalid media bus format %#x\n",
-			 mbus_fmt.code);
+			 mbus_fmt->code);
 		return -EINVAL;
 	}
 
-	offset_x = (mbus_fmt.width - pix->width) / 2;
-	offset_y = (mbus_fmt.height - pix->height) / 2;
+	offset_x = (mbus_fmt->width - pix->width) / 2;
+	offset_y = (mbus_fmt->height - pix->height) / 2;
 
-	ret = v4l2_subdev_call(sd, video, s_mbus_fmt, &mbus_fmt);
+	ret = v4l2_subdev_call(sd, pad, set_fmt, NULL, &format);
 	if (ret) {
 		dev_warn(icd->parent, "Sensor can't set format %#x, %dx%d\n",
-			 mbus_fmt.code, mbus_fmt.width, mbus_fmt.height);
+			 mbus_fmt->code, mbus_fmt->width, mbus_fmt->height);
 		return ret;
 	}
 
