@@ -1,0 +1,3 @@
+config ARCH_MCOM02
+	bool "MCom-02" if ARCH_MULTI_V7
+	select PLAT_MCOM

@@ -64,6 +64,7 @@
 #include <linux/device.h>
 #include <linux/dma-mapping.h>
 #include <linux/freezer.h>
+#include <linux/gpio/consumer.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/kernel.h>
@@ -215,7 +216,7 @@
 
 #define TX_ECHO_SKB_MAX	1
 
-#define MCP251X_OST_DELAY_MS	(5)
+#define MCP251X_OST_DELAY_MS	(10)
 
 #define DEVICE_NAME "mcp251x"
 
@@ -267,6 +268,7 @@ struct mcp251x_priv {
 #define AFTER_SUSPEND_POWER 4
 #define AFTER_SUSPEND_RESTART 8
 	int restart_tx;
+	struct gpio_desc *reset;
 	struct regulator *power;
 	struct regulator *transceiver;
 	struct clk *clk;
@@ -640,7 +642,7 @@ static int mcp251x_hw_reset(struct spi_device *spi)
 
 	/* Wait for oscillator startup timer after reset */
 	mdelay(MCP251X_OST_DELAY_MS);
-	
+
 	reg = mcp251x_read_reg(spi, CANSTAT);
 	if ((reg & CANCTRL_REQOP_MASK) != CANCTRL_REQOP_CONF)
 		return -ENODEV;
@@ -1091,6 +1093,14 @@ static int mcp251x_can_probe(struct spi_device *spi)
 	if ((PTR_ERR(priv->power) == -EPROBE_DEFER) ||
 	    (PTR_ERR(priv->transceiver) == -EPROBE_DEFER)) {
 		ret = -EPROBE_DEFER;
+		goto out_clk;
+	}
+
+	priv->reset = devm_gpiod_get_optional(&spi->dev, "reset",
+					      GPIOD_OUT_LOW);
+	if (IS_ERR(priv->reset)) {
+		dev_err(&spi->dev, "failed to request reset GPIO\n");
+		ret = PTR_ERR(priv->reset);
 		goto out_clk;
 	}
 

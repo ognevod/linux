@@ -23,15 +23,22 @@
 #include <linux/spinlock.h>
 #include <linux/platform_data/gpio-dwapb.h>
 #include <linux/slab.h>
+#include <linux/gpio/driver.h>
+
+#include "gpiolib.h"
 
 #define GPIO_SWPORTA_DR		0x00
 #define GPIO_SWPORTA_DDR	0x04
+#define GPIO_SWPORTA_CTL	0x08
 #define GPIO_SWPORTB_DR		0x0c
 #define GPIO_SWPORTB_DDR	0x10
+#define GPIO_SWPORTB_CTL	0x14
 #define GPIO_SWPORTC_DR		0x18
 #define GPIO_SWPORTC_DDR	0x1c
+#define GPIO_SWPORTC_CTL	0x20
 #define GPIO_SWPORTD_DR		0x24
 #define GPIO_SWPORTD_DDR	0x28
+#define GPIO_SWPORTD_CTL	0x2c
 #define GPIO_INTEN		0x30
 #define GPIO_INTMASK		0x34
 #define GPIO_INTTYPE_LEVEL	0x38
@@ -48,6 +55,7 @@
 #define GPIO_EXT_PORT_SIZE	(GPIO_EXT_PORTB - GPIO_EXT_PORTA)
 #define GPIO_SWPORT_DR_SIZE	(GPIO_SWPORTB_DR - GPIO_SWPORTA_DR)
 #define GPIO_SWPORT_DDR_SIZE	(GPIO_SWPORTB_DDR - GPIO_SWPORTA_DDR)
+#define GPIO_SWPORT_CTL_SIZE	(GPIO_SWPORTB_CTL - GPIO_SWPORTA_CTL)
 
 struct dwapb_gpio;
 
@@ -171,6 +179,8 @@ static void dwapb_irq_enable(struct irq_data *d)
 	val |= BIT(d->hwirq);
 	dwapb_write(gpio, GPIO_INTEN, val);
 	spin_unlock_irqrestore(&bgc->lock, flags);
+
+	irq_gc_mask_clr_bit(d);
 }
 
 static void dwapb_irq_disable(struct irq_data *d)
@@ -188,15 +198,70 @@ static void dwapb_irq_disable(struct irq_data *d)
 	spin_unlock_irqrestore(&bgc->lock, flags);
 }
 
+static int dwapb_gpio_request(struct gpio_chip *chip, unsigned offset)
+{
+	struct bgpio_chip *bgc = to_bgpio_chip(chip);
+	struct dwapb_gpio_port *port = to_dwapb_gpio_port(bgc);
+	struct dwapb_gpio *gpio = port->gpio;
+	unsigned ctl;
+	unsigned long value;
+
+	if (offset >= chip->ngpio)
+		return -EINVAL;
+
+	ctl = GPIO_SWPORTA_CTL + (port->idx * GPIO_SWPORT_CTL_SIZE);
+
+	value = dwapb_read(gpio, ctl);
+	__clear_bit(offset, &value);
+	dwapb_write(gpio, ctl, value);
+
+	return 0;
+}
+
+static void dwapb_gpio_free(struct gpio_chip *chip, unsigned offset)
+{
+	struct bgpio_chip *bgc = to_bgpio_chip(chip);
+	struct dwapb_gpio_port *port = to_dwapb_gpio_port(bgc);
+	struct dwapb_gpio *gpio = port->gpio;
+	unsigned ctl;
+	unsigned long value;
+
+	if (offset >= chip->ngpio)
+		return;
+
+	if (test_bit(FLAG_USED_AS_IRQ, &bgc->gc.desc[offset].flags))
+		return;
+
+	ctl = GPIO_SWPORTA_CTL + (port->idx * GPIO_SWPORT_CTL_SIZE);
+
+	value = dwapb_read(gpio, ctl);
+	__set_bit(offset, &value);
+	dwapb_write(gpio, ctl, value);
+}
+
 static int dwapb_irq_reqres(struct irq_data *d)
 {
 	struct irq_chip_generic *igc = irq_data_get_irq_chip_data(d);
 	struct dwapb_gpio *gpio = igc->private;
 	struct bgpio_chip *bgc = &gpio->ports[0].bgc;
+	unsigned long hwirq = irqd_to_hwirq(d);
 
-	if (gpiochip_lock_as_irq(&bgc->gc, irqd_to_hwirq(d))) {
+	/* We can not use gpiod_request() here, because then two devices could
+	 * not request the same IRQ. Thus shared IRQ on GPIO will not work. */
+
+	/* BUG: Pin X is requested by IRQ. Then pin X is exported via sysfs.
+	 * Then IRQ is requested via sysfs. Then if you unexport pin X, it will
+	 * be configured to hardware function and IRQ will not work. */
+	if (!gpiochip_is_requested(&bgc->gc, hwirq))
+		if (dwapb_gpio_request(&bgc->gc, hwirq)) {
+			dev_err(gpio->dev,
+				"unable to request pin %lu for IRQ\n", hwirq);
+			return -EINVAL;
+		}
+
+	if (gpiochip_lock_as_irq(&bgc->gc, hwirq)) {
 		dev_err(gpio->dev, "unable to lock HW IRQ %lu for IRQ\n",
-			irqd_to_hwirq(d));
+			hwirq);
 		return -EINVAL;
 	}
 	return 0;
@@ -207,8 +272,12 @@ static void dwapb_irq_relres(struct irq_data *d)
 	struct irq_chip_generic *igc = irq_data_get_irq_chip_data(d);
 	struct dwapb_gpio *gpio = igc->private;
 	struct bgpio_chip *bgc = &gpio->ports[0].bgc;
+	unsigned hwirq = (unsigned)irqd_to_hwirq(d);
 
-	gpiochip_unlock_as_irq(&bgc->gc, irqd_to_hwirq(d));
+	gpiochip_unlock_as_irq(&bgc->gc, hwirq);
+
+	if (!gpiochip_is_requested(&bgc->gc, hwirq))
+		dwapb_gpio_free(&bgc->gc, hwirq);
 }
 
 static int dwapb_irq_set_type(struct irq_data *d, u32 type)
@@ -347,22 +416,26 @@ static void dwapb_configure_irqs(struct dwapb_gpio *gpio,
 	irq_gc->chip_types[1].type = IRQ_TYPE_EDGE_BOTH;
 	irq_gc->chip_types[1].handler = handle_edge_irq;
 
-	if (!pp->irq_shared) {
-		irq_set_chained_handler_and_data(pp->irq, dwapb_irq_handler,
-						 gpio);
-	} else {
-		/*
-		 * Request a shared IRQ since where MFD would have devices
-		 * using the same irq pin
-		 */
-		err = devm_request_irq(gpio->dev, pp->irq,
-				       dwapb_irq_handler_mfd,
-				       IRQF_SHARED, "gpio-dwapb-mfd", gpio);
-		if (err) {
-			dev_err(gpio->dev, "error requesting IRQ\n");
-			irq_domain_remove(gpio->domain);
-			gpio->domain = NULL;
-			return;
+	for (i = 0; i < ARRAY_SIZE(pp->irqs) && pp->irqs[i]; i++) {
+		if (!pp->irq_shared) {
+			irq_set_chained_handler(pp->irqs[i], dwapb_irq_handler);
+			irq_set_handler_data(pp->irqs[i], gpio);
+		} else {
+			/*
+			 * Request a shared IRQ since where MFD would have
+			 * devices using the same irq pin
+			 */
+			err = devm_request_irq(gpio->dev, pp->irqs[i],
+					       dwapb_irq_handler_mfd,
+					       IRQF_SHARED, "gpio-dwapb-mfd",
+					       gpio);
+			if (err) {
+				dev_err(gpio->dev, "error requesting IRQ %u\n",
+					pp->irqs[i]);
+				irq_domain_remove(gpio->domain);
+				gpio->domain = NULL;
+				return;
+			}
 		}
 	}
 
@@ -420,17 +493,22 @@ static int dwapb_gpio_add_port(struct dwapb_gpio *gpio,
 		return err;
 	}
 
+	dwapb_write(gpio, GPIO_SWPORTA_CTL +
+			(pp->idx * GPIO_SWPORT_CTL_SIZE), ~0UL);
+
 #ifdef CONFIG_OF_GPIO
 	port->bgc.gc.of_node = pp->node;
 #endif
 	port->bgc.gc.ngpio = pp->ngpio;
 	port->bgc.gc.base = pp->gpio_base;
+	port->bgc.gc.request = dwapb_gpio_request;
+	port->bgc.gc.free = dwapb_gpio_free;
 
 	/* Only port A support debounce */
 	if (pp->idx == 0)
 		port->bgc.gc.set_debounce = dwapb_gpio_set_debounce;
 
-	if (pp->irq)
+	if (pp->irqs[0])
 		dwapb_configure_irqs(gpio, port, pp);
 
 	err = gpiochip_add(&port->bgc.gc);
@@ -504,11 +582,22 @@ dwapb_gpio_get_pdata_of(struct device *dev)
 		 */
 		if (pp->idx == 0 &&
 		    of_property_read_bool(port_np, "interrupt-controller")) {
-			pp->irq = irq_of_parse_and_map(port_np, 0);
-			if (!pp->irq) {
+			unsigned i;
+			unsigned irq_count = of_irq_count(port_np);
+
+			if (irq_count == 0) {
 				dev_warn(dev, "no irq for bank %s\n",
-					 port_np->full_name);
+					port_np->full_name);
 			}
+
+			if (irq_count > ARRAY_SIZE(pp->irqs)) {
+				irq_count = ARRAY_SIZE(pp->irqs);
+				dev_warn(dev, "only %u irqs will be used\n",
+					 irq_count);
+			}
+
+			for (i = 0; i < irq_count; i++)
+				pp->irqs[i] = irq_of_parse_and_map(port_np, i);
 		}
 
 		pp->irq_shared	= false;

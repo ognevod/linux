@@ -303,7 +303,8 @@ static int dw_spi_transfer_one(struct spi_master *master,
 	/* Handle per transfer options for bpw and speed */
 	if (transfer->speed_hz != chip->speed_hz) {
 		/* clk_div doesn't support odd number */
-		clk_div = (dws->max_freq / transfer->speed_hz + 1) & 0xfffe;
+		clk_div = roundup(DIV_ROUND_UP(dws->max_freq,
+					       transfer->speed_hz), 2);
 
 		chip->speed_hz = transfer->speed_hz;
 		chip->clk_div = clk_div;
@@ -519,6 +520,9 @@ int dw_spi_add_host(struct device *dev, struct dw_spi *dws)
 			master->can_dma = dws->dma_ops->can_dma;
 		}
 	}
+
+	/* Disable CS toggle. This is temporary hack. */
+	dw_writel(dws, DW_SPI_TOGGLE, 0);
 
 	spi_master_set_devdata(master, dws);
 	ret = devm_spi_register_master(dev, master);

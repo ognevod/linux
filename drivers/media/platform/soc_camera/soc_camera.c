@@ -617,7 +617,10 @@ static int soc_camera_add_device(struct soc_camera_device *icd)
 	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
 	int ret;
 
-	if (ici->icd)
+	if (icd->devnum >= SOC_CAMERA_MAX_CLIENTS)
+		return -EINVAL;
+
+	if (ici->icds[icd->devnum])
 		return -EBUSY;
 
 	if (!icd->clk) {
@@ -632,7 +635,9 @@ static int soc_camera_add_device(struct soc_camera_device *icd)
 			goto eadd;
 	}
 
-	ici->icd = icd;
+	ici->icds[icd->devnum] = icd;
+	if (icd->devnum == 0)
+		ici->icd = icd;
 
 	return 0;
 
@@ -646,14 +651,16 @@ static void soc_camera_remove_device(struct soc_camera_device *icd)
 {
 	struct soc_camera_host *ici = to_soc_camera_host(icd->parent);
 
-	if (WARN_ON(icd != ici->icd))
+	if (WARN_ON(icd != ici->icds[icd->devnum]))
 		return;
 
 	if (ici->ops->remove)
 		ici->ops->remove(icd);
 	if (!icd->clk)
 		soc_camera_clock_stop(ici);
-	ici->icd = NULL;
+	ici->icds[icd->devnum] = NULL;
+	if (icd->devnum == 0)
+		ici->icd = NULL;
 }
 
 static int soc_camera_open(struct file *file)
@@ -1723,18 +1730,17 @@ static void scan_of_host(struct soc_camera_host *ici)
 		}
 
 		/* so we now have a remote node to connect */
-		if (!i)
+		if (i < SOC_CAMERA_MAX_CLIENTS)
 			soc_of_bind(ici, epn, ren->parent);
 
 		of_node_put(ren);
+		of_node_put(epn);
 
-		if (i) {
-			dev_err(dev, "multiple subdevices aren't supported yet!\n");
+		if (i >= SOC_CAMERA_MAX_CLIENTS) {
+			dev_err(dev, "Too many subdevices\n");
 			break;
 		}
 	}
-
-	of_node_put(epn);
 }
 
 #else

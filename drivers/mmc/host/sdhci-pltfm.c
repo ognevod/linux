@@ -106,6 +106,9 @@ void sdhci_get_of_property(struct platform_device *pdev)
 
 	if (of_find_property(np, "enable-sdio-wakeup", NULL))
 		host->mmc->pm_caps |= MMC_PM_WAKE_SDIO_IRQ;
+
+	if (of_get_property(np, "broken-cap-clock-base", NULL))
+		host->quirks |= SDHCI_QUIRK_CAP_CLOCK_BASE_BROKEN;
 }
 #else
 void sdhci_get_of_property(struct platform_device *pdev) {}

@@ -359,6 +359,18 @@ config USB_FOTG210_HCD
 	  To compile this driver as a module, choose M here: the
 	  module will be called fotg210-hcd.
 
+config USB_FT313H_HCD
+	tristate "FT313H HCD support"
+	depends on USB
+	---help---
+	  The FTDI FT313H is an USB host controller.
+
+	  Enable this option if your board has this chip, and you want
+	  to use it as a host controller. If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called ft313-hcd.
+
 config USB_MAX3421_HCD
 	tristate "MAX3421 HCD (USB-over-SPI) support"
 	depends on USB && SPI

@@ -266,6 +266,8 @@ static int dw_i2c_plat_remove(struct platform_device *pdev)
 	if (!dev->pm_runtime_disabled)
 		pm_runtime_disable(&pdev->dev);
 
+	clk_disable_unprepare(dev->clk);
+
 	return 0;
 }
 

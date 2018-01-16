@@ -10,6 +10,8 @@ Required properties:
  - interrupts: Should contain IRQ line for the CAN controller.
 
 Optional properties:
+ - reset-gpios: GPIO specifier for the controller reset line. If specified,
+   the reset line is deasserted at probe time.
  - vdd-supply: Regulator that powers the CAN controller.
  - xceiver-supply: Regulator that powers the CAN transceiver.
 
@@ -20,6 +22,7 @@ Example:
 		clocks = <&clk24m>;
 		interrupt-parent = <&gpio4>;
 		interrupts = <13 0x2>;
+		reset-gpios = <&gpio2 16 GPIO_ACTIVE_LOW>;
 		vdd-supply = <&reg5v0>;
 		xceiver-supply = <&reg5v0>;
 	};
