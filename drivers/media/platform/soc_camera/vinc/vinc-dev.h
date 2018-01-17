@@ -487,6 +487,7 @@ struct vinc_stream {
 	int sequence;
 
 	u8 devnum;
+	bool pport_low_bits;
 
 	struct work_struct stat_work;
 

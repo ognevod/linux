@@ -1355,7 +1355,9 @@ static int auto_exp_step(struct v4l2_subdev *sd, struct vinc_dev *priv,
 		return rc;
 
 	kernel_neon_begin();
-	luma = vinc_neon_calculate_luma_avg(add, stream->ycbcr_enc, zone);
+	luma = vinc_neon_calculate_luma_avg(stream->input_format, add,
+					    stream->ycbcr_enc, zone,
+					    stream->pport_low_bits);
 	vinc_neon_calculate_gain_exp(luma, cur_gain.value, cur_exp.value * 100,
 				     priv->max_gain, priv->max_exp * 100, &gain,
 					&exp);

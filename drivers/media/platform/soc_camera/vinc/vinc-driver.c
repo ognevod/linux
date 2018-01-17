@@ -24,6 +24,7 @@
 #include <linux/mm.h>
 #include <linux/moduleparam.h>
 #include <linux/of.h>
+#include <linux/of_graph.h>
 #include <linux/time.h>
 #include <linux/slab.h>
 #include <linux/device.h>
@@ -367,6 +368,7 @@ static int vinc_get_formats(struct soc_camera_device *icd, unsigned int idx,
 	case MEDIA_BUS_FMT_SGBRG12_1X12:
 	case MEDIA_BUS_FMT_SGRBG12_1X12:
 	case MEDIA_BUS_FMT_SRGGB12_1X12:
+	case MEDIA_BUS_FMT_UYVY8_2X8:
 		formats_count = ARRAY_SIZE(vinc_formats);
 		if (xlate) {
 			for (i = 0; i < formats_count; i++) {
@@ -670,6 +672,9 @@ static int vinc_set_fmt(struct soc_camera_device *icd, struct v4l2_format *f)
 	case MEDIA_BUS_FMT_SBGGR12_1X12:
 		stream->input_format = BAYER;
 		stream->bayer_mode = 3;
+		break;
+	case MEDIA_BUS_FMT_UYVY8_2X8:
+		stream->input_format = YCbCr;
 		break;
 	default:
 		stream->input_format = UNKNOWN;
@@ -1063,7 +1068,7 @@ static int vinc_probe(struct platform_device *pdev)
 {
 	struct vinc_dev *priv;
 	struct resource *res;
-	struct device_node *np = pdev->dev.of_node;
+	struct device_node *np = pdev->dev.of_node, *endpoint = NULL;
 	int err;
 	u32 id;
 	u32 cmos_ctr = 0, pclkdiv = 0, pclkdiv_scale = 1;
@@ -1105,6 +1110,12 @@ static int vinc_probe(struct platform_device *pdev)
 		priv->stream[i].input_format = BAYER;
 		priv->stream[i].fdecim = 1;
 		priv->stream[i].devnum = i;
+		endpoint = of_graph_get_next_endpoint(pdev->dev.of_node,
+						      endpoint);
+		if (!endpoint)
+			break;
+		priv->stream[i].pport_low_bits = of_property_read_bool(endpoint,
+						"elvees,pport-low-bits");
 	}
 
 	priv->ici.priv = priv;

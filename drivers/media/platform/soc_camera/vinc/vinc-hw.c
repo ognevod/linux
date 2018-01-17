@@ -168,6 +168,14 @@ void vinc_configure_input(struct vinc_stream *stream)
 					PINTERFACE_CFG_PORT_NUM_SYNC(devnum));
 			vinc_write(priv, PINTERFACE_CCMOV(devnum, 0),
 				   0x1 + devnum);
+		} else if (stream->input_format == YCbCr) {
+			vinc_write(priv, PINTERFACE_CFG(devnum),
+					PINTERFACE_CFG_CYCLE_NUM(4) |
+					PINTERFACE_CFG_PIXEL_NUM_EVEN(2) |
+					PINTERFACE_CFG_PORT_NUM_SYNC(devnum));
+			/* TODO: Add macros for CCMOV settings */
+			vinc_write(priv, PINTERFACE_CCMOV(devnum, 0),
+				   0x091D0915);
 		} else
 			dev_err(priv->ici.v4l2_dev.dev, "Unknown input format %#x",
 				stream->input_format);
@@ -181,12 +189,63 @@ void vinc_configure_input(struct vinc_stream *stream)
 			stream->video_source);
 }
 
+/*
+ * TODO: These macros are here to support vinc_configure_m420(). When they will
+ * be converted to use functions from vinc-neon.c, the macros must be removed.
+ */
+#define COEFF_FLOAT_TO_U16(coeff, scaling) ((u16)((s16)((coeff) *  \
+		(1 << (15 - (scaling))) + ((coeff) < 0 ? -0.5 : 0.5))))
+
+#define OFFSET_FLOAT_TO_U16(offset) ((u16)((s16)(offset * 4)))
+
 static void vinc_configure_bgr(struct vinc_dev *priv,
 			       struct soc_camera_device *icd)
 {
 	const u8 devnum = icd->devnum;
+	u8 ct_en;
+	u32 proc_cfg;
+	struct vinc_stream *const stream = &priv->stream[devnum];
+	struct vinc_cc *ct = stream->cluster.ct.ct->p_cur.p;
 
-	v4l2_ctrl_s_ctrl(priv->stream[devnum].cluster.ct.enable, 0);
+	if (stream->input_format == YCbCr) {
+		ct_en = 1;
+		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(devnum));
+		proc_cfg |= STREAM_PROC_CFG_422TO444_EN |
+				STREAM_PROC_CFG_CT_SRC(1);
+		vinc_write(priv, STREAM_PROC_CFG(devnum), proc_cfg);
+		if (stream->pport_low_bits) {
+			/* YCbCr->RGB conversion matrix and Y*4, Cb*4, Cr*4 */
+			ct->scaling = 3;
+			ct->coeff[0] = COEFF_FLOAT_TO_U16(4, 3);
+			ct->coeff[1] = COEFF_FLOAT_TO_U16(-1.376, 3);
+			ct->coeff[2] = COEFF_FLOAT_TO_U16(-2.856, 3);
+			ct->coeff[3] = COEFF_FLOAT_TO_U16(4, 3);
+			ct->coeff[4] = COEFF_FLOAT_TO_U16(7.088, 3);
+			ct->coeff[5] = COEFF_FLOAT_TO_U16(0, 3);
+			ct->coeff[6] = COEFF_FLOAT_TO_U16(4, 3);
+			ct->coeff[7] = COEFF_FLOAT_TO_U16(0, 3);
+			ct->coeff[8] = COEFF_FLOAT_TO_U16(5.608, 3);
+		} else {
+			ct->scaling = 1;
+			ct->coeff[0] = COEFF_FLOAT_TO_U16(1, 1);
+			ct->coeff[1] = COEFF_FLOAT_TO_U16(-0.3918, 1);
+			ct->coeff[2] = COEFF_FLOAT_TO_U16(-0.7141, 1);
+			ct->coeff[3] = COEFF_FLOAT_TO_U16(1, 3);
+			ct->coeff[4] = COEFF_FLOAT_TO_U16(1.772, 1);
+			ct->coeff[5] = COEFF_FLOAT_TO_U16(0, 1);
+			ct->coeff[6] = COEFF_FLOAT_TO_U16(1, 1);
+			ct->coeff[7] = COEFF_FLOAT_TO_U16(0, 1);
+			ct->coeff[8] = COEFF_FLOAT_TO_U16(1.402, 1);
+		}
+		ct->offset[0] = OFFSET_FLOAT_TO_U16(2167.3422);
+		ct->offset[1] = OFFSET_FLOAT_TO_U16(-3629.056);
+		ct->offset[2] = OFFSET_FLOAT_TO_U16(-2871.296);
+
+		set_cc_ct(priv, devnum, ct, 1);
+	} else
+		ct_en = 0;
+
+	v4l2_ctrl_s_ctrl(priv->stream[devnum].cluster.ct.enable, ct_en);
 
 	vinc_write(priv, STREAM_DMA_FBUF_CFG(devnum, 0), 0x00001);
 	vinc_write(priv, STREAM_DMA_FBUF_LSTEP(devnum, 0, 0),
@@ -197,13 +256,7 @@ static void vinc_configure_bgr(struct vinc_dev *priv,
 		   STREAM_DMA_PIXEL_FMT_FORMAT(FORMAT_BGR));
 }
 
-/*
- * TODO: This macro is here to support vinc_configure_m420(). When it will be
- * converted to use functions from vinc-neon.c, the macro must be removed.
- */
-#define COEFF_FLOAT_TO_U16(coeff, scaling) ((u16)((s16)((coeff) *  \
-		(1 << (15 - (scaling))) + ((coeff) < 0 ? -0.5 : 0.5))))
-
+/* TODO: Add support for YCbCr input format */
 static void vinc_configure_m420(struct vinc_dev *priv,
 				struct soc_camera_device *icd)
 {
