@@ -488,6 +488,7 @@ struct vinc_stream {
 
 	u8 devnum;
 	bool pport_low_bits;
+	u8 ifacenum;
 
 	struct work_struct stat_work;
 
@@ -506,7 +507,7 @@ struct vinc_dev {
 	int irq_stream[2];
 	void __iomem *base;
 
-	struct vinc_stream stream[2];
+	struct vinc_stream stream[4];
 
 	u32 reset_active;
 

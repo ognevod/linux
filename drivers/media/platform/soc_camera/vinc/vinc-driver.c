@@ -137,24 +137,25 @@ static void vinc_start_capture(struct vinc_dev *priv,
 {
 	dma_addr_t phys_addr_top;
 	const u8 devnum = icd->devnum;
+	const u8 channel = devnum & 0x01;
 	struct vinc_stream * const stream = &priv->stream[devnum];
-	u32 wr_ctr = vinc_read(priv, STREAM_DMA_WR_CTR(devnum, 0));
+	u32 wr_ctr = vinc_read(priv, STREAM_DMA_WR_CTR(channel, 0));
 
 	wr_ctr &= ~DMA_WR_CTR_DMA_EN;
-	vinc_write(priv, STREAM_DMA_WR_CTR(devnum, 0), wr_ctr);
+	vinc_write(priv, STREAM_DMA_WR_CTR(channel, 0), wr_ctr);
 	if (stream->started)
-		vinc_stream_enable(priv, devnum, true);
+		vinc_stream_enable(priv, channel, true);
 
 	phys_addr_top = vb2_dma_contig_plane_dma_addr(stream->active, 0);
 	switch (icd->current_fmt->host_fmt->fourcc) {
 	case V4L2_PIX_FMT_BGR32:
-		vinc_write(priv, STREAM_DMA_FBUF_BASE(devnum, 0, 0),
+		vinc_write(priv, STREAM_DMA_FBUF_BASE(channel, 0, 0),
 			   phys_addr_top);
 		break;
 	case V4L2_PIX_FMT_M420:
-		vinc_write(priv, STREAM_DMA_FBUF_BASE(devnum, 0, 0),
+		vinc_write(priv, STREAM_DMA_FBUF_BASE(channel, 0, 0),
 			   phys_addr_top + (stream->crop2.c.width << 1));
-		vinc_write(priv, STREAM_DMA_FBUF_BASE(devnum, 0, 1),
+		vinc_write(priv, STREAM_DMA_FBUF_BASE(channel, 0, 1),
 			   phys_addr_top);
 		break;
 	default:
@@ -163,7 +164,7 @@ static void vinc_start_capture(struct vinc_dev *priv,
 		return;
 	}
 	wr_ctr |= DMA_WR_CTR_DMA_EN;
-	vinc_write(priv, STREAM_DMA_WR_CTR(devnum, 0), wr_ctr);
+	vinc_write(priv, STREAM_DMA_WR_CTR(channel, 0), wr_ctr);
 }
 
 static void vinc_buf_queue(struct vb2_buffer *vb)
@@ -205,10 +206,15 @@ static int vinc_start_streaming(struct vb2_queue *q, unsigned int count)
 	int retry_count = 10;
 	unsigned long timeout;
 	const u8 devnum = icd->devnum;
+	const u8 channel = devnum & 0x01;
 	struct vinc_stream * const stream = &priv->stream[devnum];
+	const u8 ifacenum = stream->ifacenum & 0x01;
 	u32 csi2_port_sys_ctr = vinc_read(priv, CSI2_PORT_SYS_CTR(0));
 	u32 csi2_intr;
 	u32 stream_ctr;
+
+	if (priv->stream[((~devnum) & 0x02) | channel].started)
+		return -EBUSY;
 
 	dev_dbg(icd->parent, "Start streaming (count: %u)\n", count);
 
@@ -217,17 +223,18 @@ static int vinc_start_streaming(struct vb2_queue *q, unsigned int count)
 		 * Check that VINC captures video and reenable MIPI port
 		 * otherwise. */
 		do {
-			vinc_write(priv, CSI2_PORT_SYS_CTR(devnum),
+			vinc_write(priv, CSI2_PORT_SYS_CTR(ifacenum),
 				   csi2_port_sys_ctr &
 				   ~CSI2_PORT_SYS_CTR_ENABLE);
-			vinc_write(priv, CSI2_PORT_SYS_CTR(devnum),
+			vinc_write(priv, CSI2_PORT_SYS_CTR(ifacenum),
 				   csi2_port_sys_ctr |
 				   CSI2_PORT_SYS_CTR_ENABLE);
 			vinc_configure_input(stream);
 
 			timeout = jiffies + msecs_to_jiffies(30);
 			do {
-				csi2_intr = vinc_read(priv, CSI2_INTR(devnum));
+				csi2_intr = vinc_read(priv,
+						      CSI2_INTR(ifacenum));
 				if (!(csi2_intr & BIT(9)))
 					schedule();
 				else
@@ -251,10 +258,11 @@ static int vinc_start_streaming(struct vb2_queue *q, unsigned int count)
 	} else if (stream->video_source == V4L2_MBUS_PARALLEL)
 		vinc_configure_input(stream);
 
-	vinc_write(priv, STREAM_DMA_WR_CTR(devnum, 0), DMA_WR_CTR_FRAME_END_EN);
+	vinc_write(priv, STREAM_DMA_WR_CTR(channel, 0),
+		   DMA_WR_CTR_FRAME_END_EN);
 	stream_ctr = vinc_read(priv, STREAM_CTR);
 	stream_ctr |= STREAM_CTR_DMA_CHANNELS_ENABLE;
-	stream_ctr |= STREAM_CTR_STREAM_ENABLE(devnum);
+	stream_ctr |= STREAM_CTR_STREAM_ENABLE(channel);
 	vinc_write(priv, STREAM_CTR, stream_ctr);
 
 	stream->sequence = 0;
@@ -275,16 +283,17 @@ static void vinc_stop_streaming(struct vb2_queue *q)
 	struct vinc_dev *priv = ici->priv;
 	struct vinc_buffer *buf, *tmp;
 	const u8 devnum = icd->devnum;
+	const u8 channel = devnum & 0x01;
 	struct vinc_stream * const stream = &priv->stream[devnum];
 	u32 csi2_port_sys_ctr;
 
 	dev_dbg(icd->parent, "Stop streaming\n");
 
-	vinc_stream_enable(priv, devnum, false);
+	vinc_stream_enable(priv, channel, false);
 
-	vinc_write(priv, STREAM_DMA_WR_CTR(devnum, 0), 0x0);
-	csi2_port_sys_ctr = vinc_read(priv, CSI2_PORT_SYS_CTR(devnum));
-	vinc_write(priv, CSI2_PORT_SYS_CTR(devnum),
+	vinc_write(priv, STREAM_DMA_WR_CTR(channel, 0), 0x0);
+	csi2_port_sys_ctr = vinc_read(priv, CSI2_PORT_SYS_CTR(channel));
+	vinc_write(priv, CSI2_PORT_SYS_CTR(channel),
 		   csi2_port_sys_ctr & ~CSI2_PORT_SYS_CTR_ENABLE);
 	/* GLOBAL_ENABLE still enable for sensor clocks */
 
@@ -888,6 +897,7 @@ static void vinc_next_buffer(struct vinc_stream *stream,
 	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
 	struct vinc_dev *priv = container_of(stream, struct vinc_dev,
 					     stream[stream->devnum]);
+	const u8 channel = stream->devnum & 0x01;
 
 	if (!vb)
 		return;
@@ -901,7 +911,7 @@ static void vinc_next_buffer(struct vinc_stream *stream,
 		vinc_start_capture(priv, priv->ici.icds[stream->devnum]);
 	} else {
 		u32 wr_ctr = vinc_read(priv,
-				       STREAM_DMA_WR_CTR(stream->devnum, 0));
+				       STREAM_DMA_WR_CTR(channel, 0));
 
 		stream->active = NULL;
 
@@ -909,11 +919,11 @@ static void vinc_next_buffer(struct vinc_stream *stream,
 		 * If tasklet is not scheduled then disable stream here.
 		 */
 		if (stream->stat_odd) {
-			vinc_stream_enable(priv, stream->devnum, false);
+			vinc_stream_enable(priv, channel, false);
 			stream->stat_odd = true;
 		}
 		wr_ctr &= ~DMA_WR_CTR_DMA_EN;
-		vinc_write(priv, STREAM_DMA_WR_CTR(stream->devnum, 0), wr_ctr);
+		vinc_write(priv, STREAM_DMA_WR_CTR(channel, 0), wr_ctr);
 	}
 
 	v4l2_get_timestamp(&vbuf->timestamp);
@@ -949,23 +959,29 @@ static void vinc_eof_handler(struct vinc_stream *stream)
 static irqreturn_t vinc_irq_stream(int irq, void *data)
 {
 	struct vinc_stream *stream = (struct vinc_stream *)data;
-	const u8 devnum = stream->devnum;
+	u8 devnum = stream->devnum;
+	const u8 channel = devnum & 0x01;
 	struct vinc_dev *priv = container_of(stream, struct vinc_dev,
 					     stream[devnum]);
-	u32 int_status = vinc_read(priv, STREAM_INTERRUPT(devnum));
+	u32 int_status = vinc_read(priv, STREAM_INTERRUPT(channel));
+
+	if (!stream->started) {
+		devnum = ((~devnum) & 0x02) | channel;
+		stream = &priv->stream[devnum];
+	}
 
 	dev_dbg(priv->ici.v4l2_dev.dev, "Interrupt stream%d 0x%x\n", devnum,
 		int_status);
 	if (int_status & STREAM_INTERRUPT_PROC) {
-		u32 int_proc = vinc_read(priv, STREAM_STATUS(devnum));
+		u32 int_proc = vinc_read(priv, STREAM_STATUS(channel));
 		u32 stream_ctr = vinc_read(priv, STREAM_CTR);
-		u32 wr_ctr = vinc_read(priv, STREAM_DMA_WR_CTR(devnum, 0));
+		u32 wr_ctr = vinc_read(priv, STREAM_DMA_WR_CTR(channel, 0));
 
-		stream_ctr &= ~STREAM_CTR_STREAM_ENABLE(devnum);
+		stream_ctr &= ~STREAM_CTR_STREAM_ENABLE(channel);
 		vinc_write(priv, STREAM_CTR, stream_ctr);
 
 		wr_ctr &= ~DMA_WR_CTR_DMA_EN;
-		vinc_write(priv, STREAM_DMA_WR_CTR(devnum, 0), wr_ctr);
+		vinc_write(priv, STREAM_DMA_WR_CTR(channel, 0), wr_ctr);
 
 		vinc_next_buffer(stream, VB2_BUF_STATE_ERROR);
 
@@ -973,11 +989,11 @@ static irqreturn_t vinc_irq_stream(int irq, void *data)
 			 "Short frame/line. Stream%d_status: 0x%x\n", devnum,
 			 int_proc);
 
-		stream_ctr |= STREAM_CTR_STREAM_ENABLE(devnum);
+		stream_ctr |= STREAM_CTR_STREAM_ENABLE(channel);
 		vinc_write(priv, STREAM_CTR, stream_ctr);
 	}
 	if (int_status & STREAM_INTERRUPT_DMA0) {
-		u32 int_d0 = vinc_read(priv, STREAM_DMA_WR_STATUS(devnum, 0));
+		u32 int_d0 = vinc_read(priv, STREAM_DMA_WR_STATUS(channel, 0));
 
 		if (int_d0 & DMA_WR_STATUS_FRAME_END)
 			vinc_eof_handler(stream);
@@ -994,13 +1010,13 @@ static irqreturn_t vinc_irq_stream(int irq, void *data)
 		}
 	}
 	if (int_status & STREAM_INTERRUPT_DMA1) {
-		u32 int_d1 = vinc_read(priv, STREAM_DMA_WR_STATUS(devnum, 1));
+		u32 int_d1 = vinc_read(priv, STREAM_DMA_WR_STATUS(channel, 1));
 
 		if (int_d1 & DMA_WR_STATUS_DMA_OVF)
 			dev_warn(priv->ici.v4l2_dev.dev,
 				 "s%dd1: DMA overflow\n", devnum);
 	}
-	vinc_write(priv, STREAM_INTERRUPT_RESET(devnum), int_status);
+	vinc_write(priv, STREAM_INTERRUPT_RESET(channel), int_status);
 
 	return IRQ_HANDLED;
 }
@@ -1101,7 +1117,7 @@ static int vinc_probe(struct platform_device *pdev)
 	if (id != 0x76494e01)
 		dev_err(&pdev->dev, "Bad magic: %#08x\n", id);
 
-	for (i = 0; i < 2; i++) {
+	for (i = 0; i < ARRAY_SIZE(priv->stream); i++) {
 		INIT_LIST_HEAD(&priv->stream[i].capture);
 		spin_lock_init(&priv->stream[i].lock);
 		init_completion(&priv->stream[i].complete);
@@ -1114,8 +1130,11 @@ static int vinc_probe(struct platform_device *pdev)
 						      endpoint);
 		if (!endpoint)
 			break;
+
 		priv->stream[i].pport_low_bits = of_property_read_bool(endpoint,
 						"elvees,pport-low-bits");
+		of_property_read_u8(endpoint, "elvees,ifacenum",
+				     &priv->stream[i].ifacenum);
 	}
 
 	priv->ici.priv = priv;
@@ -1125,7 +1144,7 @@ static int vinc_probe(struct platform_device *pdev)
 	priv->ici.ops = &vinc_host_ops;
 	priv->ici.capabilities = SOCAM_HOST_CAP_STRIDE;
 
-	for (i = 0; i < 2; i++) {
+	for (i = 0; i < ARRAY_SIZE(priv->stream); i++) {
 		priv->stream[i].alloc_ctx = vb2_dma_contig_init_ctx(&pdev->dev);
 		if (IS_ERR(priv->stream[i].alloc_ctx))
 			return PTR_ERR(priv->stream[i].alloc_ctx);
@@ -1153,7 +1172,7 @@ static int vinc_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Failed to request required IRQs\n");
 		return err;
 	}
-	for (i = 0; i < 2; i++)
+	for (i = 0; i < ARRAY_SIZE(priv->stream); i++)
 		tasklet_init(&priv->stream[i].stat_tasklet, vinc_stat_tasklet,
 			     (unsigned long)&priv->stream[i]);
 

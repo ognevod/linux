@@ -23,7 +23,7 @@
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
 
-#define SOC_CAMERA_MAX_CLIENTS 2
+#define SOC_CAMERA_MAX_CLIENTS 4
 
 struct file;
 struct soc_camera_desc;
