@@ -12,6 +12,7 @@
  */
 
 #include <linux/io.h>
+#include <linux/module.h>
 #include <linux/rcupdate.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
@@ -223,3 +224,5 @@ int dw_pcm_register(struct platform_device *pdev)
 	return devm_snd_soc_register_platform(&pdev->dev, &dw_pcm_platform);
 }
 EXPORT_SYMBOL_GPL(dw_pcm_register);
+
+MODULE_LICENSE("GPL");
