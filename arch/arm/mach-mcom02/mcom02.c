@@ -114,7 +114,7 @@ static void bt_gpio_init(void)
 	bt_device.of_node = node;
 	gpio_wake = gpiod_get_optional(&bt_device, "wake", GPIOD_OUT_HIGH);
 	gpio_reset = gpiod_get_optional(&bt_device, "reset", GPIOD_OUT_HIGH);
-	if (!IS_ERR(gpio_reset)) {
+	if (!IS_ERR_OR_NULL(gpio_reset)) {
 		msleep(20);
 		gpiod_set_value(gpio_reset, 0);
 	}
