@@ -74,7 +74,7 @@ static struct soc_mbus_pixelfmt vinc_formats[] = {
 
 /* per video frame buffer */
 struct vinc_buffer {
-	struct vb2_buffer vb; /* v4l buffer must be first */
+	struct vb2_v4l2_buffer vb; /* v4l buffer must be first */
 	struct list_head queue;
 };
 
@@ -121,7 +121,9 @@ static int vinc_queue_setup(struct vb2_queue *vq, const void *parg,
 
 static struct vinc_buffer *to_vinc_vb(struct vb2_buffer *vb)
 {
-	return container_of(vb, struct vinc_buffer, vb);
+	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
+
+	return container_of(vbuf, struct vinc_buffer, vb);
 }
 
 static int vinc_buf_prepare(struct vb2_buffer *vb)
@@ -238,7 +240,8 @@ static int vinc_start_streaming(struct vb2_queue *q, unsigned int count)
 			list_for_each_entry_safe(buf, tmp,
 						 &stream->capture, queue) {
 				list_del_init(&buf->queue);
-				vb2_buffer_done(&buf->vb, VB2_BUF_STATE_QUEUED);
+				vb2_buffer_done(&buf->vb.vb2_buf,
+						VB2_BUF_STATE_QUEUED);
 			}
 			dev_err(icd->parent,
 				"Can not receive video from sensor\n");
@@ -292,8 +295,8 @@ static void vinc_stop_streaming(struct vb2_queue *q)
 	list_for_each_entry_safe(buf, tmp,
 				 &stream->capture, queue) {
 		list_del_init(&buf->queue);
-		if (buf->vb.state == VB2_BUF_STATE_ACTIVE)
-			vb2_buffer_done(&buf->vb, VB2_BUF_STATE_ERROR);
+		if (buf->vb.vb2_buf.state == VB2_BUF_STATE_ACTIVE)
+			vb2_buffer_done(&buf->vb.vb2_buf, VB2_BUF_STATE_ERROR);
 	}
 
 	spin_unlock_irq(&stream->lock);
@@ -888,7 +891,8 @@ static void vinc_next_buffer(struct vinc_stream *stream,
 
 	if (!list_empty(&stream->capture)) {
 		stream->active = &list_entry(stream->capture.next,
-					     struct vinc_buffer, queue)->vb;
+					     struct vinc_buffer,
+					     queue)->vb.vb2_buf;
 		vinc_start_capture(priv, priv->ici.icds[stream->devnum]);
 	} else {
 		u32 wr_ctr = vinc_read(priv,
