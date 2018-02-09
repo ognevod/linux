@@ -345,6 +345,14 @@ static void dw8250_setup_port(struct uart_port *p)
 		up->capabilities |= UART_CAP_AFE;
 }
 
+static int dw8250_rs485_config(struct uart_port *port,
+			       struct serial_rs485 *rs485)
+{
+	port->rs485 = *rs485;
+
+	return 0;
+}
+
 static int dw8250_probe(struct platform_device *pdev)
 {
 	struct uart_8250_port uart = {};
@@ -377,6 +385,7 @@ static int dw8250_probe(struct platform_device *pdev)
 	p->iotype	= UPIO_MEM;
 	p->serial_in	= dw8250_serial_in;
 	p->serial_out	= dw8250_serial_out;
+	p->rs485_config	= dw8250_rs485_config;
 
 	p->membase = devm_ioremap(&pdev->dev, regs->start, resource_size(regs));
 	if (!p->membase)
