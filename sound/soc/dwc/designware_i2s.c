@@ -396,7 +396,7 @@ static int dw_i2s_runtime_suspend(struct device *dev)
 
 	if (dw_dev->capability & DW_I2S_MASTER)
 		clk_disable(dw_dev->clk);
-	clk_disable(dev->pclk);
+	clk_disable(dw_dev->pclk);
 	return 0;
 }
 
@@ -404,7 +404,7 @@ static int dw_i2s_runtime_resume(struct device *dev)
 {
 	struct dw_i2s_dev *dw_dev = dev_get_drvdata(dev);
 
-	clk_enable(dev->pclk);
+	clk_enable(dw_dev->pclk);
 	if (dw_dev->capability & DW_I2S_MASTER)
 		clk_enable(dw_dev->clk);
 	return 0;
