@@ -794,7 +794,7 @@ static int vinc_get_parm(struct soc_camera_device *icd,
 
 	parm->parm.capture.capability = V4L2_CAP_TIMEPERFRAME;
 	parm->parm.capture.capturemode = 0;
-	parm->parm.capture.extendedmode = 0;
+	parm->parm.capture.extendedmode = priv->stream[icd->devnum].ifacenum;
 	tpf->denominator = 0;
 	tpf->numerator = 0;
 
