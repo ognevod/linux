@@ -834,16 +834,24 @@ static double ctrl_to_gain(u32 ctrl)
 	return gain;
 }
 
-u32 vinc_neon_calculate_luma_avg(struct vinc_stat_add *add,
-				  enum vinc_ycbcr_encoding ycbcr_enc,
-				  struct vinc_stat_zone *zone)
+u32 vinc_neon_calculate_luma_avg(enum vinc_input_format input_format,
+				 struct vinc_stat_add *add,
+				 enum vinc_ycbcr_encoding ycbcr_enc,
+				 struct vinc_stat_zone *zone,
+				 bool pport_low_bits)
 {
-	double luma_average;
+	double luma_stat, luma_average;
 
-	luma_average = (m_ycbcr[ycbcr_enc].coeff[0] * add->sum_r +
-			m_ycbcr[ycbcr_enc].coeff[1] * add->sum_g +
-			m_ycbcr[ycbcr_enc].coeff[2] * add->sum_b) /
-			((zone->x_rb + 1) * (zone->y_rb + 1));
+	if (input_format == YCbCr) {
+		luma_stat = add->sum_g;
+		if (pport_low_bits)
+			luma_stat *= 4;
+	} else
+		luma_stat = m_ycbcr[ycbcr_enc].coeff[0] * add->sum_r +
+			    m_ycbcr[ycbcr_enc].coeff[1] * add->sum_g +
+			    m_ycbcr[ycbcr_enc].coeff[2] * add->sum_b;
+
+	luma_average = luma_stat / ((zone->x_rb + 1) * (zone->y_rb + 1));
 	return rint(luma_average);
 }
 

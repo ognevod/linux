@@ -10,6 +10,8 @@
 #include <asm/mach/arch.h>
 #include <asm/hardware/cache-l2x0.h>
 #include <asm/mach/map.h>
+#include <linux/delay.h>
+#include <linux/gpio/consumer.h>
 #include <linux/gpio.h>
 #include <linux/of_gpio.h>
 #include <linux/of_platform.h>
@@ -97,6 +99,35 @@ void __init mcom02_init_machine(void)
 	platform_device_register_simple("cpufreq-dt", 0, NULL, 0);
 }
 
+static struct device bt_device;
+
+static void bt_gpio_init(void)
+{
+	struct device_node *node;
+	struct gpio_desc *gpio_wake;
+	struct gpio_desc *gpio_reset;
+
+	node = of_find_compatible_node(NULL, NULL, "brcm,bcm43438-bt");
+	if (!node)
+		return;
+
+	bt_device.of_node = node;
+	gpio_wake = gpiod_get_optional(&bt_device, "wake", GPIOD_OUT_HIGH);
+	gpio_reset = gpiod_get_optional(&bt_device, "reset", GPIOD_OUT_HIGH);
+	if (!IS_ERR_OR_NULL(gpio_reset)) {
+		msleep(20);
+		gpiod_set_value(gpio_reset, 0);
+	}
+}
+
+void __init mcom02_init_late(void)
+{
+	/* TODO: Driver bcm_hci support device-tree since kernel 4.14.
+	 * Wake and reset control must be moved to bcm_hci driver after merge.
+	 */
+	bt_gpio_init();
+}
+
 DT_MACHINE_START(MCOM02, "ELVEES MCom-02 (Flattened Device Tree)")
 	/* TODO: Replace with device tree arm,shared-override
 	 * attribute when it will be upstreamed.
@@ -106,4 +137,5 @@ DT_MACHINE_START(MCOM02, "ELVEES MCom-02 (Flattened Device Tree)")
 	.map_io = mcom02_map_io,
 	.dt_compat = mcom02_dt_board_compat,
 	.init_machine = mcom02_init_machine,
+	.init_late = mcom02_init_late,
 MACHINE_END

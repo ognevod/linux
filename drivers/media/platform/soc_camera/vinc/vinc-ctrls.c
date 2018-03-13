@@ -31,23 +31,23 @@ static u32 vinc_get_dma_src(struct vinc_dev *priv,
 	}
 }
 
-static void set_bad_pixels(struct vinc_dev *priv, u8 devnum,
+static void set_bad_pixels(struct vinc_dev *priv, u8 channel,
 			   struct vinc_bad_pixel *bp)
 {
 	int i;
 
-	vinc_write(priv, STREAM_PROC_BP_MAP_CTR(devnum), 0);
+	vinc_write(priv, STREAM_PROC_BP_MAP_CTR(channel), 0);
 	for (i = 0; i < CTRL_BAD_PIXELS_COUNT; i++)
-		vinc_write(priv, STREAM_PROC_BP_MAP_DATA(devnum),
+		vinc_write(priv, STREAM_PROC_BP_MAP_DATA(channel),
 			   (bp[i].y << 12) | bp[i].x);
 }
 
-static void set_bad_rows_cols(struct vinc_dev *priv, u8 devnum, u16 *data,
+static void set_bad_rows_cols(struct vinc_dev *priv, u8 channel, u16 *data,
 			      int is_cols)
 {
 	int i;
-	u32 reg_start = is_cols ? STREAM_PROC_BP_BAD_COLUMN(devnum, 0) :
-			STREAM_PROC_BP_BAD_LINE(devnum, 0);
+	u32 reg_start = is_cols ? STREAM_PROC_BP_BAD_COLUMN(channel, 0) :
+			STREAM_PROC_BP_BAD_LINE(channel, 0);
 
 	for (i = 0; i < (CTRL_BAD_ROWSCOLS_COUNT / 2); i++)
 		vinc_write(priv, reg_start + i * sizeof(u32),
@@ -55,46 +55,46 @@ static void set_bad_rows_cols(struct vinc_dev *priv, u8 devnum, u16 *data,
 			   ((data[i * 2 + 1] & 0xFFF) << 16));
 }
 
-static void set_gc_curve(struct vinc_dev *priv, u8 devnum,
+static void set_gc_curve(struct vinc_dev *priv, u8 channel,
 			 struct vinc_gamma_curve *gc)
 {
 	int i;
 
-	vinc_write(priv, STREAM_PROC_GC_CTR(devnum), 0);
+	vinc_write(priv, STREAM_PROC_GC_CTR(channel), 0);
 	for (i = 0; i < CTRL_GC_ELEMENTS_COUNT; i++)
-		vinc_write(priv, STREAM_PROC_GC_DATA(devnum),
+		vinc_write(priv, STREAM_PROC_GC_DATA(channel),
 			   (gc->green[i] << 16) | gc->red[i]);
-	vinc_write(priv, STREAM_PROC_GC_CTR(devnum), 0x1000);
+	vinc_write(priv, STREAM_PROC_GC_CTR(channel), 0x1000);
 	for (i = 0; i < CTRL_GC_ELEMENTS_COUNT; i++)
-		vinc_write(priv, STREAM_PROC_GC_DATA(devnum),
+		vinc_write(priv, STREAM_PROC_GC_DATA(channel),
 			   gc->blue[i]);
 }
 
-static void set_dr(struct vinc_dev *priv, u8 devnum, u16 *dr)
+static void set_dr(struct vinc_dev *priv, u8 channel, u16 *dr)
 {
 	int i;
 
-	vinc_write(priv, STREAM_PROC_DR_CTR(devnum), 0);
+	vinc_write(priv, STREAM_PROC_DR_CTR(channel), 0);
 	for (i = 0; i < CTRL_DR_ELEMENTS_COUNT; i++)
-		vinc_write(priv, STREAM_PROC_DR_DATA(devnum), dr[i]);
+		vinc_write(priv, STREAM_PROC_DR_DATA(channel), dr[i]);
 }
 
-static void set_stat_af_color(struct vinc_dev *priv, u8 devnum, u32 color)
+static void set_stat_af_color(struct vinc_dev *priv, u8 channel, u32 color)
 {
-	u32 proc_ctr = vinc_read(priv, STREAM_PROC_CTR(devnum));
+	u32 proc_ctr = vinc_read(priv, STREAM_PROC_CTR(channel));
 
 	proc_ctr &= ~STREAM_PROC_CTR_AF_COLOR(0x3);
 	proc_ctr |= STREAM_PROC_CTR_AF_COLOR(color);
-	vinc_write(priv, STREAM_PROC_CTR(devnum), proc_ctr);
+	vinc_write(priv, STREAM_PROC_CTR(channel), proc_ctr);
 }
 
 /* TODO: Split this function into two: the one that activates cluster and
  * the other that enables/disables HW block.
  */
-static void cluster_activate(struct vinc_dev *priv, u8 devnum, u32 block_mask,
+static void cluster_activate(struct vinc_dev *priv, u8 channel, u32 block_mask,
 			     struct v4l2_ctrl **cluster)
 {
-	u32 proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+	u32 proc_cfg = vinc_read(priv, STREAM_PROC_CFG(channel));
 	struct v4l2_ctrl *master = cluster[0];
 	int i;
 
@@ -102,7 +102,7 @@ static void cluster_activate(struct vinc_dev *priv, u8 devnum, u32 block_mask,
 		proc_cfg |= block_mask;
 	else
 		proc_cfg &= ~block_mask;
-	vinc_write(priv, STREAM_PROC_CFG(devnum), proc_cfg);
+	vinc_write(priv, STREAM_PROC_CFG(channel), proc_cfg);
 	for (i = 1; i < master->ncontrols; i++)
 		v4l2_ctrl_activate(cluster[i], master->val);
 }
@@ -130,17 +130,17 @@ static void cluster_activate_only(struct v4l2_ctrl **cluster)
 		v4l2_ctrl_activate(cluster[i], master->val);
 }
 
-static void enable_block(struct vinc_dev *priv, u8 devnum, u32 block_mask,
+static void enable_block(struct vinc_dev *priv, u8 channel, u32 block_mask,
 			 bool const enable)
 {
-	u32 proc_cfg = vinc_read(priv, STREAM_PROC_CFG(devnum));
+	u32 proc_cfg = vinc_read(priv, STREAM_PROC_CFG(channel));
 
 	if (enable)
 		proc_cfg |= block_mask;
 	else
 		proc_cfg &= ~block_mask;
 
-	vinc_write(priv, STREAM_PROC_CFG(devnum), proc_cfg);
+	vinc_write(priv, STREAM_PROC_CFG(channel), proc_cfg);
 }
 
 static void change_write_only(struct v4l2_ctrl **cluster,
@@ -208,6 +208,7 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 	struct vinc_cluster_stat *stat;
 	struct vinc_cluster_exposure *exposure;
 	const u8 devnum = icd->devnum;
+	const u8 channel = devnum & 0x01;
 	struct v4l2_subdev *sd = soc_camera_to_subdev(icd);
 	struct vinc_stream * const stream = &priv->stream[devnum];
 	u32 proc_cfg, stream_ctr;
@@ -219,17 +220,17 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		/* For programming BP block we need to stop video */
 		stream_ctr = vinc_read(priv, STREAM_CTR);
 		vinc_write(priv, STREAM_CTR,
-			   stream_ctr & ~STREAM_CTR_STREAM_ENABLE(devnum));
-		cluster_activate(priv, devnum, STREAM_PROC_CFG_BPC_EN,
+			   stream_ctr & ~STREAM_CTR_STREAM_ENABLE(channel));
+		cluster_activate(priv, channel, STREAM_PROC_CFG_BPC_EN,
 				 ctrl->cluster);
 		if (bp->enable->val) {
 			if (bp->enable->is_new || bp->pix->is_new)
-				set_bad_pixels(priv, devnum, bp->pix->p_new.p);
+				set_bad_pixels(priv, channel, bp->pix->p_new.p);
 			if (bp->enable->is_new || bp->row->is_new)
-				set_bad_rows_cols(priv, devnum,
+				set_bad_rows_cols(priv, channel,
 						  bp->row->p_new.p_u16, 0);
 			if (bp->enable->is_new || bp->col->is_new)
-				set_bad_rows_cols(priv, devnum,
+				set_bad_rows_cols(priv, channel,
 						  bp->col->p_new.p_u16, 1);
 		}
 		vinc_write(priv, STREAM_CTR, stream_ctr);
@@ -272,21 +273,21 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 				cluster_activate_only(ctrl->cluster);
 			cluster_activate_auto(!gamma->bklight->val,
 					      &gamma->curve, 1);
-			if (gamma->enable->val && (gamma->gamma->val != 16 ||
-				gamma->gamma->flags &
-				V4L2_CTRL_FLAG_WRITE_ONLY ||
-				gamma->bklight->val)) {
-				enable_block(priv, devnum,
-					     STREAM_PROC_CFG_GC_EN, true);
-				if (!gamma->bklight->val)
-					set_gc_curve(priv, devnum, p_gamma);
-			} else {
-				if (!gamma->bklight->val)
-					enable_block(priv, devnum,
-						     STREAM_PROC_CFG_GC_EN,
-						     false);
-			}
 			stream->first_load = 0;
+		}
+
+		if (gamma->enable->val && (gamma->gamma->val != 16 ||
+			gamma->gamma->flags &
+			V4L2_CTRL_FLAG_WRITE_ONLY ||
+			gamma->bklight->val)) {
+			enable_block(priv, channel,
+				     STREAM_PROC_CFG_GC_EN, true);
+			if (!gamma->bklight->val)
+				set_gc_curve(priv, channel, p_gamma);
+		} else {
+			if (!gamma->bklight->val)
+				enable_block(priv, channel,
+					     STREAM_PROC_CFG_GC_EN, false);
 		}
 
 		if (!init && gamma->bklight->is_new && !gamma->bklight->val) {
@@ -319,7 +320,7 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		init = cc->enable->is_new & cc->cc->is_new &
 			std_is_new;
 
-		cluster_activate(priv, devnum, STREAM_PROC_CFG_CC_EN,
+		cluster_activate(priv, channel, STREAM_PROC_CFG_CC_EN,
 				 ctrl->cluster);
 		activate = (cc->awb->val | cc->ab->val) ? 0 : 1;
 		if (cc->enable->val) {
@@ -437,12 +438,13 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 			change_write_only(ctrl->cluster, 2, wr_only_num, 1);
 			cc->cc->flags &= ~V4L2_CTRL_FLAG_UPDATE;
 		}
-		set_cc_ct(priv, devnum, p_cc, 0);
+		set_cc_ct(priv, channel, p_cc, 0);
 		break;
 	}
 	case V4L2_CID_CT_ENABLE:
 		ct = (struct vinc_cluster_ct *)ctrl->cluster;
-		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(devnum));
+		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(channel));
+
 		if (ctrl->val)
 			proc_cfg |= STREAM_PROC_CFG_CT_EN;
 		else
@@ -450,23 +452,23 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 		proc_cfg &= ~STREAM_PROC_CFG_DMA0_SRC(DMA_SRC_MASK);
 		proc_cfg |= STREAM_PROC_CFG_DMA0_SRC(
 				vinc_get_dma_src(priv, icd));
-		vinc_write(priv, STREAM_PROC_CFG(devnum), proc_cfg);
+		vinc_write(priv, STREAM_PROC_CFG(channel), proc_cfg);
 
 		v4l2_ctrl_activate(ct->ct, ct->enable->val);
 		if (ct->ct->is_new)
-			set_cc_ct(priv, devnum, ct->ct->p_new.p, 1);
+			set_cc_ct(priv, channel, ct->ct->p_new.p, 1);
 		break;
 	case V4L2_CID_DR_ENABLE:
 		dr = (struct vinc_cluster_dr *)ctrl->cluster;
 		/* To enable/disable DR block we need to stop video */
 		stream_ctr = vinc_read(priv, STREAM_CTR);
 		vinc_write(priv, STREAM_CTR,
-			   stream_ctr & ~STREAM_CTR_STREAM_ENABLE(devnum));
-		cluster_activate(priv, devnum, STREAM_PROC_CFG_ADR_EN,
+			   stream_ctr & ~STREAM_CTR_STREAM_ENABLE(channel));
+		cluster_activate(priv, channel, STREAM_PROC_CFG_ADR_EN,
 				 ctrl->cluster);
 		vinc_write(priv, STREAM_CTR, stream_ctr);
 		if (dr->enable->val && (dr->enable->is_new || dr->dr->is_new))
-			set_dr(priv, devnum, dr->dr->p_new.p_u16);
+			set_dr(priv, channel, dr->dr->p_new.p_u16);
 		break;
 	case V4L2_CID_STAT_ENABLE:
 		stat = (struct vinc_cluster_stat *)ctrl->cluster;
@@ -474,17 +476,17 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 			stream_ctr = vinc_read(priv, STREAM_CTR);
 			vinc_write(priv, STREAM_CTR,
 				   stream_ctr & ~STREAM_CTR_STREAM_ENABLE(
-						   devnum));
-			proc_cfg = vinc_read(priv, STREAM_PROC_CFG(devnum));
+						   channel));
+			proc_cfg = vinc_read(priv, STREAM_PROC_CFG(channel));
 			proc_cfg &= ~STREAM_PROC_CFG_STT_EN(0x7);
 			proc_cfg |= STREAM_PROC_CFG_STT_EN(stat->enable->val);
 			if (stat->enable->val)
 				vinc_stat_start(stream);
-			vinc_write(priv, STREAM_PROC_CFG(devnum), proc_cfg);
+			vinc_write(priv, STREAM_PROC_CFG(channel), proc_cfg);
 			vinc_write(priv, STREAM_CTR, stream_ctr);
 		}
-		set_stat_af_color(priv, devnum, stat->af_color->val);
-		vinc_write(priv, STREAM_PROC_STAT_TH(devnum),
+		set_stat_af_color(priv, channel, stat->af_color->val);
+		vinc_write(priv, STREAM_PROC_STAT_TH(channel),
 			   stat->af_th->val);
 		for (i = 0; i < 4; i++) {
 			if (!stat->zone[i]->is_new)
@@ -492,7 +494,7 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 			stream_ctr = vinc_read(priv, STREAM_CTR);
 			vinc_write(priv, STREAM_CTR,
 				   stream_ctr & ~STREAM_CTR_STREAM_ENABLE(
-						   devnum));
+						   channel));
 			set_stat_zone(stream,
 				      stat->zone[i]->id - V4L2_CID_STAT_ZONE0,
 				      stat->zone[i]->p_new.p);
@@ -502,14 +504,15 @@ static int vinc_s_ctrl(struct v4l2_ctrl *ctrl)
 	case V4L2_CID_TEST_PATTERN:
 		stream_ctr = vinc_read(priv, STREAM_CTR);
 		vinc_write(priv, STREAM_CTR,
-			   stream_ctr & ~STREAM_CTR_STREAM_ENABLE(devnum));
-		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(0));
+			   stream_ctr & ~STREAM_CTR_STREAM_ENABLE(channel));
+		proc_cfg = vinc_read(priv, STREAM_PROC_CFG(channel));
 		if (stream->input_format == BAYER && !ctrl->val)
 			proc_cfg |= STREAM_PROC_CFG_CFA_EN;
 		else
 			proc_cfg &= ~STREAM_PROC_CFG_CFA_EN;
-		vinc_configure_input(stream);
-		vinc_write(priv, STREAM_PROC_CFG(0), proc_cfg);
+		if (ctrl->val)
+			vinc_configure_input(stream);
+		vinc_write(priv, STREAM_PROC_CFG(channel), proc_cfg);
 		vinc_write(priv, STREAM_CTR, stream_ctr);
 		break;
 	case V4L2_CID_SENSOR_AUTO_WHITE_BALANCE: {
@@ -1355,7 +1358,9 @@ static int auto_exp_step(struct v4l2_subdev *sd, struct vinc_dev *priv,
 		return rc;
 
 	kernel_neon_begin();
-	luma = vinc_neon_calculate_luma_avg(add, stream->ycbcr_enc, zone);
+	luma = vinc_neon_calculate_luma_avg(stream->input_format, add,
+					    stream->ycbcr_enc, zone,
+					    stream->pport_low_bits);
 	vinc_neon_calculate_gain_exp(luma, cur_gain.value, cur_exp.value * 100,
 				     priv->max_gain, priv->max_exp * 100, &gain,
 					&exp);
@@ -1385,6 +1390,7 @@ static void auto_stat_work(struct work_struct *work)
 			     struct soc_camera_device, ctrl_handler);
 	struct v4l2_subdev *sd = soc_camera_to_subdev(icd);
 	const u8 devnum = stream->devnum;
+	const u8 channel = devnum & 0x01;
 	struct vinc_dev *priv = container_of(stream, struct vinc_dev,
 					     stream[devnum]);
 	struct vinc_cluster_cc *cc = &stream->cluster.cc;
@@ -1436,7 +1442,7 @@ static void auto_stat_work(struct work_struct *work)
 		memcpy(cc->cc->p_cur.p, cc->cc->p_new.p,
 		       sizeof(struct vinc_cc));
 
-		set_cc_ct(priv, devnum, cc->cc->p_cur.p, 0);
+		set_cc_ct(priv, channel, cc->cc->p_cur.p, 0);
 	}
 	if (gamma->enable->val && gamma->bklight->val) {
 		u16 h, w;
@@ -1451,7 +1457,7 @@ static void auto_stat_work(struct work_struct *work)
 						gamma->bklight->cur.val,
 						gamma->curve->p_cur.p);
 		kernel_neon_end();
-		set_gc_curve(priv, devnum, gamma->curve->p_cur.p);
+		set_gc_curve(priv, channel, gamma->curve->p_cur.p);
 	}
 
 	rc = auto_exp_step(sd, priv, stream, add, zone,
@@ -1466,6 +1472,7 @@ void vinc_stat_tasklet(unsigned long data)
 {
 	struct vinc_stream *stream = (struct vinc_stream *)data;
 	const u8 devnum = stream->devnum;
+	const u8 channel = devnum & 0x01;
 	struct vinc_dev *priv = container_of(stream, struct vinc_dev,
 					     stream[devnum]);
 	struct vinc_stat_zone *zone;
@@ -1492,66 +1499,67 @@ void vinc_stat_tasklet(unsigned long data)
 			int c;
 
 			for (c = 0; c < ARRAY_SIZE(component); c++) {
-				vinc_write(priv, STREAM_PROC_STAT_CTR(devnum),
+				vinc_write(priv, STREAM_PROC_STAT_CTR(channel),
 					   STREAM_PROC_STAT_CTR_NUM_ZONE(z) |
 					   STREAM_PROC_STAT_CTR_COLOR_HIST(c));
 				for (i = 0; i < VINC_STAT_HIST_COUNT; i++)
 					component[c][i] = vinc_read(priv,
-						STREAM_PROC_STAT_DATA(devnum));
+						STREAM_PROC_STAT_DATA(channel));
 			}
 		}
 		if (stat_en & STT_EN_AF) {
 			af = stream->cluster.stat.af[z]->p_cur.p;
-			vinc_write(priv, STREAM_PROC_STAT_CTR(devnum),
+			vinc_write(priv, STREAM_PROC_STAT_CTR(channel),
 				   STREAM_PROC_STAT_CTR_NUM_ZONE(z));
 			af->hsobel = vinc_read(priv,
-					STREAM_PROC_STAT_HSOBEL(devnum));
+					STREAM_PROC_STAT_HSOBEL(channel));
 			af->vsobel = vinc_read(priv,
-					STREAM_PROC_STAT_VSOBEL(devnum));
+					STREAM_PROC_STAT_VSOBEL(channel));
 			af->lsobel = vinc_read(priv,
-					STREAM_PROC_STAT_LSOBEL(devnum));
+					STREAM_PROC_STAT_LSOBEL(channel));
 			af->rsobel = vinc_read(priv,
-					STREAM_PROC_STAT_RSOBEL(devnum));
+					STREAM_PROC_STAT_RSOBEL(channel));
 		}
 		if (stat_en & STT_EN_ADD) {
 			add = stream->cluster.stat.add[z]->p_cur.p;
-			vinc_write(priv, STREAM_PROC_STAT_CTR(devnum),
+			vinc_write(priv, STREAM_PROC_STAT_CTR(channel),
 				   STREAM_PROC_STAT_CTR_NUM_ZONE(z));
-			reg = vinc_read(priv, STREAM_PROC_STAT_MIN(devnum));
+			reg = vinc_read(priv, STREAM_PROC_STAT_MIN(channel));
 			add->min_b = reg & 0xFF;
 			add->min_g = (reg >> 8) & 0xFF;
 			add->min_r = (reg >> 16) & 0xFF;
-			reg = vinc_read(priv, STREAM_PROC_STAT_MAX(devnum));
+			reg = vinc_read(priv, STREAM_PROC_STAT_MAX(channel));
 			add->max_b = reg & 0xFF;
 			add->max_g = (reg >> 8) & 0xFF;
 			add->max_r = (reg >> 16) & 0xFF;
 			add->sum_b = vinc_read(priv,
-					       STREAM_PROC_STAT_SUM_B(devnum));
+					       STREAM_PROC_STAT_SUM_B(channel));
 			add->sum_g = vinc_read(priv,
-					       STREAM_PROC_STAT_SUM_G(devnum));
+					       STREAM_PROC_STAT_SUM_G(channel));
 			add->sum_r = vinc_read(priv,
-					       STREAM_PROC_STAT_SUM_R(devnum));
-			reg = vinc_read(priv, STREAM_PROC_STAT_SUM2_HI(devnum));
+					       STREAM_PROC_STAT_SUM_R(channel));
+			reg = vinc_read(priv,
+					STREAM_PROC_STAT_SUM2_HI(channel));
 			add->sum2_b = reg & 0xFF;
 			add->sum2_g = (reg >> 8) & 0xFF;
 			add->sum2_r = (reg >> 16) & 0xFF;
 			add->sum2_b = (add->sum2_b << 32) |
 				vinc_read(priv,
-					  STREAM_PROC_STAT_SUM2_B(devnum));
+					  STREAM_PROC_STAT_SUM2_B(channel));
 			add->sum2_g = (add->sum2_g << 32) |
 				vinc_read(priv,
-					  STREAM_PROC_STAT_SUM2_G(devnum));
+					  STREAM_PROC_STAT_SUM2_G(channel));
 			add->sum2_r = (add->sum2_r << 32) |
 				vinc_read(priv,
-					  STREAM_PROC_STAT_SUM2_R(devnum));
+					  STREAM_PROC_STAT_SUM2_R(channel));
 		}
 	}
-	vinc_write(priv, STREAM_PROC_CLEAR(devnum),
+	vinc_write(priv, STREAM_PROC_CLEAR(channel),
 			STREAM_PROC_CLEAR_AF_CLR | STREAM_PROC_CLEAR_ADD_CLR);
 
 	spin_lock(&stream->lock);
 	if (!stream->active) {
-		vinc_stream_enable(priv, devnum, false);
+		vinc_stream_enable(priv, channel, false);
 		stream->stat_odd = true;
 	}
 	spin_unlock(&stream->lock);
@@ -1726,7 +1734,8 @@ int vinc_create_controls(struct v4l2_ctrl_handler *hdl,
 	stream->ctrl_privs.ck         = stream->cluster.cc.ck->priv;
 	stream->ctrl_privs.fx         = stream->cluster.cc.fx->priv;
 
-	INIT_WORK(&priv->stream[0].stat_work, auto_stat_work);
-	INIT_WORK(&priv->stream[1].stat_work, auto_stat_work);
+	for (i = 0; i < ARRAY_SIZE(priv->stream); i++)
+		INIT_WORK(&priv->stream[i].stat_work, auto_stat_work);
+
 	return hdl->error;
 }
