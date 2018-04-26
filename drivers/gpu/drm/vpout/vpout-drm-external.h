@@ -23,7 +23,7 @@
 #ifndef __VPOUT_DRM_EXTERNAL_H__
 #define __VPOUT_DRM_EXTERNAL_H__
 
-int vpout_drm_add_external_encoders(struct drm_device *dev, int *bpp);
+int vpout_drm_add_external_encoders(struct drm_device *dev);
 
 void vpout_drm_remove_external_encoders(struct drm_device *dev);
 
