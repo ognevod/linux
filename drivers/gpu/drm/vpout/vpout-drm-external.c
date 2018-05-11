@@ -1,7 +1,7 @@
 /*
  * ELVEES VPOUT Controller DRM Driver
  *
- * Copyright 2017 RnD Center "ELVEES", JSC
+ * Copyright 2017-2018 RnD Center "ELVEES", JSC
  *
  * Based on tilcdc:
  * Copyright (C) 2015 Texas Instruments
@@ -18,7 +18,7 @@
 #include "vpout-drm-drv.h"
 #include "vpout-drm-external.h"
 
-static const struct vpout_drm_panel_info panel_info_tda998x = {
+static const struct vpout_drm_info panel_info_tda998x = {
 	.bpp			= 32,
 	.invert_pxl_clk		= 0,
 };
@@ -47,10 +47,10 @@ static int vpout_drm_external_mode_valid(struct drm_connector *connector,
 	return MODE_OK;
 }
 
-static int vpout_drm_add_external_encoder(struct drm_device *dev, int *bpp,
-					  struct drm_connector *connector)
+static int vpout_drm_add_external_encoder(struct drm_device *drm_dev,
+				int *bpp, struct drm_connector *connector)
 {
-	struct vpout_drm_private *priv = dev->dev_private;
+	struct vpout_drm_private *priv = drm_dev->dev_private;
 	struct drm_connector_helper_funcs *connector_funcs;
 
 	priv->connectors[priv->num_connectors] = connector;
@@ -59,7 +59,7 @@ static int vpout_drm_add_external_encoder(struct drm_device *dev, int *bpp,
 	vpout_drm_crtc_set_panel_info(priv->crtc, &panel_info_tda998x);
 	*bpp = panel_info_tda998x.bpp;
 
-	connector_funcs = devm_kzalloc(dev->dev, sizeof(*connector_funcs),
+	connector_funcs = devm_kzalloc(drm_dev->dev, sizeof(*connector_funcs),
 				       GFP_KERNEL);
 	if (!connector_funcs)
 		return -ENOMEM;
@@ -75,19 +75,20 @@ static int vpout_drm_add_external_encoder(struct drm_device *dev, int *bpp,
 	drm_connector_helper_add(connector, connector_funcs);
 	priv->num_connectors++;
 
-	dev_dbg(dev->dev, "External encoder '%s' connected\n",
+	dev_dbg(drm_dev->dev, "External encoder '%s' connected\n",
 		connector->encoder->name);
 
 	return 0;
 }
 
-int vpout_drm_add_external_encoders(struct drm_device *dev, int *bpp)
+int vpout_drm_add_external_encoders(struct drm_device *drm_dev, int *bpp)
 {
-	struct vpout_drm_private *priv = dev->dev_private;
+	struct vpout_drm_private *priv = drm_dev->dev_private;
 	struct drm_connector *connector;
 	int num_internal_connectors = priv->num_connectors;
 
-	list_for_each_entry(connector, &dev->mode_config.connector_list, head) {
+	list_for_each_entry(connector, &drm_dev->mode_config.connector_list,
+			    head) {
 		bool found = false;
 		int i, ret;
 
@@ -95,7 +96,7 @@ int vpout_drm_add_external_encoders(struct drm_device *dev, int *bpp)
 			if (connector == priv->connectors[i])
 				found = true;
 		if (!found) {
-			ret = vpout_drm_add_external_encoder(dev, bpp,
+			ret = vpout_drm_add_external_encoder(drm_dev, bpp,
 							     connector);
 			if (ret)
 				return ret;
@@ -105,9 +106,9 @@ int vpout_drm_add_external_encoders(struct drm_device *dev, int *bpp)
 	return 0;
 }
 
-void vpout_drm_remove_external_encoders(struct drm_device *dev)
+void vpout_drm_remove_external_encoders(struct drm_device *drm_dev)
 {
-	struct vpout_drm_private *priv = dev->dev_private;
+	struct vpout_drm_private *priv = drm_dev->dev_private;
 	int i;
 
 	for (i = 0; i < priv->num_connectors; i++)

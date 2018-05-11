@@ -1,7 +1,7 @@
 /*
  * ELVEES VPOUT Controller DRM Driver
  *
- * Copyright 2017 RnD Center "ELVEES", JSC
+ * Copyright 2017-2018 RnD Center "ELVEES", JSC
  *
  * Based on tilcdc:
  * Copyright (C) 2012 Texas Instruments
@@ -37,7 +37,7 @@ struct vpout_drm_crtc {
 	wait_queue_head_t frame_done_wq;
 	struct drm_flip_work unref_work;
 	struct drm_pending_vblank_event *event;
-	const struct vpout_drm_panel_info *info;
+	const struct vpout_drm_info *info;
 };
 
 #define to_vpout_drm_crtc(x) container_of(x, struct vpout_drm_crtc, base)
@@ -338,7 +338,7 @@ int vpout_drm_crtc_mode_valid(struct drm_crtc *crtc,
 }
 
 void vpout_drm_crtc_set_panel_info(struct drm_crtc *crtc,
-			       const struct vpout_drm_panel_info *info)
+			       const struct vpout_drm_info *info)
 {
 	struct vpout_drm_crtc *vpout_drm_crtc = to_vpout_drm_crtc(crtc);
 
