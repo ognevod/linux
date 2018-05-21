@@ -19,6 +19,11 @@
 
 #include "vpout-drm-link.h"
 
+enum linkage_state {
+	unguarded = 0,
+	guarded
+};
+
 /*
  * linkage connects encoder, device of encoder and additional info of device
  * together
@@ -26,6 +31,7 @@
 struct linkage {
 	struct list_head head;
 	struct device *device;
+	enum linkage_state state;
 	struct drm_encoder *encoder;
 	struct vpout_drm_info *info;
 };
@@ -113,6 +119,23 @@ void vpout_drm_link_endpoint(struct device *dev)
 	mutex_unlock(&manager.locker);
 }
 
+static bool try_protect_node_device(struct linkage *node)
+{
+	if (!try_module_get(node->device->driver->owner))
+		return 0;
+
+	node->state = guarded;
+	return 1;
+}
+
+static void unprotect_node_device(struct linkage *node)
+{
+	if (node->state == guarded)
+		module_put(node->device->driver->owner);
+
+	node->state = unguarded;
+}
+
 static struct device_node *match_device_endpoint(struct device *internal_dev,
 				struct device *external_dev)
 {
@@ -181,6 +204,7 @@ static void vpout_drm_unlink_safety(void)
 	struct linkage *saver;
 
 	list_for_each_entry_safe(node, saver, &manager.nodes, head) {
+		unprotect_node_device(node);
 		kfree(node->info);
 		list_del(&node->head);
 		put_node(node);
@@ -222,6 +246,10 @@ int vpout_drm_link_encoders(struct drm_device *drm_dev)
 			goto out;
 
 		node->encoder = encoder;
+
+		if (!try_protect_node_device(node))
+			goto out;
+
 		node = list_next_entry(node, head);
 	}
 
