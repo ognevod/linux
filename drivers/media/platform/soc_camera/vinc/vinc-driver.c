@@ -832,9 +832,6 @@ static int vinc_set_parm(struct soc_camera_device *icd,
 	const u8 devnum = icd->devnum;
 	struct vinc_stream * const stream = &priv->stream[devnum];
 
-	if (parm->parm.capture.extendedmode)
-		return -EINVAL;
-
 	stream->fdecim = 1;
 	tpf = parm->parm.capture.timeperframe;
 	vinc_get_parm(icd, parm);
