@@ -292,14 +292,10 @@ SND_SOC_DAPM_MIXER("Right Capture Mix", ALC5623_PWR_MANAG_ADD2, 0, 0,
 	ARRAY_SIZE(alc5623_captureR_mixer_controls)),
 
 /* I2S Audio Interface */
-SND_SOC_DAPM_AIF_IN("I2SINL", "Left Playback", 0,
-		    ALC5623_PWR_MANAG_ADD1, 15, 0),
-SND_SOC_DAPM_AIF_IN("I2SINR", "Right Playback", 0,
-		    ALC5623_PWR_MANAG_ADD1, 15, 0),
-SND_SOC_DAPM_AIF_OUT("I2SOUTL", "Left Capture", 0,
-		     ALC5623_PWR_MANAG_ADD1, 15, 0),
-SND_SOC_DAPM_AIF_OUT("I2SOUTR", "Right Capture", 0,
-		     ALC5623_PWR_MANAG_ADD1, 15, 0),
+SND_SOC_DAPM_AIF_IN("I2SINL", "Left Playback", 0, SND_SOC_NOPM, 0, 0),
+SND_SOC_DAPM_AIF_IN("I2SINR", "Right Playback", 0, SND_SOC_NOPM, 0, 0),
+SND_SOC_DAPM_AIF_OUT("I2SOUTL", "Left Capture", 0, SND_SOC_NOPM, 0, 0),
+SND_SOC_DAPM_AIF_OUT("I2SOUTR", "Right Capture", 0, SND_SOC_NOPM, 0, 0),
 
 SND_SOC_DAPM_DAC("Left DAC", NULL, ALC5623_PWR_MANAG_ADD2, 9, 0),
 SND_SOC_DAPM_DAC("Right DAC", NULL, ALC5623_PWR_MANAG_ADD2, 8, 0),
@@ -717,6 +713,34 @@ static int alc5623_set_dai_fmt(struct snd_soc_dai *codec_dai,
 	return snd_soc_write(codec, ALC5623_DAI_CONTROL, iface);
 }
 
+int alc5623_startup(struct snd_pcm_substream *substream,
+		    struct snd_soc_dai *dai)
+{
+	struct snd_soc_codec *codec = dai->codec;
+	u16 reg;
+
+	if (!snd_soc_codec_is_active(codec)) {
+		reg = snd_soc_read(codec, ALC5623_PWR_MANAG_ADD1);
+		reg |= ALC5623_PWR_ADD1_MAIN_I2S_EN;
+		snd_soc_write(codec, ALC5623_PWR_MANAG_ADD1, reg);
+	}
+
+	return 0;
+}
+
+void alc5623_shutdown(struct snd_pcm_substream *substream,
+		      struct snd_soc_dai *dai)
+{
+	struct snd_soc_codec *codec = dai->codec;
+	u16 reg;
+
+	if (!snd_soc_codec_is_active(codec)) {
+		reg = snd_soc_read(codec, ALC5623_PWR_MANAG_ADD1);
+		reg &= ~ALC5623_PWR_ADD1_MAIN_I2S_EN;
+		snd_soc_write(codec, ALC5623_PWR_MANAG_ADD1, reg);
+	}
+}
+
 static int alc5623_pcm_hw_params(struct snd_pcm_substream *substream,
 		struct snd_pcm_hw_params *params, struct snd_soc_dai *dai)
 {
@@ -862,6 +886,8 @@ static int alc5623_set_bias_level(struct snd_soc_codec *codec,
 			| SNDRV_PCM_FMTBIT_S32_LE)
 
 static const struct snd_soc_dai_ops alc5623_dai_ops = {
+		.startup = alc5623_startup,
+		.shutdown = alc5623_shutdown,
 		.hw_params = alc5623_pcm_hw_params,
 		.digital_mute = alc5623_mute,
 		.set_fmt = alc5623_set_dai_fmt,

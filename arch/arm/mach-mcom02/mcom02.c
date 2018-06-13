@@ -18,6 +18,8 @@
 #include <linux/platform_data/brcmfmac-sdio.h>
 #include <linux/platform_device.h>
 
+#include "suspend.h"
+
 static const char * const mcom02_dt_board_compat[] = {
 	"elvees,mcom02",
 	NULL
@@ -97,6 +99,7 @@ void __init mcom02_init_machine(void)
 	platform_device_register(&brcmfmac_device);
 	of_platform_populate(NULL, of_default_bus_match_table, NULL, NULL);
 	platform_device_register_simple("cpufreq-dt", 0, NULL, 0);
+	mcom02_suspend_init();
 }
 
 static struct device bt_device;
