@@ -79,6 +79,12 @@ static void put_node(struct linkage *node)
 	mempool_free(node, manager.pool);
 }
 
+struct vpout_drm_info*
+vpout_drm_get_connector_info(struct drm_connector *connector)
+{
+	return vpout_drm_get_encoder_info(connector->encoder);
+}
+
 struct vpout_drm_info *vpout_drm_get_encoder_info(struct drm_encoder *encoder)
 {
 	struct linkage *node;
@@ -187,6 +193,7 @@ static struct vpout_drm_info *get_endpoint_info(struct device_node *endpoint)
 
 	info->invert_pxl_clk = of_property_read_bool(info_np,
 						     "invert-pxl-clk");
+	info->label = of_get_property(info_np, "label", NULL);
 
 	of_node_put(info_np);
 

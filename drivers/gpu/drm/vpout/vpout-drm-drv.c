@@ -197,6 +197,13 @@ static int vpout_drm_load(struct drm_device *drm_dev, unsigned long flags)
 		goto fail_external_cleanup;
 	}
 
+	/* fixup names if connectors have labels */
+	ret = fixup_connectors_names(drm_dev);
+	if (ret) {
+		dev_err(dev, "failed to fixup connectors names\n");
+		goto fail_external_cleanup;
+	}
+
 	ret = drm_vblank_init(drm_dev, 1);
 	if (ret < 0) {
 		dev_err(dev, "failed to initialize vblank\n");
