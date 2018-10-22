@@ -1,6 +1,8 @@
 CFLAGS_vinc-neon.o = -ffreestanding -mfpu=neon -mfloat-abi=softfp -O3
 
-obj-y += math/
+# We don't want symbols from math to be added to vmlinux directly, so use
+# subdir instead of obj.
+subdir-$(CONFIG_VIDEO_VINC) += math
 
 vinc-objs += vinc-driver.o vinc-ctrls.o vinc-hw.o vinc-neon.o math/math.o
 
