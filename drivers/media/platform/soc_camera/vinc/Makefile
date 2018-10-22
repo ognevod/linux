@@ -4,4 +4,7 @@ obj-y += math/
 
 vinc-objs += vinc-driver.o vinc-ctrls.o vinc-hw.o vinc-neon.o math/math.o
 
+# math.o is built in subdirectory.
+$(src)/math/math.o: $(subdir-ym)
+
 obj-$(CONFIG_VIDEO_VINC) += vinc.o
