@@ -1207,9 +1207,32 @@ static int ds1307_remove(struct i2c_client *client)
 	return 0;
 }
 
+#ifdef CONFIG_PM_SLEEP
+static int ds1307_suspend(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+
+	if (device_may_wakeup(&client->dev))
+		enable_irq_wake(client->irq);
+	return 0;
+}
+
+static int ds1307_resume(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+
+	if (device_may_wakeup(&client->dev))
+		disable_irq_wake(client->irq);
+	return 0;
+}
+#endif
+
+static SIMPLE_DEV_PM_OPS(ds1307_pm, ds1307_suspend, ds1307_resume);
+
 static struct i2c_driver ds1307_driver = {
 	.driver = {
 		.name	= "rtc-ds1307",
+		.pm	= &ds1307_pm
 	},
 	.probe		= ds1307_probe,
 	.remove		= ds1307_remove,

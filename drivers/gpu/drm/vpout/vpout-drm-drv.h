@@ -1,7 +1,7 @@
 /*
  * ELVEES VPOUT Controller DRM Driver
  *
- * Copyright 2017 RnD Center "ELVEES", JSC
+ * Copyright 2017-2018 RnD Center "ELVEES", JSC
  *
  * Based on tilcdc:
  * Copyright (C) 2012 Texas Instruments
@@ -67,7 +67,7 @@ void vpout_drm_module_init(struct vpout_drm_module *mod, const char *name,
 
 void vpout_drm_module_cleanup(struct vpout_drm_module *mod);
 
-struct vpout_drm_panel_info {
+struct vpout_drm_info {
 	uint32_t bpp;
 	bool invert_pxl_clk;
 };
@@ -76,7 +76,7 @@ int vpout_drm_crtc_mode_valid(struct drm_crtc *crtc,
 			      struct drm_display_mode *mode);
 
 void vpout_drm_crtc_set_panel_info(struct drm_crtc *crtc,
-				   const struct vpout_drm_panel_info *info);
+				   const struct vpout_drm_info *info);
 
 irqreturn_t vpout_drm_crtc_irq(struct drm_crtc *crtc);
 

@@ -519,7 +519,7 @@ static int anfc_read_page_hwecc(struct mtd_info *mtd,
 
 static int anfc_write_page_hwecc(struct mtd_info *mtd,
 				 struct nand_chip *chip, const uint8_t *buf,
-				 int oob_required)
+				 int oob_required, int page)
 {
 	u32 val, i;
 	struct anfc *nfc = container_of(mtd, struct anfc, mtd);
@@ -537,11 +537,11 @@ static int anfc_write_page_hwecc(struct mtd_info *mtd,
 
 	if (oob_required) {
 		anfc_device_ready(mtd, chip);
-		chip->cmdfunc(mtd, NAND_CMD_READOOB, 0, nfc->page);
+		chip->cmdfunc(mtd, NAND_CMD_READOOB, 0, page);
 		chip->read_buf(mtd, ecc_calc, mtd->oobsize);
 		for (i = 0; i < chip->ecc.total; i++)
 			chip->oob_poi[eccpos[i]] = ecc_calc[eccpos[i]];
-		chip->ecc.write_oob(mtd, chip, nfc->page);
+		chip->ecc.write_oob(mtd, chip, page);
 	}
 
 	return 0;

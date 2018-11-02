@@ -1,7 +1,7 @@
 /*
  * ELVEES VPOUT Controller DRM Driver
  *
- * Copyright 2017 RnD Center "ELVEES", JSC
+ * Copyright 2017-2018 RnD Center "ELVEES", JSC
  *
  * Based on tilcdc:
  * Copyright (C) 2012 Texas Instruments
@@ -32,7 +32,7 @@
 
 struct panel_module {
 	struct vpout_drm_module base;
-	struct vpout_drm_panel_info *info;
+	struct vpout_drm_info *info;
 	struct display_timings *timings;
 	struct backlight_device *backlight;
 	struct gpio_desc *enable_gpio;
@@ -116,7 +116,7 @@ static const struct drm_encoder_helper_funcs panel_encoder_helper_funcs = {
 	.mode_set	= panel_encoder_mode_set,
 };
 
-static struct drm_encoder *panel_encoder_create(struct drm_device *dev,
+static struct drm_encoder *panel_encoder_create(struct drm_device *drm_dev,
 						struct panel_module *mod)
 {
 	struct panel_encoder *panel_encoder;
@@ -132,7 +132,7 @@ static struct drm_encoder *panel_encoder_create(struct drm_device *dev,
 	encoder = &panel_encoder->base;
 	encoder->possible_crtcs = 1;
 
-	ret = drm_encoder_init(dev, encoder, &panel_encoder_funcs,
+	ret = drm_encoder_init(drm_dev, encoder, &panel_encoder_funcs,
 			       DRM_MODE_ENCODER_LVDS);
 	if (ret < 0)
 		goto fail;
@@ -176,13 +176,13 @@ static enum drm_connector_status panel_connector_detect(
 
 static int panel_connector_get_modes(struct drm_connector *connector)
 {
-	struct drm_device *dev = connector->dev;
+	struct drm_device *drm_dev = connector->dev;
 	struct panel_connector *panel_connector = to_panel_connector(connector);
 	struct display_timings *timings = panel_connector->mod->timings;
 	int i;
 
 	for (i = 0; i < timings->num_timings; i++) {
-		struct drm_display_mode *mode = drm_mode_create(dev);
+		struct drm_display_mode *mode = drm_mode_create(drm_dev);
 		struct videomode vm;
 
 		if (videomode_from_timings(timings, &vm, i))
@@ -231,7 +231,7 @@ static const struct drm_connector_helper_funcs panel_connector_helper_funcs = {
 	.best_encoder	= panel_connector_best_encoder,
 };
 
-static struct drm_connector *panel_connector_create(struct drm_device *dev,
+static struct drm_connector *panel_connector_create(struct drm_device *drm_dev,
 						    struct panel_module *mod,
 						    struct drm_encoder *encoder)
 {
@@ -248,8 +248,8 @@ static struct drm_connector *panel_connector_create(struct drm_device *dev,
 
 	connector = &panel_connector->base;
 
-	drm_connector_init(dev, connector, &panel_connector_funcs,
-			DRM_MODE_CONNECTOR_LVDS);
+	drm_connector_init(drm_dev, connector, &panel_connector_funcs,
+			   DRM_MODE_CONNECTOR_LVDS);
 	drm_connector_helper_add(connector, &panel_connector_helper_funcs);
 
 	connector->interlace_allowed = 0;
@@ -274,18 +274,18 @@ fail:
  */
 
 static int panel_modeset_init(struct vpout_drm_module *mod,
-			      struct drm_device *dev)
+			      struct drm_device *drm_dev)
 {
 	struct panel_module *panel_mod = to_panel_module(mod);
-	struct vpout_drm_private *priv = dev->dev_private;
+	struct vpout_drm_private *priv = drm_dev->dev_private;
 	struct drm_encoder *encoder;
 	struct drm_connector *connector;
 
-	encoder = panel_encoder_create(dev, panel_mod);
+	encoder = panel_encoder_create(drm_dev, panel_mod);
 	if (!encoder)
 		return -ENOMEM;
 
-	connector = panel_connector_create(dev, panel_mod, encoder);
+	connector = panel_connector_create(drm_dev, panel_mod, encoder);
 	if (!connector)
 		return -ENOMEM;
 
@@ -303,10 +303,10 @@ static const struct vpout_drm_module_ops panel_module_ops = {
  * Device:
  */
 
-static struct vpout_drm_panel_info *of_get_panel_info(struct device_node *np)
+static struct vpout_drm_info *of_get_panel_info(struct device_node *np)
 {
 	struct device_node *info_np;
-	struct vpout_drm_panel_info *info;
+	struct vpout_drm_info *info;
 	int ret = 0;
 
 	if (!np) {
@@ -342,20 +342,22 @@ static struct vpout_drm_panel_info *of_get_panel_info(struct device_node *np)
 	return info;
 }
 
-static int panel_probe(struct platform_device *pdev)
+static int panel_probe(struct platform_device *plat_dev)
 {
-	struct device_node *bl_node, *node = pdev->dev.of_node;
+	struct device_node *bl_node, *node = plat_dev->dev.of_node;
 	struct panel_module *panel_mod;
 	struct vpout_drm_module *mod;
 	struct pinctrl *pinctrl;
 	int ret;
 
 	if (!node) {
-		dev_err(&pdev->dev, "device-tree data is missing\n");
+		dev_err(&plat_dev->dev, "device-tree data is missing\n");
 		return -ENXIO;
 	}
 
-	panel_mod = devm_kzalloc(&pdev->dev, sizeof(*panel_mod), GFP_KERNEL);
+	panel_mod = devm_kzalloc(&plat_dev->dev, sizeof(*panel_mod),
+				 GFP_KERNEL);
+
 	if (!panel_mod)
 		return -ENOMEM;
 
@@ -367,39 +369,41 @@ static int panel_probe(struct platform_device *pdev)
 		if (!panel_mod->backlight)
 			return -EPROBE_DEFER;
 
-		dev_info(&pdev->dev, "found backlight\n");
+		dev_info(&plat_dev->dev, "found backlight\n");
 	}
 
-	panel_mod->enable_gpio = devm_gpiod_get_optional(&pdev->dev, "enable",
+	panel_mod->enable_gpio = devm_gpiod_get_optional(&plat_dev->dev,
+							 "enable",
 							 GPIOD_OUT_LOW);
+
 	if (IS_ERR(panel_mod->enable_gpio)) {
 		ret = PTR_ERR(panel_mod->enable_gpio);
-		dev_err(&pdev->dev, "failed to request enable GPIO\n");
+		dev_err(&plat_dev->dev, "failed to request enable GPIO\n");
 		goto fail_backlight;
 	}
 
 	if (panel_mod->enable_gpio)
-		dev_info(&pdev->dev, "found enable GPIO\n");
+		dev_info(&plat_dev->dev, "found enable GPIO\n");
 
 	mod = &panel_mod->base;
-	pdev->dev.platform_data = mod;
+	plat_dev->dev.platform_data = mod;
 
 	vpout_drm_module_init(mod, "panel", &panel_module_ops);
 
-	pinctrl = devm_pinctrl_get_select_default(&pdev->dev);
+	pinctrl = devm_pinctrl_get_select_default(&plat_dev->dev);
 	if (IS_ERR(pinctrl))
-		dev_warn(&pdev->dev, "pins are not configured\n");
+		dev_warn(&plat_dev->dev, "pins are not configured\n");
 
 	panel_mod->timings = of_get_display_timings(node);
 	if (!panel_mod->timings) {
-		dev_err(&pdev->dev, "could not get panel timings\n");
+		dev_err(&plat_dev->dev, "could not get panel timings\n");
 		ret = -EINVAL;
 		goto fail_free;
 	}
 
 	panel_mod->info = of_get_panel_info(node);
 	if (!panel_mod->info) {
-		dev_err(&pdev->dev, "could not get panel info\n");
+		dev_err(&plat_dev->dev, "could not get panel info\n");
 		ret = -EINVAL;
 		goto fail_timings;
 	}
@@ -421,9 +425,9 @@ fail_backlight:
 	return ret;
 }
 
-static int panel_remove(struct platform_device *pdev)
+static int panel_remove(struct platform_device *plat_dev)
 {
-	struct vpout_drm_module *mod = dev_get_platdata(&pdev->dev);
+	struct vpout_drm_module *mod = dev_get_platdata(&plat_dev->dev);
 	struct panel_module *panel_mod = to_panel_module(mod);
 	struct backlight_device *backlight = panel_mod->backlight;
 

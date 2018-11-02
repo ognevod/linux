@@ -363,7 +363,6 @@ static int vpoutfb_parse_dt(struct platform_device *pdev,
 	int ret;
 	const char *format;
 	int i;
-	struct videomode vm;
 
 	ret = of_property_read_string(np, "format", &format);
 	if (ret) {

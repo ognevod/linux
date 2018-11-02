@@ -623,16 +623,6 @@ static void mxv_mult(struct vector *prod, const struct matrix *m,
 	}
 }
 
-/*  Matrix addition. Matrices must have the same size */
-static void mxm_add(struct matrix *sum, const struct matrix *m1,
-		    const struct matrix *m2)
-{
-	u8 i;
-
-	for (i = 0; i < VINC_CC_COEFF_COUNT; i++)
-		sum->coeff[i] = m1->coeff[i] + m2->coeff[i];
-}
-
 /*  Vector addition. Vectors must have the same size */
 static void vxv_add(struct vector *sum, const struct vector *v1,
 		    const struct vector *v2)

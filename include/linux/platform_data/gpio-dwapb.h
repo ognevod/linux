@@ -14,6 +14,8 @@
 #ifndef GPIO_DW_APB_H
 #define GPIO_DW_APB_H
 
+#include <linux/types.h>
+
 struct dwapb_port_property {
 	struct device_node *node;
 	const char	*name;
@@ -21,6 +23,7 @@ struct dwapb_port_property {
 	unsigned int	ngpio;
 	unsigned int	gpio_base;
 	unsigned int	irqs[32];
+	u32		skip_mask;
 	bool		irq_shared;
 };
 
