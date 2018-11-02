@@ -33,19 +33,19 @@ Summary: The Linux kernel (the core of the Linux operating system)
 License: GPL
 Group: System/Kernel and hardware
 Url: http://www.kernel.org/
-Source: %name-%version.tar
+
 Patch0: %name-%version-%release.patch
 
-ExclusiveArch: arm armh
+ExclusiveArch: armh
 
 ExclusiveOS: Linux
 
-BuildRequires(pre): rpm-build-kernel rpm-build rpm-build-xdg
+BuildRequires(pre): rpm-build-kernel
 BuildRequires: bc flex lzma-utils
 BuildRequires: libdb4-devel
 BuildRequires: gcc%kgcc_version
+BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeric
 BuildRequires: module-init-tools >= 3.16
-BuildRequires: libssl-devel
 
 %if_enabled ccache
 BuildRequires: ccache
@@ -61,15 +61,9 @@ Requires: startup >= 0.9.8.30-alt1
 
 Provides: kernel = %kversion
 
-%ifarch %arm
-%define Image zImage
-%else
-%define Image Image
-%endif
-
 %description
 This package contains the Linux kernel that is used to boot and run
-your system and supports ELVEES MCom-02 machine.
+your system and supports ELVEES MCom-02 SoC.
 
 %package -n kernel-headers-%flavour
 Summary: Header files for the Linux kernel
@@ -108,7 +102,10 @@ and specify %kbuild_dir as the kernel source
 directory.
 
 %prep
-%setup
+%setup -cT -n kernel-image-%flavour-%kversion-%krelease
+rm -rf kernel-source-%kernel_base_version
+tar -xf %kernel_src/kernel-source-%kernel_base_version.tar
+%setup -D -T -n kernel-image-%flavour-%kversion-%krelease/kernel-source-%kernel_base_version
 %patch0 -p1
 
 # this file should be usable both with make and sh (for broken modules
@@ -132,31 +129,28 @@ echo "Building Kernel $KernelVer"
 cp -vf config-%_target_cpu .config
 
 %make_build oldconfig
-%make_build %Image modules
+%make_build zImage modules
 
 %install
 export ARCH=%base_arch
 KernelVer=%kversion-%flavour-%krelease
 
 install -Dp -m644 System.map %buildroot/boot/System.map-$KernelVer
-install -Dp -m644 arch/%base_arch/boot/%Image %buildroot/boot/%Image
+install -Dp -m644 arch/%base_arch/boot/zImage %buildroot/boot/vmlinuz-$KernelVer
 install -Dp -m644 .config %buildroot/boot/config-$KernelVer
-make modules_install INSTALL_MOD_PATH=%buildroot
+make modules_install INSTALL_MOD_PATH=%buildroot INSTALL_FW_PATH=%buildroot/lib/firmware/$KernelVer
 
 mkdir -p %buildroot%kbuild_dir/arch/%base_arch
 cp -a include %buildroot%kbuild_dir/include
 cp -a arch/%base_arch/include %buildroot%kbuild_dir/arch/%base_arch
 
 # drivers-headers install
-install -d %buildroot%kbuild_dir/drivers/scsi
 install -d %buildroot%kbuild_dir/drivers/md
 install -d %buildroot%kbuild_dir/drivers/usb/core
 install -d %buildroot%kbuild_dir/drivers/net/wireless
 install -d %buildroot%kbuild_dir/net/mac80211
 install -d %buildroot%kbuild_dir/kernel
 install -d %buildroot%kbuild_dir/lib
-cp -a drivers/scsi/{{scsi,scsi_typedefs}.h,scsi_module.c} \
-	%buildroot%kbuild_dir/drivers/scsi/
 cp -a drivers/md/dm*.h \
 	%buildroot%kbuild_dir/drivers/md/
 cp -a drivers/usb/core/*.h \
@@ -236,9 +230,10 @@ touch %buildroot%modules_dir/modules.{alias,dep,symbols,builtin}.bin
 %set_verify_elf_method none
 
 %files
-/boot/%Image
+/boot/vmlinuz-%kversion-%flavour-%krelease
 /boot/System.map-%kversion-%flavour-%krelease
 /boot/config-%kversion-%flavour-%krelease
+/lib/firmware/%kversion-%flavour-%krelease
 %modules_dir
 %exclude %modules_dir/build
 %ghost %modules_dir/modules.alias.bin
