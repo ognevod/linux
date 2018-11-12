@@ -36,6 +36,7 @@
 #include <asm/smap.h>
 #include <asm/pgtable_types.h>
 #include <asm/kaiser.h>
+#include <asm/nospec-branch.h>
 #include <linux/err.h>
 
 /* Avoid __ASSEMBLER__'ifying <linux/audit.h> just for this.  */
@@ -89,7 +90,7 @@ ENDPROC(native_usergs_sysret64)
 .endm
 
 .macro TRACE_IRQS_IRETQ_DEBUG
-	bt	$9, EFLAGS(%rsp)		/* interrupts off? */
+	btl	$9, EFLAGS(%rsp)		/* interrupts off? */
 	jnc	1f
 	TRACE_IRQS_ON_DEBUG
 1:
@@ -177,14 +178,22 @@ GLOBAL(entry_SYSCALL_64_after_swapgs)
 	jnz	tracesys
 entry_SYSCALL_64_fastpath:
 #if __SYSCALL_MASK == ~0
-	cmpq	$__NR_syscall_max, %rax
+	cmpq	$NR_syscalls, %rax
 #else
 	andl	$__SYSCALL_MASK, %eax
-	cmpl	$__NR_syscall_max, %eax
+	cmpl	$NR_syscalls, %eax
 #endif
-	ja	1f				/* return -ENOSYS (already in pt_regs->ax) */
+	jae	1f				/* return -ENOSYS (already in pt_regs->ax) */
+	sbb	%rcx, %rcx			/* array_index_mask_nospec() */
+	and	%rcx, %rax
 	movq	%r10, %rcx
+#ifdef CONFIG_RETPOLINE
+	movq	sys_call_table(, %rax, 8), %rax
+	call	__x86_indirect_thunk_rax
+#else
 	call	*sys_call_table(, %rax, 8)
+#endif
+
 	movq	%rax, RAX(%rsp)
 1:
 /*
@@ -269,14 +278,21 @@ tracesys_phase2:
 	RESTORE_C_REGS_EXCEPT_RAX
 	RESTORE_EXTRA_REGS
 #if __SYSCALL_MASK == ~0
-	cmpq	$__NR_syscall_max, %rax
+	cmpq	$NR_syscalls, %rax
 #else
 	andl	$__SYSCALL_MASK, %eax
-	cmpl	$__NR_syscall_max, %eax
+	cmpl	$NR_syscalls, %eax
 #endif
-	ja	1f				/* return -ENOSYS (already in pt_regs->ax) */
+	jae	1f				/* return -ENOSYS (already in pt_regs->ax) */
+	sbb	%rcx, %rcx			/* array_index_mask_nospec() */
+	and	%rcx, %rax
 	movq	%r10, %rcx			/* fixup for C */
+#ifdef CONFIG_RETPOLINE
+	movq	sys_call_table(, %rax, 8), %rax
+	call	__x86_indirect_thunk_rax
+#else
 	call	*sys_call_table(, %rax, 8)
+#endif
 	movq	%rax, RAX(%rsp)
 1:
 	/* Use IRET because user could have changed pt_regs->foo */
@@ -491,7 +507,7 @@ ENTRY(ret_from_fork)
 	 * nb: we depend on RESTORE_EXTRA_REGS above
 	 */
 	movq	%rbp, %rdi
-	call	*%rbx
+	CALL_NOSPEC %rbx
 	movl	$0, RAX(%rsp)
 	RESTORE_EXTRA_REGS
 	jmp	int_ret_from_sys_call
@@ -604,7 +620,7 @@ retint_kernel:
 #ifdef CONFIG_PREEMPT
 	/* Interrupts are off */
 	/* Check if we need preemption */
-	bt	$9, EFLAGS(%rsp)		/* were interrupts off? */
+	btl	$9, EFLAGS(%rsp)		/* were interrupts off? */
 	jnc	1f
 0:	cmpl	$0, PER_CPU_VAR(__preempt_count)
 	jnz	1f
@@ -1002,7 +1018,7 @@ apicinterrupt3 HYPERVISOR_CALLBACK_VECTOR \
 #endif /* CONFIG_HYPERV */
 
 idtentry debug			do_debug		has_error_code=0	paranoid=1 shift_ist=DEBUG_STACK
-idtentry int3			do_int3			has_error_code=0	paranoid=1 shift_ist=DEBUG_STACK
+idtentry int3			do_int3			has_error_code=0
 idtentry stack_segment		do_stack_segment	has_error_code=1
 
 #ifdef CONFIG_XEN
@@ -1019,7 +1035,7 @@ idtentry async_page_fault	do_async_page_fault	has_error_code=1
 #endif
 
 #ifdef CONFIG_X86_MCE
-idtentry machine_check					has_error_code=0	paranoid=1 do_sym=*machine_check_vector(%rip)
+idtentry machine_check		do_mce			has_error_code=0	paranoid=1
 #endif
 
 /*
