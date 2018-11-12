@@ -18,10 +18,7 @@
 #include "vpout-drm-drv.h"
 #include "vpout-drm-external.h"
 
-static const struct vpout_drm_info panel_info_tda998x = {
-	.bpp			= 32,
-	.invert_pxl_clk		= 0,
-};
+#include "vpout-drm-link.h"
 
 static int vpout_drm_external_mode_valid(struct drm_connector *connector,
 					 struct drm_display_mode *mode)
@@ -33,77 +30,72 @@ static int vpout_drm_external_mode_valid(struct drm_connector *connector,
 	if (ret != MODE_OK)
 		return ret;
 
-	for (i = 0; i < priv->num_connectors &&
-	     priv->connectors[i] != connector; i++)
-		;
+	/* forward call to appropriate connector */
+	for (i = 0; i < priv->num_slaves; i++)
+		if (priv->slaves[i].connector == connector)
+			break;
 
-	BUG_ON(priv->connectors[i] != connector);
-	BUG_ON(!priv->connector_funcs[i]);
-
-	if (!IS_ERR(priv->connector_funcs[i]) &&
-	    priv->connector_funcs[i]->mode_valid)
-		return priv->connector_funcs[i]->mode_valid(connector, mode);
+	if (priv->slaves[i].funcs->mode_valid)
+		return priv->slaves[i].funcs->mode_valid(connector, mode);
 
 	return MODE_OK;
 }
 
-static int vpout_drm_add_external_encoder(struct drm_device *drm_dev,
-				int *bpp, struct drm_connector *connector)
+static int
+insert_proxy(struct drm_device *drm_dev, struct drm_connector *connector)
 {
+	struct drm_connector_helper_funcs *proxy_funcs;
+
+	const struct drm_connector_helper_funcs *conn_funcs;
 	struct vpout_drm_private *priv = drm_dev->dev_private;
-	struct drm_connector_helper_funcs *connector_funcs;
+	struct device *dev = drm_dev->dev;
+	int idx = priv->num_slaves;
 
-	priv->connectors[priv->num_connectors] = connector;
-	priv->encoders[priv->num_encoders++] = connector->encoder;
+	conn_funcs = connector->helper_private;
 
-	vpout_drm_crtc_set_panel_info(priv->crtc, &panel_info_tda998x);
-	*bpp = panel_info_tda998x.bpp;
-
-	connector_funcs = devm_kzalloc(drm_dev->dev, sizeof(*connector_funcs),
-				       GFP_KERNEL);
-	if (!connector_funcs)
+	proxy_funcs = devm_kzalloc(dev, sizeof(*proxy_funcs), GFP_KERNEL);
+	if (!proxy_funcs)
 		return -ENOMEM;
 
-	if (connector->helper_private) {
-		priv->connector_funcs[priv->num_connectors] =
-			connector->helper_private;
-		*connector_funcs = *priv->connector_funcs[priv->num_connectors];
-	} else {
-		priv->connector_funcs[priv->num_connectors] = ERR_PTR(-ENOENT);
-	}
-	connector_funcs->mode_valid = vpout_drm_external_mode_valid;
-	drm_connector_helper_add(connector, connector_funcs);
-	priv->num_connectors++;
+	/* save original object for restore in further */
+	priv->slaves[idx].funcs = conn_funcs;
+	priv->slaves[idx].connector = connector;
 
-	dev_dbg(drm_dev->dev, "External encoder '%s' connected\n",
+	*proxy_funcs = *conn_funcs;
+
+	/*
+	 * insert our proxy function.
+	 * This allow check drm pipeline.
+	 * In latest kernel release this is integrated into the kernel.
+	 */
+	proxy_funcs->mode_valid = vpout_drm_external_mode_valid;
+
+	drm_connector_helper_add(connector, proxy_funcs);
+	priv->num_slaves++;
+
+	dev_dbg(dev, "External encoder '%s' connected\n",
 		connector->encoder->name);
 
 	return 0;
 }
 
-int vpout_drm_add_external_encoders(struct drm_device *drm_dev, int *bpp)
+int vpout_drm_add_external_encoders(struct drm_device *drm_dev)
 {
-	struct vpout_drm_private *priv = drm_dev->dev_private;
 	struct drm_connector *connector;
-	int num_internal_connectors = priv->num_connectors;
+	int ret;
 
-	list_for_each_entry(connector, &drm_dev->mode_config.connector_list,
-			    head) {
-		bool found = false;
-		int i, ret;
-
-		for (i = 0; i < num_internal_connectors; i++)
-			if (connector == priv->connectors[i])
-				found = true;
-		if (!found) {
-			ret = vpout_drm_add_external_encoder(drm_dev, bpp,
-							     connector);
-			if (ret)
-				return ret;
+	mutex_lock(&drm_dev->mode_config.mutex);
+	drm_for_each_connector(connector, drm_dev) {
+		ret = insert_proxy(drm_dev, connector);
+		if (ret) {
+			mutex_unlock(&drm_dev->mode_config.mutex);
+			return ret;
 		}
 	}
+	mutex_unlock(&drm_dev->mode_config.mutex);
 
-	return 0;
+	/* link encoders with corresponding remote endpoints */
+	return vpout_drm_link_encoders(drm_dev);
 }
 
 void vpout_drm_remove_external_encoders(struct drm_device *drm_dev)
@@ -111,17 +103,23 @@ void vpout_drm_remove_external_encoders(struct drm_device *drm_dev)
 	struct vpout_drm_private *priv = drm_dev->dev_private;
 	int i;
 
-	for (i = 0; i < priv->num_connectors; i++)
-		if (IS_ERR(priv->connector_funcs[i]))
-			drm_connector_helper_add(priv->connectors[i], NULL);
-		else if (priv->connector_funcs[i])
-			drm_connector_helper_add(priv->connectors[i],
-						 priv->connector_funcs[i]);
+	/* restore original objects */
+	for (i = 0; i < priv->num_slaves; i++)
+		drm_connector_helper_add(priv->slaves[i].connector,
+					 priv->slaves[i].funcs);
+
+	/* destroy links between encoders and endpoints */
+	vpout_drm_unlink_all();
 }
 
 static int dev_match_of(struct device *dev, void *data)
 {
-	return dev->of_node == data;
+	bool matched = dev->of_node == data;
+
+	if (matched)
+		vpout_drm_link_endpoint(dev);
+
+	return matched;
 }
 
 int vpout_drm_get_external_components(struct device *dev,
@@ -144,11 +142,6 @@ int vpout_drm_get_external_components(struct device *dev,
 			component_match_add(dev, match, dev_match_of, node);
 		of_node_put(node);
 		count++;
-	}
-
-	if (count > 1) {
-		dev_err(dev, "Only one external encoder is supported\n");
-		return -EINVAL;
 	}
 
 	return count;
