@@ -41,6 +41,39 @@ static int vpout_drm_external_mode_valid(struct drm_connector *connector,
 	return MODE_OK;
 }
 
+static void discard_all_preferred_modes(struct drm_connector *connector)
+{
+	struct drm_display_mode *mode;
+
+	list_for_each_entry(mode, &connector->probed_modes, head) {
+		mode->type &= ~DRM_MODE_TYPE_PREFERRED;
+	}
+}
+
+static int vpout_drm_external_get_modes(struct drm_connector *connector)
+{
+	struct vpout_drm_private *priv = connector->dev->dev_private;
+	int count = 0;
+	int i;
+
+	/* forward call to appropriate connector */
+	for (i = 0; i < priv->num_slaves; i++)
+		if (priv->slaves[i].connector == connector)
+			break;
+
+	if (priv->slaves[i].funcs->get_modes)
+		count = priv->slaves[i].funcs->get_modes(connector);
+
+	/* Without discarding, a collision between connectors can occur. */
+	discard_all_preferred_modes(connector);
+
+	if (connector->cmdline_mode.specified)
+		drm_set_preferred_mode(connector,
+				       connector->cmdline_mode.xres,
+				       connector->cmdline_mode.yres);
+	return count;
+}
+
 static int
 insert_proxy(struct drm_device *drm_dev, struct drm_connector *connector)
 {
@@ -69,6 +102,9 @@ insert_proxy(struct drm_device *drm_dev, struct drm_connector *connector)
 	 * In latest kernel release this is integrated into the kernel.
 	 */
 	proxy_funcs->mode_valid = vpout_drm_external_mode_valid;
+
+	/* This allow to mark cmdline mode as preferred */
+	proxy_funcs->get_modes = vpout_drm_external_get_modes;
 
 	drm_connector_helper_add(connector, proxy_funcs);
 	priv->num_slaves++;
@@ -222,4 +258,18 @@ int fixup_connectors_names(struct drm_device *drm_dev)
 	mutex_unlock(&drm_dev->mode_config.mutex);
 
 	return ret;
+}
+
+int vpout_drm_has_preferred_connectors(struct drm_device *drm_dev)
+{
+	struct drm_connector *connector;
+	int prefs = 0;
+
+	mutex_lock(&drm_dev->mode_config.mutex);
+	drm_for_each_connector(connector, drm_dev) {
+		prefs += connector->cmdline_mode.specified;
+	}
+	mutex_unlock(&drm_dev->mode_config.mutex);
+
+	return prefs;
 }

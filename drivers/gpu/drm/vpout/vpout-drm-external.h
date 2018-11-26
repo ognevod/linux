@@ -32,4 +32,6 @@ int vpout_drm_get_external_components(struct device *dev,
 
 int fixup_connectors_names(struct drm_device *drm_dev);
 
+int vpout_drm_has_preferred_connectors(struct drm_device *drm_dev);
+
 #endif /* __VPOUT_DRM_EXTERNAL_H__ */

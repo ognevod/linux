@@ -91,15 +91,15 @@ static struct device_node *get_crtc_port(struct device *dev)
 uint vpout_drm_get_preferred_bpp(struct drm_device *drm_dev)
 {
 	uint bpp = 32;
-	struct drm_encoder *enc;
+	struct drm_connector *con;
 
 	mutex_lock(&drm_dev->mode_config.mutex);
-	drm_for_each_encoder(enc, drm_dev) {
-		/* get preferred bpp for current encoder */
-		uint enc_bpp = vpout_drm_get_encoder_info(enc)->bpp;
-
-		/* restrict bpp */
-		bpp = min(bpp, enc_bpp);
+	drm_for_each_connector(con, drm_dev) {
+		if (con->cmdline_mode.specified) {
+			/* get bpp for preferred connector */
+			bpp = vpout_drm_get_connector_info(con)->bpp;
+			break;
+		}
 	}
 	mutex_unlock(&drm_dev->mode_config.mutex);
 
@@ -197,10 +197,21 @@ static int vpout_drm_load(struct drm_device *drm_dev, unsigned long flags)
 		goto fail_external_cleanup;
 	}
 
-	/* fixup names if connectors have labels */
+	/* fixup names and lookup cmdline options if connectors have labels */
 	ret = fixup_connectors_names(drm_dev);
 	if (ret) {
 		dev_err(dev, "failed to fixup connectors names\n");
+		goto fail_external_cleanup;
+	}
+
+	/*
+	 * Query preferred connectors.
+	 * It can be made after lookup cmdline options.
+	 * Preferred connector should be assigned through 'video' parameter.
+	 * In any time should be only one preferred connector.
+	 */
+	if (vpout_drm_has_preferred_connectors(drm_dev) != 1) {
+		dev_err(dev, "failed to select preferred connector\n");
 		goto fail_external_cleanup;
 	}
 
