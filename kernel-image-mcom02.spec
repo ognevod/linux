@@ -1,6 +1,6 @@
 %define kernel_base_version	4.4
 %define kernel_sublevel		.111
-%define kernel_extra_version	.3
+%define kernel_extra_version	.8
 
 Name: kernel-image-mcom02
 Version: %kernel_base_version%kernel_sublevel%kernel_extra_version
@@ -251,5 +251,8 @@ touch %buildroot%modules_dir/modules.{alias,dep,symbols,builtin}.bin
 %modules_dir/build
 
 %changelog
+* Mon Dec 10 2018 RnD Center ELVEES <rnd_elvees@altlinux.org> 4.4.111.8-alt1
+- Update for release v4.4.111.8
+
 * Mon Apr 16 2018 Dmitriy Zagrebin <dzagrebin@altlinux.org> 4.4.111.3-alt1
 - Initial build for ALT

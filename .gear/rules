@@ -1,2 +1,1 @@
-tar: mcom02/v@version@:.
-diff: mcom02/v@version@:. .
+diff: v4.4:. .
