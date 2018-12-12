@@ -1249,6 +1249,11 @@ static void avico_ec_init(struct avico_ctx *ctx)
 	} while (ecd_task.ready == 0);
 }
 
+static void avico_grab_controls(struct avico_ctx *ctx, bool grab)
+{
+	v4l2_ctrl_grab(ctx->ctrl_qp, grab);
+}
+
 static int avico_start_streaming(struct vb2_queue *vq, unsigned int count)
 {
 	struct avico_ctx *ctx = vb2_get_drv_priv(vq);
@@ -1274,7 +1279,6 @@ static int avico_start_streaming(struct vb2_queue *vq, unsigned int count)
 	/* \todo Assert that width and height < 4096 */
 	ctx->mbx = DIV_ROUND_UP(ctx->width, 16);
 	ctx->mby = DIV_ROUND_UP(ctx->height, 16);
-	ctx->qpy = ctx->qpc = 28;
 	ctx->dbf = 0;
 
 	ctx->frame = 0;
@@ -1292,6 +1296,7 @@ static int avico_start_streaming(struct vb2_queue *vq, unsigned int count)
 
 	avico_write(0UL, ctx, AVICO_CTRL_BASE + AVICO_CTRL_EVENTS);
 
+	avico_grab_controls(ctx, true);
 	avico_thread_init(ctx);
 
 	/* \todo Maybe be do not need padding */
@@ -1348,6 +1353,7 @@ static void avico_stop_streaming(struct vb2_queue *q)
 
 	/* \bug Only one should be zeroed */
 	ctx->capon = ctx->outon = 0;
+	avico_grab_controls(ctx, false);
 }
 
 static struct vb2_ops avico_qops = {
@@ -1388,6 +1394,51 @@ static int queue_init(void *priv, struct vb2_queue *src, struct vb2_queue *dst)
 	dst->lock = &ctx->dev->mutex; /* \todo Do we really need this? */
 
 	return vb2_queue_init(dst);
+}
+
+static int avico_s_ctrl(struct v4l2_ctrl *ctrl)
+{
+	struct avico_ctx *ctx = container_of(ctrl->handler, struct avico_ctx,
+					     ctrl_handler);
+
+	switch (ctrl->id) {
+	case V4L2_CID_MPEG_VIDEO_H264_I_FRAME_QP:
+		ctx->qpy = ctx->qpc = ctrl->val;
+		break;
+	}
+
+	return 0;
+}
+
+static const struct v4l2_ctrl_ops avico_ctrl_ops = {
+	.s_ctrl		= avico_s_ctrl,
+};
+
+static int avico_ctrls_create(struct avico_ctx *ctx)
+{
+	struct avico_dev *dev = ctx->dev;
+
+	v4l2_ctrl_handler_init(&ctx->ctrl_handler, 1);
+
+	ctx->ctrl_qp = v4l2_ctrl_new_std(&ctx->ctrl_handler, &avico_ctrl_ops,
+					 V4L2_CID_MPEG_VIDEO_H264_I_FRAME_QP,
+					 0, 51, 1, 28);
+
+	if (ctx->ctrl_handler.error) {
+		int err = ctx->ctrl_handler.error;
+
+		v4l2_err(&dev->v4l2_dev, "Failed to create controls\n");
+		return err;
+	}
+
+	v4l2_ctrl_handler_setup(&ctx->ctrl_handler);
+
+	return 0;
+}
+
+static void avico_ctrls_delete(struct avico_ctx *ctx)
+{
+	v4l2_ctrl_handler_free(&ctx->ctrl_handler);
 }
 
 static int avico_open(struct file *file)
@@ -1448,14 +1499,27 @@ static int avico_open(struct file *file)
 		rc = PTR_ERR(ctx->fh.m2m_ctx);
 
 		pr_devel("Can not initizlize M2M context!\n");
-		kfree(ctx);
-		goto open_unlock;
+		goto error_ctx_free;
 	}
+
+	rc = avico_ctrls_create(ctx);
+	if (rc)
+		goto error_ctrls_del;
+
+	/* Use separate control handler per file handle/context */
+	ctx->fh.ctrl_handler = &ctx->ctrl_handler;
 
 	v4l2_fh_add(&ctx->fh);
 
 	pr_devel("Created instance: %p, m2m_ctx: %p\n", ctx, ctx->fh.m2m_ctx);
 
+	mutex_unlock(&dev->mutex);
+	return 0;
+
+error_ctrls_del:
+	avico_ctrls_delete(ctx);
+error_ctx_free:
+	kfree(ctx);
 open_unlock:
 	mutex_unlock(&dev->mutex);
 	return rc;
@@ -1467,6 +1531,7 @@ static int avico_release(struct file *file)
 	struct avico_ctx *ctx = container_of(file->private_data,
 					     struct avico_ctx, fh);
 
+	avico_ctrls_delete(ctx);
 	mutex_lock(&dev->mutex);
 	v4l2_m2m_ctx_release(ctx->fh.m2m_ctx);
 	mutex_unlock(&dev->mutex);

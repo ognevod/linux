@@ -559,6 +559,9 @@ struct avico_ctx {
 	unsigned int capfmt, outfmt;
 	unsigned int outsize, capsize, refsize;
 	unsigned int outseq, capseq;
+
+	struct v4l2_ctrl_handler ctrl_handler;
+	struct v4l2_ctrl *ctrl_qp;
 };
 
 #define MAX_RBSP_LENGTH 0x0ffffc
