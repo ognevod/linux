@@ -18,6 +18,7 @@
 struct vpout_drm_info {
 	uint32_t bpp;
 	bool invert_pxl_clk;
+	const char *label;
 };
 
 void vpout_drm_link_endpoint(struct device *dev);
@@ -27,6 +28,9 @@ void vpout_drm_unlink_all(void);
 
 struct vpout_drm_info*
 vpout_drm_get_encoder_info(struct drm_encoder *encoder);
+
+struct vpout_drm_info*
+vpout_drm_get_connector_info(struct drm_connector *connector);
 
 int vpout_drm_link_init(int capacity);
 void vpout_drm_link_release(void);
