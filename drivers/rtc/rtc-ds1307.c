@@ -724,6 +724,8 @@ static int mcp794xx_set_alarm(struct device *dev, struct rtc_wkalrm *t)
 	regs[6] |= MCP794XX_MSK_ALMX_MATCH;
 	/* Disable interrupt. We will not enable until completely programmed */
 	regs[0] &= ~MCP794XX_BIT_ALM0_EN;
+	/* Alarm bug fix */
+	regs[0] |= MCP794XX_BIT_ALMX_POL;
 
 	ret = ds1307->write_block_data(client, MCP794XX_REG_CONTROL, 10, regs);
 	if (ret < 0)
